@@ -1,0 +1,104 @@
+# AWS Amplify Setup
+
+This project is prepared for AWS Amplify Hosting as a Next.js SSR app. Amplify serves the pages and the API routes, including auth, suggestions, Riot status, daily challenge generation, and leaderboard/stat APIs.
+
+## 1. Push the Project
+
+Push this folder to GitHub, GitLab, Bitbucket, or AWS CodeCommit. GitHub is the simplest path.
+
+## 2. Create the Amplify App
+
+1. Open **AWS Amplify > Hosting**.
+2. Choose **Deploy an app**.
+3. Connect your repository and branch.
+4. Let Amplify detect the included `amplify.yml`.
+5. Use the default `.next` artifact output.
+
+Amplify supports SSR, static pages, API routes, dynamic routes, middleware, image optimization, environment variables, and the Next.js app directory for supported Next.js versions.
+
+## 3. Add Environment Variables
+
+Add these in **Amplify > App settings > Environment variables**:
+
+```text
+DATABASE_URL
+NEXTAUTH_URL
+NEXTAUTH_SECRET
+NEXT_PUBLIC_APP_URL
+CHALLENGE_SALT
+CRON_SECRET
+RIOT_API_KEY
+RIOT_REGION
+NEXT_PUBLIC_CREATOR_GITHUB_URL
+NEXT_PUBLIC_CREATOR_LINKEDIN_URL
+```
+
+Use these values:
+
+- `DATABASE_URL`: Supabase transaction pooler URL.
+- `NEXTAUTH_URL`: final deployed URL, for example `https://main.xxxxx.amplifyapp.com`.
+- `NEXT_PUBLIC_APP_URL`: same final deployed URL.
+- `NEXTAUTH_SECRET`: long random secret.
+- `CHALLENGE_SALT`: long random secret used for deterministic daily seeds.
+- `CRON_SECRET`: long random secret for `/api/cron/generate-daily`.
+- `RIOT_API_KEY`: optional. Data Dragon does not require this, but keyed Riot API routes can use it.
+- `RIOT_REGION`: `na1` unless you want a different Riot platform route.
+
+Generate secrets locally:
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+The included `amplify.yml` writes the needed server variables into `.env.production` before `npm run build`. This is required for Next.js server/API code on Amplify.
+
+## 4. First Deploy
+
+Deploy once. Copy the Amplify URL after it finishes, then update:
+
+```text
+NEXTAUTH_URL=https://YOUR-AMPLIFY-DOMAIN
+NEXT_PUBLIC_APP_URL=https://YOUR-AMPLIFY-DOMAIN
+```
+
+Redeploy after changing those values so auth callbacks and public links use the real production URL.
+
+## 5. Schedule Daily Generation
+
+The app generates deterministic daily content on demand, but you can warm/store daily challenge rows with:
+
+```text
+GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily
+Authorization: Bearer YOUR_CRON_SECRET
+```
+
+Recommended AWS path:
+
+1. Create an EventBridge Scheduler schedule at `cron(0 0 * * ? *)` for midnight UTC.
+2. Use an EventBridge API Destination or Lambda target that calls the URL above.
+3. Add the `Authorization: Bearer ...` header.
+
+You can also call the endpoint manually after deploy to verify it:
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily" `
+  -Headers @{ Authorization = "Bearer YOUR_CRON_SECRET" }
+```
+
+## 6. Production Smoke Test
+
+After deploy:
+
+1. Open `/`.
+2. Open `/play`.
+3. Submit a suggestion on `/suggest`, then confirm it appears in the `suggestions` table.
+4. Open `/api/challenges/daily` and confirm `persistence` is `"database"`.
+5. Open `/api/riot/status` and confirm Data Dragon status is returned.
+6. Register a real account and sign in.
+
+## 7. Security Notes
+
+- Do not expose `DATABASE_URL`, `NEXTAUTH_SECRET`, `CRON_SECRET`, or `RIOT_API_KEY` with `NEXT_PUBLIC_`.
+- AWS warns that variables written into build artifacts can be visible to users with artifact access. Keep Amplify app/team permissions tight.
+- Rotate `RIOT_API_KEY` and `CRON_SECRET` if they are ever shared.

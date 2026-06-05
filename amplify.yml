@@ -1,0 +1,27 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        - printf "DATABASE_URL=%s\n" "$DATABASE_URL" >> .env.production
+        - printf "NEXTAUTH_URL=%s\n" "$NEXTAUTH_URL" >> .env.production
+        - printf "NEXTAUTH_SECRET=%s\n" "$NEXTAUTH_SECRET" >> .env.production
+        - printf "NEXT_PUBLIC_APP_URL=%s\n" "$NEXT_PUBLIC_APP_URL" >> .env.production
+        - printf "CHALLENGE_SALT=%s\n" "$CHALLENGE_SALT" >> .env.production
+        - printf "CRON_SECRET=%s\n" "$CRON_SECRET" >> .env.production
+        - printf "RIOT_API_KEY=%s\n" "$RIOT_API_KEY" >> .env.production
+        - printf "RIOT_REGION=%s\n" "$RIOT_REGION" >> .env.production
+        - printf "NEXT_PUBLIC_CREATOR_GITHUB_URL=%s\n" "$NEXT_PUBLIC_CREATOR_GITHUB_URL" >> .env.production
+        - printf "NEXT_PUBLIC_CREATOR_LINKEDIN_URL=%s\n" "$NEXT_PUBLIC_CREATOR_LINKEDIN_URL" >> .env.production
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*

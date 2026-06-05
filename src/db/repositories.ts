@@ -1,0 +1,487 @@
+import { champions } from "@/game/data/champions";
+import { rankFromStats } from "@/game/scoring";
+import { isDatabaseConfigured } from "@/lib/env";
+import type { ChallengeType, LeaderboardEntry, UserStats } from "@/types";
+
+import { query } from "./client";
+
+interface UserRow {
+  id: string;
+  username: string;
+  email: string;
+  password_hash: string;
+  created_at: Date;
+}
+
+interface StatsRow {
+  current_streak: number | null;
+  max_streak: number | null;
+  games_played: number | null;
+  wins: number | null;
+  win_rate: string | number | null;
+  perfect_solves: number | null;
+  fastest_solve_ms: number | null;
+  favorite_role: string | null;
+}
+
+interface ChallengeRow {
+  id: string;
+  date: string;
+  challenge_type: ChallengeType;
+  answer_id: string;
+  seed: string;
+  difficulty: string;
+}
+
+export interface EnsureChallengeInput {
+  date: string;
+  challengeType: ChallengeType;
+  answerId: string;
+  seed: string;
+  difficulty: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RecordGuessInput {
+  userId: string;
+  challengeId: string;
+  challengeType: ChallengeType;
+  date: string;
+  guess: Record<string, unknown>;
+  correct: boolean;
+  attemptNumber: number;
+  elapsedMs: number;
+  answerRoles: string[];
+}
+
+export interface CreateSuggestionInput {
+  userId?: string | null;
+  name?: string;
+  contact?: string;
+  type: string;
+  message: string;
+  page?: string;
+}
+
+export async function findUserByEmail(email: string): Promise<UserRow | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  const result = await query<UserRow>("select * from users where lower(email) = lower($1) limit 1", [email]);
+  return result.rows[0] ?? null;
+}
+
+export async function findUserById(id: string): Promise<UserRow | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  const result = await query<UserRow>("select * from users where id = $1 limit 1", [id]);
+  return result.rows[0] ?? null;
+}
+
+export async function createUser(input: { username: string; email: string; passwordHash: string }): Promise<UserRow> {
+  const result = await query<UserRow>(
+    `insert into users (username, email, password_hash)
+     values ($1, $2, $3)
+     returning *`,
+    [input.username, input.email, input.passwordHash]
+  );
+
+  return result.rows[0];
+}
+
+export async function createSuggestion(input: CreateSuggestionInput): Promise<{ persisted: boolean }> {
+  if (!isDatabaseConfigured()) {
+    return { persisted: false };
+  }
+
+  await query(
+    `insert into suggestions (user_id, name, contact, type, message, page)
+     values ($1, $2, $3, $4, $5, $6)`,
+    [
+      input.userId && input.userId !== "demo-user" ? input.userId : null,
+      input.name ?? null,
+      input.contact ?? null,
+      input.type,
+      input.message,
+      input.page ?? null
+    ]
+  );
+
+  return { persisted: true };
+}
+
+export async function ensureDailyChallenge(input: EnsureChallengeInput): Promise<ChallengeRow | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  const result = await query<ChallengeRow>(
+    `insert into daily_challenges (date, challenge_type, answer_id, seed, difficulty, metadata)
+     values ($1, $2, $3, $4, $5, $6::jsonb)
+     on conflict (date, challenge_type)
+     do update set
+       answer_id = excluded.answer_id,
+       seed = excluded.seed,
+       difficulty = excluded.difficulty,
+       metadata = excluded.metadata
+     returning id::text, date::text, challenge_type, answer_id, seed, difficulty`,
+    [
+      input.date,
+      input.challengeType,
+      input.answerId,
+      input.seed,
+      input.difficulty,
+      JSON.stringify(input.metadata ?? {})
+    ]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getDailyChallengeById(id: string): Promise<ChallengeRow | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  const result = await query<ChallengeRow>(
+    `select id::text, date::text, challenge_type, answer_id, seed, difficulty
+     from daily_challenges
+     where id::text = $1
+     limit 1`,
+    [id]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getDailyChallengeByDateType(date: string, challengeType: ChallengeType): Promise<ChallengeRow | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  const result = await query<ChallengeRow>(
+    `select id::text, date::text, challenge_type, answer_id, seed, difficulty
+     from daily_challenges
+     where date = $1::date and challenge_type = $2
+     limit 1`,
+    [date, challengeType]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function getRecentAnswerIds(challengeType: ChallengeType, limit = 14): Promise<string[]> {
+  if (!isDatabaseConfigured()) {
+    return [];
+  }
+
+  const result = await query<{ answer_id: string }>(
+    `select answer_id
+     from daily_challenges
+     where challenge_type = $1
+     order by date desc
+     limit $2`,
+    [challengeType, limit]
+  );
+
+  return result.rows.map((row) => row.answer_id);
+}
+
+export async function recordGuess(input: RecordGuessInput): Promise<void> {
+  if (!isDatabaseConfigured() || input.userId === "demo-user") {
+    return;
+  }
+
+  await query(
+    `insert into guesses (user_id, challenge_id, guess, correct, attempt_number, elapsed_ms)
+     values ($1, $2, $3::jsonb, $4, $5, $6)`,
+    [input.userId, input.challengeId, JSON.stringify(input.guess), input.correct, input.attemptNumber, input.elapsedMs]
+  );
+
+  if (input.correct) {
+    await query(
+      `insert into challenge_results (
+        user_id,
+        challenge_id,
+        challenge_type,
+        date,
+        solved,
+        attempts,
+        elapsed_ms,
+        answer_roles,
+        solved_at
+      )
+      values ($1, $2, $3, $4::date, true, $5, $6, $7, now())
+      on conflict (user_id, challenge_id)
+      do update set
+        solved = true,
+        attempts = least(challenge_results.attempts, excluded.attempts),
+        elapsed_ms = least(challenge_results.elapsed_ms, excluded.elapsed_ms),
+        answer_roles = excluded.answer_roles,
+        solved_at = least(challenge_results.solved_at, excluded.solved_at)`,
+      [
+        input.userId,
+        input.challengeId,
+        input.challengeType,
+        input.date,
+        input.attemptNumber,
+        input.elapsedMs,
+        input.answerRoles
+      ]
+    );
+
+    await recomputeUserStats(input.userId);
+  }
+}
+
+export async function getUserStats(userId?: string | null, username = "Guest"): Promise<UserStats> {
+  if (!isDatabaseConfigured() || !userId || userId === "demo-user") {
+    return {
+      username,
+      currentStreak: userId === "demo-user" ? 4 : 0,
+      maxStreak: userId === "demo-user" ? 9 : 0,
+      gamesPlayed: userId === "demo-user" ? 18 : 0,
+      wins: userId === "demo-user" ? 14 : 0,
+      winRate: userId === "demo-user" ? 78 : 0,
+      perfectSolves: userId === "demo-user" ? 5 : 0,
+      fastestSolveMs: userId === "demo-user" ? 42000 : null,
+      favoriteRole: userId === "demo-user" ? "Marksman" : "Unclaimed",
+      rank: userId === "demo-user" ? "Platinum" : "Unranked"
+    };
+  }
+
+  const result = await query<StatsRow & { username: string }>(
+    `select
+        u.username,
+        coalesce(s.current_streak, 0) as current_streak,
+        coalesce(s.max_streak, 0) as max_streak,
+        coalesce(s.games_played, 0) as games_played,
+        coalesce(s.wins, 0) as wins,
+        coalesce(s.win_rate, 0) as win_rate,
+        coalesce(s.perfect_solves, 0) as perfect_solves,
+        s.fastest_solve_ms,
+        coalesce(s.favorite_role, 'Unclaimed') as favorite_role
+      from users u
+      left join user_stats s on s.user_id = u.id
+      where u.id = $1
+      limit 1`,
+    [userId]
+  );
+
+  const row = result.rows[0];
+
+  if (!row) {
+    return getUserStats(null, username);
+  }
+
+  return normalizeStatsRow(row.username, row);
+}
+
+export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
+  if (!isDatabaseConfigured()) {
+    return demoLeaderboard();
+  }
+
+  const result = await query<StatsRow & { username: string }>(
+    `select
+        u.username,
+        coalesce(s.current_streak, 0) as current_streak,
+        coalesce(s.max_streak, 0) as max_streak,
+        coalesce(s.games_played, 0) as games_played,
+        coalesce(s.wins, 0) as wins,
+        coalesce(s.win_rate, 0) as win_rate,
+        coalesce(s.perfect_solves, 0) as perfect_solves,
+        s.fastest_solve_ms,
+        coalesce(s.favorite_role, 'Unclaimed') as favorite_role
+      from users u
+      left join user_stats s on s.user_id = u.id
+      order by coalesce(s.current_streak, 0) desc,
+               coalesce(s.perfect_solves, 0) desc,
+               s.fastest_solve_ms asc nulls last,
+               u.username asc
+      limit $1`,
+    [limit]
+  );
+
+  return result.rows.map((row, index) => {
+    const stats = normalizeStatsRow(row.username, row);
+    return {
+      rank: index + 1,
+      username: stats.username,
+      currentStreak: stats.currentStreak,
+      maxStreak: stats.maxStreak,
+      gamesPlayed: stats.gamesPlayed,
+      winRate: stats.winRate,
+      fastestSolveMs: stats.fastestSolveMs,
+      perfectSolves: stats.perfectSolves
+    };
+  });
+}
+
+async function recomputeUserStats(userId: string): Promise<void> {
+  const gamesStartedResult = await query<{ games_played: string }>(
+    "select count(distinct challenge_id)::text as games_played from guesses where user_id = $1",
+    [userId]
+  );
+  const solvedResult = await query<{
+    date: string;
+    attempts: number;
+    elapsed_ms: number;
+    answer_roles: string[];
+  }>(
+    `select date::text, attempts, elapsed_ms, answer_roles
+     from challenge_results
+     where user_id = $1 and solved = true
+     order by date asc`,
+    [userId]
+  );
+
+  const gamesPlayed = Number(gamesStartedResult.rows[0]?.games_played ?? 0);
+  const solvedRows = solvedResult.rows;
+  const wins = solvedRows.length;
+  const winRate = gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : 0;
+  const dates = [...new Set(solvedRows.map((row) => row.date))].sort();
+  const currentStreak = calculateCurrentStreak(dates);
+  const maxStreak = calculateMaxStreak(dates);
+  const perfectSolves = solvedRows.filter((row) => row.attempts === 1).length;
+  const fastestSolveMs = solvedRows.reduce<number | null>((fastest, row) => {
+    if (fastest === null) {
+      return row.elapsed_ms;
+    }
+
+    return Math.min(fastest, row.elapsed_ms);
+  }, null);
+  const favoriteRole = favoriteRoleFromResults(solvedRows.map((row) => row.answer_roles));
+
+  await query(
+    `insert into user_stats (
+        user_id,
+        current_streak,
+        max_streak,
+        games_played,
+        wins,
+        win_rate,
+        perfect_solves,
+        fastest_solve_ms,
+        favorite_role,
+        updated_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+      on conflict (user_id)
+      do update set
+        current_streak = excluded.current_streak,
+        max_streak = greatest(user_stats.max_streak, excluded.max_streak),
+        games_played = excluded.games_played,
+        wins = excluded.wins,
+        win_rate = excluded.win_rate,
+        perfect_solves = excluded.perfect_solves,
+        fastest_solve_ms = excluded.fastest_solve_ms,
+        favorite_role = excluded.favorite_role,
+        updated_at = now()`,
+    [userId, currentStreak, maxStreak, gamesPlayed, wins, winRate, perfectSolves, fastestSolveMs, favoriteRole]
+  );
+}
+
+function normalizeStatsRow(username: string, row: StatsRow): UserStats {
+  const currentStreak = Number(row.current_streak ?? 0);
+  const winRate = Number(row.win_rate ?? 0);
+
+  return {
+    username,
+    currentStreak,
+    maxStreak: Number(row.max_streak ?? 0),
+    gamesPlayed: Number(row.games_played ?? 0),
+    wins: Number(row.wins ?? 0),
+    winRate,
+    perfectSolves: Number(row.perfect_solves ?? 0),
+    fastestSolveMs: row.fastest_solve_ms,
+    favoriteRole: row.favorite_role ?? "Unclaimed",
+    rank: rankFromStats(currentStreak, winRate)
+  };
+}
+
+function calculateCurrentStreak(sortedDateKeys: string[]): number {
+  if (sortedDateKeys.length === 0) {
+    return 0;
+  }
+
+  const dateSet = new Set(sortedDateKeys);
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const yesterday = addDays(todayKey, -1);
+  let cursor = dateSet.has(todayKey) ? todayKey : dateSet.has(yesterday) ? yesterday : "";
+
+  if (!cursor) {
+    return 0;
+  }
+
+  let streak = 0;
+
+  while (dateSet.has(cursor)) {
+    streak += 1;
+    cursor = addDays(cursor, -1);
+  }
+
+  return streak;
+}
+
+function calculateMaxStreak(sortedDateKeys: string[]): number {
+  let max = 0;
+  let current = 0;
+  let previous: string | null = null;
+
+  for (const dateKey of sortedDateKeys) {
+    current = previous && addDays(previous, 1) === dateKey ? current + 1 : 1;
+    max = Math.max(max, current);
+    previous = dateKey;
+  }
+
+  return max;
+}
+
+function addDays(dateKey: string, amount: number): string {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
+function favoriteRoleFromResults(roleLists: string[][]): string {
+  const counts = new Map<string, number>();
+
+  for (const roleList of roleLists) {
+    for (const role of roleList) {
+      counts.set(role, (counts.get(role) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Unclaimed";
+}
+
+function demoLeaderboard(): LeaderboardEntry[] {
+  const names = ["AurelionMain", "BaronTimer", "MidDiffDaily", "BrushChecker", "HexflashHero"];
+
+  return names.map((username, index) => {
+    const currentStreak = Math.max(1, 12 - index * 2);
+    const winRate = 91 - index * 6;
+
+    return {
+      rank: index + 1,
+      username,
+      currentStreak,
+      maxStreak: currentStreak + 7,
+      gamesPlayed: 38 - index * 3,
+      winRate,
+      fastestSolveMs: 31000 + index * 9000,
+      perfectSolves: Math.max(1, 9 - index),
+      rankLabel: rankFromStats(currentStreak, winRate)
+    } as LeaderboardEntry;
+  });
+}
+
+export function roleForAnswer(answerId: string): string[] {
+  const championId = answerId.includes(":") ? answerId.split(":")[0] : answerId;
+  return champions.find((champion) => champion.id === championId)?.roles ?? [];
+}
