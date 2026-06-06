@@ -1,6 +1,7 @@
 import { env, isRiotApiConfigured } from "@/lib/env";
 import type {
   BuildWinrateStats,
+  ChampionMatchupRound,
   DodgeQueueRound,
   GuessEloRound,
   PublicChampion,
@@ -82,6 +83,7 @@ interface RankedSource {
 export interface VerifiedMatchChallengeSet {
   guessEloRounds: GuessEloRound[];
   dodgeQueueRounds: DodgeQueueRound[];
+  championMatchupRounds: ChampionMatchupRound[];
   championWinrateSamples: Record<string, BuildWinrateStats>;
   status: "ready" | "unconfigured" | "unavailable";
   message?: string;
@@ -97,6 +99,16 @@ interface WinrateAccumulator {
     matchId: string;
     itemIds: string[];
   }>;
+}
+
+interface MatchupAccumulator {
+  role: string;
+  leftChampion: PublicChampion;
+  rightChampion: PublicChampion;
+  leftWins: number;
+  rightWins: number;
+  games: number;
+  matchIds: Set<string>;
 }
 
 let cachedMatchSet: {
@@ -118,6 +130,7 @@ export async function getVerifiedRankedMatchChallenges({
     return {
       guessEloRounds: [],
       dodgeQueueRounds: [],
+      championMatchupRounds: [],
       championWinrateSamples: {},
       status: "unconfigured",
       message: "RIOT_API_KEY is required for verified lane assignment and summoner spell data."
@@ -129,7 +142,7 @@ export async function getVerifiedRankedMatchChallenges({
   const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(4, Math.min(32, env.riotMatchSampleSize)) : 16;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
-  const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 64;
+  const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
   const buildMatchesPerRank = Math.max(roundsPerRank, Math.ceil(requestedBuildSampleSize / RANK_BUCKETS.length));
   const buildSampleSize = buildMatchesPerRank * RANK_BUCKETS.length;
   const cacheKey = `${date}:${platform}:${sampleSize}:${buildSampleSize}`;
@@ -148,6 +161,7 @@ export async function getVerifiedRankedMatchChallenges({
     const buildMatchesByBucket = createEmptyRankCountMap();
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
+    const championMatchups = new Map<string, MatchupAccumulator>();
 
     for (const bucket of RANK_BUCKETS) {
       const bucketRounds = guessRoundsByBucket.get(bucket) ?? [];
@@ -191,6 +205,7 @@ export async function getVerifiedRankedMatchChallenges({
             const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
 
             addChampionWinrateSamples(match, championLookup, championWinrates);
+            addChampionMatchupSamples(match, championLookup, championMatchups);
             buildMatchesByBucket.set(bucket, (buildMatchesByBucket.get(bucket) ?? 0) + 1);
 
             if (usedForPuzzleRound) {
@@ -210,15 +225,17 @@ export async function getVerifiedRankedMatchChallenges({
     const guessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
     const distribution = rankDistribution(guessEloRounds);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
+    const championMatchupRounds = toChampionMatchupRounds(championMatchups, date);
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
       RANK_BUCKETS.every((bucket) => distribution[bucket] === roundsPerRank);
     const value: VerifiedMatchChallengeSet =
       hasBalancedGuessRounds && dodgeQueueRounds.length > 0
-        ? { guessEloRounds, dodgeQueueRounds, championWinrateSamples, status: "ready" }
+        ? { guessEloRounds, dodgeQueueRounds, championMatchupRounds, championWinrateSamples, status: "ready" }
         : {
             guessEloRounds: [],
             dodgeQueueRounds: [],
+            championMatchupRounds,
             championWinrateSamples,
             status: "unavailable",
             message: `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`
@@ -236,6 +253,7 @@ export async function getVerifiedRankedMatchChallenges({
     return {
       guessEloRounds: [],
       dodgeQueueRounds: [],
+      championMatchupRounds: [],
       championWinrateSamples: {},
       status: "unavailable",
       message
@@ -276,6 +294,84 @@ function addChampionWinrateSamples(
     });
     championWinrates.set(champion.id, current);
   }
+}
+
+function addChampionMatchupSamples(
+  match: RiotMatchDto,
+  championLookup: Map<number, PublicChampion>,
+  championMatchups: Map<string, MatchupAccumulator>
+) {
+  const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
+
+  for (const position of POSITION_ORDER) {
+    const blue = match.info.participants.find((participant) => participant.teamId === 100 && participant.teamPosition === position);
+    const red = match.info.participants.find((participant) => participant.teamId === 200 && participant.teamPosition === position);
+    const blueChampion = blue ? championLookup.get(blue.championId) : undefined;
+    const redChampion = red ? championLookup.get(red.championId) : undefined;
+
+    if (!blue || !red || !blueChampion || !redChampion || blueChampion.id === redChampion.id) {
+      continue;
+    }
+
+    const blueFirst = blueChampion.id.localeCompare(redChampion.id) <= 0;
+    const leftParticipant = blueFirst ? blue : red;
+    const rightParticipant = blueFirst ? red : blue;
+    const leftChampion = blueFirst ? blueChampion : redChampion;
+    const rightChampion = blueFirst ? redChampion : blueChampion;
+    const key = `${position}:${leftChampion.id}:${rightChampion.id}`;
+    const current = championMatchups.get(key) ?? {
+      role: toLaneLabel(position),
+      leftChampion,
+      rightChampion,
+      leftWins: 0,
+      rightWins: 0,
+      games: 0,
+      matchIds: new Set<string>()
+    };
+
+    current.games += 1;
+    current.leftWins += winningTeams.get(leftParticipant.teamId) ? 1 : 0;
+    current.rightWins += winningTeams.get(rightParticipant.teamId) ? 1 : 0;
+    current.matchIds.add(match.metadata.matchId);
+    championMatchups.set(key, current);
+  }
+}
+
+function toChampionMatchupRounds(championMatchups: Map<string, MatchupAccumulator>, date: string) {
+  const dataSource = "Riot Match-V5 ranked solo same-lane matchup sample";
+  const rounds = [...championMatchups.entries()]
+    .map(([key, matchup]) => ({ key, matchup }))
+    .filter(({ matchup }) => matchup.games > 0 && matchup.leftWins !== matchup.rightWins)
+    .sort((a, b) => seededOrderKey(`${date}:champion-matchup:${a.key}`) - seededOrderKey(`${date}:champion-matchup:${b.key}`))
+    .map(({ key, matchup }, index): ChampionMatchupRound => {
+      const leftPick = toMatchupPick(matchup.leftChampion, matchup.role, matchup.leftWins, matchup.games, matchup.matchIds.size);
+      const rightPick = toMatchupPick(matchup.rightChampion, matchup.role, matchup.rightWins, matchup.games, matchup.matchIds.size);
+      const shouldFlip = hashString(`${date}:champion-matchup:flip:${key}`) % 2 === 0;
+      const displayLeft = shouldFlip ? rightPick : leftPick;
+      const displayRight = shouldFlip ? leftPick : rightPick;
+
+      return {
+        id: `${date}:champion-matchup:${index}:${normalize(matchup.role)}:${matchup.leftChampion.id}:${matchup.rightChampion.id}`,
+        date,
+        left: displayLeft,
+        right: displayRight,
+        answerSide: displayLeft.winRate > displayRight.winRate ? "left" : "right",
+        dataSource
+      };
+    });
+
+  return rounds.slice(0, 96);
+}
+
+function toMatchupPick(champion: PublicChampion, role: string, wins: number, games: number, sampleMatches: number) {
+  return {
+    champion,
+    role,
+    wins,
+    games,
+    winRate: Math.round((wins / games) * 1000) / 10,
+    sampleMatches
+  };
 }
 
 function toChampionWinrateSamples(championWinrates: Map<string, WinrateAccumulator>) {
@@ -606,6 +702,14 @@ function seededOrder<T>(items: T[], seed: string) {
     const bKey = JSON.stringify(b);
     return hashString(`${seed}:${aKey}`) - hashString(`${seed}:${bKey}`);
   });
+}
+
+function seededOrderKey(value: string) {
+  return hashString(value);
+}
+
+function normalize(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 function hashString(value: string) {

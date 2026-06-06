@@ -10,6 +10,7 @@ import {
   PackageSearch,
   RefreshCcw,
   Split,
+  Swords,
   Trophy,
   UsersRound,
   Zap
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import {
+  ChampionMatchupGame,
   DodgeQueueGame,
   GuessEloGame,
   ItemBuildGame,
@@ -35,6 +37,7 @@ type View =
   | "item-build"
   | "item-recipe"
   | "guess-elo"
+  | "champion-matchup"
   | "dodge-queue"
   | "trainer"
   | "leaderboard";
@@ -122,6 +125,7 @@ export function AppShell() {
           <TabButton active={view === "item-build"} onClick={() => setView("item-build")} icon={<PackageSearch size={16} />} label="Build" />
           <TabButton active={view === "item-recipe"} onClick={() => setView("item-recipe")} icon={<Split size={16} />} label="Recipe" />
           <TabButton active={view === "guess-elo"} onClick={() => setView("guess-elo")} icon={<UsersRound size={16} />} label="Elo" />
+          <TabButton active={view === "champion-matchup"} onClick={() => setView("champion-matchup")} icon={<Swords size={16} />} label="Matchup" />
           <TabButton active={view === "dodge-queue"} onClick={() => setView("dodge-queue")} icon={<CircleSlash size={16} />} label="Lobby" />
           <TabButton active={view === "trainer"} onClick={() => setView("trainer")} icon={<Crosshair size={16} />} label="Trainer" />
           <TabButton active={view === "leaderboard"} onClick={() => setView("leaderboard")} icon={<Trophy size={16} />} label="Leaderboard" />
@@ -151,6 +155,7 @@ export function AppShell() {
         {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} champions={daily.champions} items={daily.items} username={daily.stats.username} />}
         {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={daily.stats.username} />}
         {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={daily.stats.username} />}
+        {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={daily.stats.username} />}
         {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={daily.stats.username} />}
         {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} username={daily.stats.username} />}
 
@@ -311,6 +316,7 @@ function currentGameLabel(view: View) {
     "item-build": "Item Build Puzzle",
     "item-recipe": "Item Recipe Puzzle",
     "guess-elo": "Guess the Elo",
+    "champion-matchup": "Champion Matchup",
     "dodge-queue": "Dodge or Queue",
     trainer: "Rift Trainer",
     leaderboard: "Leaderboard"

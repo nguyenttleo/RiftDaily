@@ -1,12 +1,14 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, PackageSearch, Split, UsersRound, X, XCircle } from "lucide-react";
+import { CheckCircle2, CircleSlash, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type {
+  ChampionMatchupChallenge,
+  ChampionMatchupRound,
   DodgeQueueChallenge,
   DodgeQueueRound,
   GameItem,
@@ -21,7 +23,8 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
-const MIN_BUILD_WINRATE_GAMES = 5;
+const MIN_BUILD_WINRATE_GAMES = 20;
+const POSITIVE_BUILD_ITEM_BOOST = 1200;
 type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({
@@ -432,7 +435,7 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
     );
   }
 
-  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES;
+  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES && stats.buildWinRate > stats.winRate;
   const delta = hasBuildSample ? stats.buildWinRate! - stats.winRate : null;
   const buildDetail = hasBuildSample
     ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
@@ -456,7 +459,7 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
           {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% vs baseline
         </div>
       )}
-      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item inventory samples.</div>}
+      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item samples above baseline.</div>}
       <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[#c89b3c]">{stats.source}</div>
     </div>
   );
@@ -483,7 +486,7 @@ function WinrateMiniStat({
       <div className={cn("font-display text-2xl font-bold", hasValue ? (winRate >= 50 ? "text-green-300" : "text-red-300") : "text-[color:var(--muted)]")}>
         {hasValue ? `${winRate.toFixed(1)}%` : "N/A"}
       </div>
-      <div className="text-[11px] text-[color:var(--muted)]">{games > 0 ? `${wins}W / ${games}G` : "<5 games"}</div>
+      <div className="text-[11px] text-[color:var(--muted)]">{games > 0 ? `${wins}W / ${games}G` : `<${MIN_BUILD_WINRATE_GAMES} games`}</div>
       {detail && <div className="text-[10px] uppercase tracking-[0.06em] text-[#c89b3c]">{detail}</div>}
     </div>
   );
@@ -494,40 +497,63 @@ function withTargetBuildWinrateForUi(stats: ItemBuildChallenge["winrateStats"] |
     return undefined;
   }
 
-  const target = new Set(targetItemIds);
   const samples = stats.inventorySamples ?? [];
-  let matchingGames: typeof samples = [];
-  let matchedItemCount = targetItemIds.length;
+  const targetIds = uniqueStringsForUi(targetItemIds);
+  let selected:
+    | {
+        games: typeof samples;
+        wins: number;
+        winRate: number;
+        matchedItemCount: number;
+      }
+    | undefined;
 
-  for (let threshold = targetItemIds.length; threshold >= 1; threshold -= 1) {
-    const games = samples.filter((game) => countTargetItemsForUi(game.itemIds, target) >= threshold);
+  for (let size = targetIds.length; size >= 1; size -= 1) {
+    let bestAtSize: typeof selected;
 
-    if (games.length >= MIN_BUILD_WINRATE_GAMES) {
-      matchingGames = games;
-      matchedItemCount = threshold;
+    for (const subset of combinationsForUi(targetIds, size)) {
+      const games = samples.filter((game) => subset.every((itemId) => game.itemIds.includes(itemId)));
+
+      if (games.length < MIN_BUILD_WINRATE_GAMES) {
+        continue;
+      }
+
+      const wins = games.filter((game) => game.win).length;
+      const winRate = Math.round((wins / games.length) * 1000) / 10;
+
+      if (winRate <= stats.winRate) {
+        continue;
+      }
+
+      if (
+        !bestAtSize ||
+        winRate - stats.winRate > bestAtSize.winRate - stats.winRate ||
+        (winRate === bestAtSize.winRate && games.length > bestAtSize.games.length)
+      ) {
+        bestAtSize = {
+          games,
+          wins,
+          winRate,
+          matchedItemCount: size
+        };
+      }
+    }
+
+    if (bestAtSize) {
+      selected = bestAtSize;
       break;
     }
-
-    if (threshold === targetItemIds.length) {
-      matchingGames = games;
-    }
   }
-
-  const buildWins = matchingGames.filter((game) => game.win).length;
 
   return {
     ...stats,
     targetItemIds,
-    buildWins,
-    buildGames: matchingGames.length,
-    buildWinRate: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? Math.round((buildWins / matchingGames.length) * 1000) / 10 : undefined,
-    buildSampleMatches: new Set(matchingGames.map((game) => game.matchId)).size,
-    buildMatchedItemCount: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? matchedItemCount : undefined
+    buildWins: selected?.wins,
+    buildGames: selected?.games.length,
+    buildWinRate: selected?.winRate,
+    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : undefined,
+    buildMatchedItemCount: selected?.matchedItemCount
   };
-}
-
-function countTargetItemsForUi(itemIds: string[], target: Set<string>) {
-  return itemIds.reduce((count, itemId) => count + (target.has(itemId) ? 1 : 0), 0);
 }
 
 function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
@@ -543,21 +569,23 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 
 function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number): ItemBuildChallenge {
   const seed = `${base.date}:item-build-infinite:${round}`;
+  const buildCandidateIds = buildCandidateItemIdsForUi(itemCatalog);
   const sampledChampions = champions
-    .filter((champion) => (base.winrateSamples?.[champion.id]?.games ?? 0) >= MIN_BUILD_WINRATE_GAMES)
+    .filter((champion) => hasPositiveBuildItemSampleForUi(base.winrateSamples?.[champion.id], buildCandidateIds))
     .sort((a, b) => (base.winrateSamples?.[b.id]?.games ?? 0) - (base.winrateSamples?.[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
     .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
   const champion = championPool[hashString(`${seed}:champion`) % championPool.length];
   const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
   const sampleItemFrequency = buildItemFrequencyForUi(base.winrateSamples?.[champion.id]);
+  const positiveItemSamples = buildPositiveItemSamplesForUi(base.winrateSamples?.[champion.id]);
   const candidateItems = itemCatalog
-    .filter((item) => item.goldTotal >= 2200 && item.purchasable && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
-    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12 }))
+    .filter(isBuildCandidateItemForUi)
+    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
   const bootCandidates = itemCatalog
     .filter((item) => isBuildBootUpgrade(item))
-    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12 }))
+    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
 
   if (candidateItems.length < 5 || bootCandidates.length === 0) {
@@ -605,6 +633,93 @@ function buildItemFrequencyForUi(stats: ItemBuildChallenge["winrateStats"] | und
   }
 
   return frequency;
+}
+
+function buildCandidateItemIdsForUi(itemCatalog: GameItem[]) {
+  return new Set(itemCatalog.filter((item) => isBuildCandidateItemForUi(item) || isBuildBootUpgrade(item)).map((item) => item.id));
+}
+
+function hasPositiveBuildItemSampleForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, candidateItemIds: Set<string>) {
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
+    return false;
+  }
+
+  for (const [itemId] of buildPositiveItemSamplesForUi(stats)) {
+    if (candidateItemIds.has(itemId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildPositiveItemSamplesForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
+  const samples = new Map<string, { wins: number; games: number; winRate: number; lift: number }>();
+
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
+    return samples;
+  }
+
+  const raw = new Map<string, { wins: number; games: number }>();
+
+  for (const game of stats.inventorySamples ?? []) {
+    for (const itemId of uniqueStringsForUi(game.itemIds)) {
+      const current = raw.get(itemId) ?? { wins: 0, games: 0 };
+      current.games += 1;
+      current.wins += game.win ? 1 : 0;
+      raw.set(itemId, current);
+    }
+  }
+
+  for (const [itemId, itemStats] of raw) {
+    if (itemStats.games < MIN_BUILD_WINRATE_GAMES) {
+      continue;
+    }
+
+    const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
+
+    if (winRate > stats.winRate) {
+      samples.set(itemId, {
+        ...itemStats,
+        winRate,
+        lift: winRate - stats.winRate
+      });
+    }
+  }
+
+  return samples;
+}
+
+function sampleItemScoreForUi(itemId: string, frequency: Map<string, number>, positiveSamples: Map<string, { games: number; lift: number }>) {
+  const positive = positiveSamples.get(itemId);
+
+  return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
+}
+
+function combinationsForUi(values: string[], size: number) {
+  const result: string[][] = [];
+
+  function visit(start: number, picked: string[]) {
+    if (picked.length === size) {
+      result.push(picked);
+      return;
+    }
+
+    for (let index = start; index < values.length; index += 1) {
+      visit(index + 1, [...picked, values[index]]);
+    }
+  }
+
+  visit(0, []);
+  return result;
+}
+
+function uniqueStringsForUi(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function isBuildCandidateItemForUi(item: GameItem) {
+  return item.purchasable && item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket") && !item.tags.includes("Boots");
 }
 
 function scoreBuildItemForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {
@@ -1098,6 +1213,172 @@ function isRecipeComponentChoice(item: GameItem, itemCatalog: GameItem[]) {
 }
 
 type EloRound = GuessEloRound;
+type MatchupSide = "left" | "right";
+
+export function ChampionMatchupGame({ challenge, username = "Guest" }: { challenge: ChampionMatchupChallenge; username?: string }) {
+  const rounds = useMemo(() => createChampionMatchupRounds(challenge), [challenge]);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [answer, setAnswer] = useState<MatchupSide | "">("");
+  const [submitted, setSubmitted] = useState(false);
+  const [streak, recordStreak] = usePersonalModeStreak("champion-matchup", username);
+  const round = rounds[roundIndex % rounds.length];
+  const correct = submitted && answer === round.answerSide;
+
+  function choose(side: MatchupSide) {
+    if (submitted) {
+      return;
+    }
+
+    setAnswer(side);
+    setSubmitted(true);
+    recordStreak(side === round.answerSide);
+  }
+
+  function nextRound() {
+    setRoundIndex((current) => current + 1);
+    setAnswer("");
+    setSubmitted(false);
+  }
+
+  return (
+    <PuzzleFrame icon={<Swords size={18} />} title="Champion Matchup">
+      {round.unavailableReason ? (
+        <VerifiedDataUnavailable reason={round.unavailableReason} />
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
+          <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+          <div className="grid min-h-[30rem] gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-3 lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
+            <MatchupChampionCard side="left" pick={round.left} revealed selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
+            <div className="grid place-items-center">
+              <div className="grid h-20 w-20 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-2xl font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)]">
+                VS
+              </div>
+            </div>
+            <MatchupChampionCard side="right" pick={round.right} revealed={submitted} selected={answer === "right"} submitted={submitted} correctSide={round.answerSide === "right"} />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => choose("left")}
+              disabled={submitted}
+              className={cn(
+                "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
+                answer === "left" && correct && "border-green-300 bg-green-500 text-[#071018]",
+                answer === "left" && !correct && submitted && "border-red-300 bg-red-500 text-white",
+                answer !== "left" && submitted && round.answerSide === "left" && "border-green-400/70 bg-green-500/18 text-green-100",
+                !submitted && "border-[#3c3421] bg-[#111722] text-[#f1d58a] hover:border-[#c89b3c] hover:bg-[#c89b3c]/12"
+              )}
+            >
+              {round.left.champion.name} wins more
+            </button>
+            <button
+              type="button"
+              onClick={() => choose("right")}
+              disabled={submitted}
+              className={cn(
+                "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
+                answer === "right" && correct && "border-green-300 bg-green-500 text-[#071018]",
+                answer === "right" && !correct && submitted && "border-red-300 bg-red-500 text-white",
+                answer !== "right" && submitted && round.answerSide === "right" && "border-green-400/70 bg-green-500/18 text-green-100",
+                !submitted && "border-[#3c3421] bg-[#111722] text-[#f1d58a] hover:border-[#c89b3c] hover:bg-[#c89b3c]/12"
+              )}
+            >
+              {round.right.champion.name} wins more
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ResultPill submitted={submitted} correct={correct} answer={round.answerSide === "left" ? round.left.champion.name : round.right.champion.name} />
+            {submitted && (
+              <Button type="button" onClick={nextRound}>
+                Next matchup
+              </Button>
+            )}
+            <span className="text-xs text-[color:var(--muted)]">{round.dataSource}</span>
+          </div>
+          {submitted && (
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              <MatchupRevealLine pick={round.left} />
+              <MatchupRevealLine pick={round.right} />
+            </div>
+          )}
+        </div>
+      )}
+    </PuzzleFrame>
+  );
+}
+
+function MatchupChampionCard({
+  side,
+  pick,
+  revealed,
+  selected,
+  submitted,
+  correctSide
+}: {
+  side: MatchupSide;
+  pick: ChampionMatchupRound["left"];
+  revealed: boolean;
+  selected: boolean;
+  submitted: boolean;
+  correctSide: boolean;
+}) {
+  const tone = submitted && correctSide ? "border-green-400/70 shadow-[0_0_36px_rgba(74,222,128,.18)]" : submitted && selected ? "border-red-400/70 shadow-[0_0_36px_rgba(248,113,113,.16)]" : "border-[#3c3421]";
+
+  return (
+    <article className={cn("relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
+      <div className="absolute inset-0 bg-cover bg-center opacity-72" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.20),transparent_34%),linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
+      <div className="relative flex h-full min-h-[30rem] flex-col justify-between p-5">
+        <div className={cn("flex items-center gap-2", side === "right" && "justify-end text-right")}>
+          <span className="rounded-sm border border-[#c89b3c]/45 bg-[#050607]/82 px-3 py-1 font-display text-xs font-bold uppercase tracking-[0.12em] text-[#f1d58a]">
+            {pick.role}
+          </span>
+          <span className="rounded-sm border border-white/10 bg-[#050607]/70 px-3 py-1 text-xs text-[color:var(--muted)]">
+            {pick.sampleMatches} match{pick.sampleMatches === 1 ? "" : "es"}
+          </span>
+        </div>
+        <div className={cn("grid gap-4", side === "right" && "justify-items-end text-right")}>
+          <div>
+            <div className="font-display text-5xl font-black leading-none tracking-tight text-white drop-shadow">{pick.champion.name}</div>
+            <div className="mt-2 text-sm uppercase tracking-[0.12em] text-[#c89b3c]">{pick.champion.title}</div>
+          </div>
+          <div className={cn("grid max-w-xs gap-2 rounded-sm border border-white/10 bg-[#050607]/78 p-4 backdrop-blur", !revealed && "border-[#c89b3c]/35")}>
+            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.1em] text-[color:var(--muted)]">
+              <TrendingUp size={14} />
+              Same-lane sample
+            </div>
+            {revealed ? (
+              <>
+                <div className={cn("font-display text-5xl font-black leading-none", submitted && correctSide ? "text-green-300" : "text-[#f1d58a]")}>{pick.winRate.toFixed(1)}%</div>
+                <div className="text-sm text-[color:var(--muted)]">{pick.wins}W / {pick.games}G against this pick</div>
+              </>
+            ) : (
+              <>
+                <div className="font-display text-5xl font-black leading-none text-[#f1d58a]">?.?%</div>
+                <div className="text-sm text-[color:var(--muted)]">Higher or lower?</div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function MatchupRevealLine({ pick }: { pick: ChampionMatchupRound["left"] }) {
+  return (
+    <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
+      <div className="text-xs uppercase text-[#c89b3c]">{pick.champion.name} {pick.role}</div>
+      <div className="mt-1 text-sm text-[color:var(--muted)]">
+        {pick.winRate.toFixed(1)}% sampled winrate, {pick.wins} wins over {pick.games} verified same-lane matchup game{pick.games === 1 ? "" : "s"}.
+      </div>
+    </div>
+  );
+}
+
+function createChampionMatchupRounds(base: ChampionMatchupChallenge): ChampionMatchupRound[] {
+  return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
+}
 
 export function GuessEloGame({ challenge, username = "Guest" }: { challenge: GuessEloChallenge; username?: string }) {
   const rounds = useMemo(() => createEloRounds(challenge), [challenge]);

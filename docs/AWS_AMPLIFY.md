@@ -43,10 +43,10 @@ Use these values:
 - `NEXTAUTH_SECRET`: long random secret.
 - `CHALLENGE_SALT`: long random secret used for deterministic daily seeds.
 - `CRON_SECRET`: long random secret for `/api/cron/generate-daily`.
-- `RIOT_API_KEY`: required for Guess the Elo and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments and summoner spells are real.
+- `RIOT_API_KEY`: required for Guess the Elo, Champion Matchup, and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments, matchup samples, and summoner spells are real.
 - `RIOT_REGION`: `na1` unless you want a different Riot platform route.
 - `RIOT_MATCH_SAMPLE_SIZE`: number of verified ranked matches to prepare for infinite-style Elo/Lobby queues. `16` is a good free-tier default.
-- `RIOT_BUILD_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Build baseline/correct-build winrate samples. `64` gives the Build game a better chance of 5+ game champion samples.
+- `RIOT_BUILD_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Build baseline/correct-build winrate samples. `128` is the recommended production value so Build stats can require 20+ verified games before appearing.
 
 Generate secrets locally:
 

@@ -1,5 +1,7 @@
 import type {
   BuildWinrateStats,
+  ChampionMatchupChallenge,
+  ChampionMatchupRound,
   DodgeQueueChallenge,
   DodgeQueueRound,
   ExpandedDailyChallenges,
@@ -14,7 +16,8 @@ import type {
 
 import { getUtcDateKey, seededIndex } from "./daily";
 
-const MIN_BUILD_WINRATE_GAMES = 5;
+const MIN_BUILD_WINRATE_GAMES = 20;
+const POSITIVE_BUILD_ITEM_BOOST = 1200;
 
 export async function generateExpandedDailyChallenges(
   version: string,
@@ -24,6 +27,7 @@ export async function generateExpandedDailyChallenges(
   verifiedMatches?: {
     guessEloRounds: GuessEloRound[];
     dodgeQueueRounds: DodgeQueueRound[];
+    championMatchupRounds?: ChampionMatchupRound[];
     championWinrateSamples?: Record<string, BuildWinrateStats>;
     message?: string;
   },
@@ -43,6 +47,7 @@ export async function generateExpandedDailyChallenges(
     itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`, gameItems),
     guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.message),
     dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.message),
+    championMatchup: generateChampionMatchupChallenge(dateKey, verifiedMatches?.championMatchupRounds ?? [], verifiedMatches?.message),
     skillshotDodge: generateSkillshotDodgeChallenge(dateKey)
   };
 }
@@ -55,26 +60,28 @@ function generateItemBuildChallenge(
   version: string,
   winrateSamples: Record<string, BuildWinrateStats>
 ): ItemBuildChallenge {
+  const buildCandidateIds = buildCandidateItemIds(itemCatalog);
   const sampledChampions = publicChampions
-    .filter((champion) => (winrateSamples[champion.id]?.games ?? 0) >= MIN_BUILD_WINRATE_GAMES)
+    .filter((champion) => hasPositiveBuildItemSample(winrateSamples[champion.id], buildCandidateIds))
     .sort((a, b) => (winrateSamples[b.id]?.games ?? 0) - (winrateSamples[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
     .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : publicChampions;
   const champion = championPool[seededIndex(seed, championPool.length)];
   const enemyTeam = pickUnique(publicChampions, `${seed}:enemy`, 5, [champion.id]);
   const sampleItemFrequency = buildItemFrequency(winrateSamples[champion.id]);
+  const positiveItemSamples = buildPositiveItemSamples(winrateSamples[champion.id]);
   const candidateItems = itemCatalog
-    .filter((item) => item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
+    .filter(isBuildCandidateItem)
     .map((item) => ({
       item,
-      score: scoreItemForMatchup(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12
+      score: scoreItemForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
     }))
     .sort((a, b) => b.score - a.score);
   const bootCandidates = itemCatalog
     .filter((item) => isBootUpgrade(item))
     .map((item) => ({
       item,
-      score: scoreBootsForMatchup(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12
+      score: scoreBootsForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
     }))
     .sort((a, b) => b.score - a.score);
   const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
@@ -129,40 +136,148 @@ function withTargetBuildWinrate(stats: BuildWinrateStats | undefined, targetItem
     return undefined;
   }
 
-  const target = new Set(targetItemIds);
   const samples = stats.inventorySamples ?? [];
-  let matchingGames: typeof samples = [];
-  let matchedItemCount = targetItemIds.length;
+  const targetIds = uniqueStrings(targetItemIds);
+  let selected: {
+    games: typeof samples;
+    wins: number;
+    winRate: number;
+    matchedItemCount: number;
+  } | undefined;
 
-  for (let threshold = targetItemIds.length; threshold >= 1; threshold -= 1) {
-    const games = samples.filter((game) => countTargetItems(game.itemIds, target) >= threshold);
+  for (let size = targetIds.length; size >= 1; size -= 1) {
+    let bestAtSize: typeof selected;
 
-    if (games.length >= MIN_BUILD_WINRATE_GAMES) {
-      matchingGames = games;
-      matchedItemCount = threshold;
+    for (const subset of combinations(targetIds, size)) {
+      const games = samples.filter((game) => subset.every((itemId) => game.itemIds.includes(itemId)));
+
+      if (games.length < MIN_BUILD_WINRATE_GAMES) {
+        continue;
+      }
+
+      const wins = games.filter((game) => game.win).length;
+      const winRate = Math.round((wins / games.length) * 1000) / 10;
+
+      if (winRate <= stats.winRate) {
+        continue;
+      }
+
+      if (
+        !bestAtSize ||
+        winRate - stats.winRate > bestAtSize.winRate - stats.winRate ||
+        (winRate === bestAtSize.winRate && games.length > bestAtSize.games.length)
+      ) {
+        bestAtSize = {
+          games,
+          wins,
+          winRate,
+          matchedItemCount: size
+        };
+      }
+    }
+
+    if (bestAtSize) {
+      selected = bestAtSize;
       break;
     }
-
-    if (threshold === targetItemIds.length) {
-      matchingGames = games;
-    }
   }
-
-  const buildWins = matchingGames.filter((game) => game.win).length;
 
   return {
     ...stats,
     targetItemIds,
-    buildWins,
-    buildGames: matchingGames.length,
-    buildWinRate: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? Math.round((buildWins / matchingGames.length) * 1000) / 10 : undefined,
-    buildSampleMatches: new Set(matchingGames.map((game) => game.matchId)).size,
-    buildMatchedItemCount: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? matchedItemCount : undefined
+    buildWins: selected?.wins,
+    buildGames: selected?.games.length,
+    buildWinRate: selected?.winRate,
+    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : undefined,
+    buildMatchedItemCount: selected?.matchedItemCount
   };
 }
 
-function countTargetItems(itemIds: string[], target: Set<string>) {
-  return itemIds.reduce((count, itemId) => count + (target.has(itemId) ? 1 : 0), 0);
+function buildCandidateItemIds(itemCatalog: GameItem[]) {
+  return new Set(itemCatalog.filter((item) => isBuildCandidateItem(item) || isBootUpgrade(item)).map((item) => item.id));
+}
+
+function hasPositiveBuildItemSample(stats: BuildWinrateStats | undefined, candidateItemIds: Set<string>) {
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
+    return false;
+  }
+
+  for (const [itemId] of buildPositiveItemSamples(stats)) {
+    if (candidateItemIds.has(itemId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildPositiveItemSamples(stats: BuildWinrateStats | undefined) {
+  const samples = new Map<string, { wins: number; games: number; winRate: number; lift: number }>();
+
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
+    return samples;
+  }
+
+  const raw = new Map<string, { wins: number; games: number }>();
+
+  for (const game of stats.inventorySamples ?? []) {
+    for (const itemId of uniqueStrings(game.itemIds)) {
+      const current = raw.get(itemId) ?? { wins: 0, games: 0 };
+      current.games += 1;
+      current.wins += game.win ? 1 : 0;
+      raw.set(itemId, current);
+    }
+  }
+
+  for (const [itemId, itemStats] of raw) {
+    if (itemStats.games < MIN_BUILD_WINRATE_GAMES) {
+      continue;
+    }
+
+    const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
+
+    if (winRate > stats.winRate) {
+      samples.set(itemId, {
+        ...itemStats,
+        winRate,
+        lift: winRate - stats.winRate
+      });
+    }
+  }
+
+  return samples;
+}
+
+function sampleItemScore(itemId: string, frequency: Map<string, number>, positiveSamples: Map<string, { games: number; lift: number }>) {
+  const positive = positiveSamples.get(itemId);
+
+  return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
+}
+
+function combinations(values: string[], size: number) {
+  const result: string[][] = [];
+
+  function visit(start: number, picked: string[]) {
+    if (picked.length === size) {
+      result.push(picked);
+      return;
+    }
+
+    for (let index = start; index < values.length; index += 1) {
+      visit(index + 1, [...picked, values[index]]);
+    }
+  }
+
+  visit(0, []);
+  return result;
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function isBuildCandidateItem(item: GameItem) {
+  return item.purchasable && item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket") && !item.tags.includes("Boots");
 }
 
 function generateItemRecipeChallenge(date: string, seed: string, itemCatalog: GameItem[]): ItemRecipeChallenge {
@@ -238,6 +353,49 @@ function generateDodgeQueueChallenge(date: string, rounds: DodgeQueueRound[], un
     ...first,
     type: "dodge-queue",
     rounds
+  };
+}
+
+function generateChampionMatchupChallenge(date: string, rounds: ChampionMatchupRound[], unavailableReason?: string): ChampionMatchupChallenge {
+  const fallback: ChampionMatchupRound = {
+    id: `${date}:champion-matchup-unavailable`,
+    date,
+    left: emptyMatchupPick(),
+    right: emptyMatchupPick(),
+    answerSide: "left",
+    dataSource: "Riot Match-V5",
+    unavailableReason: unavailableReason ?? "Riot Match-V5 ranked matchup data is not configured."
+  };
+  const first = rounds[0] ?? fallback;
+
+  return {
+    ...first,
+    type: "champion-matchup",
+    rounds
+  };
+}
+
+function emptyMatchupPick() {
+  const champion: PublicChampion = {
+    id: "",
+    name: "Unknown",
+    title: "",
+    roles: [],
+    region: "",
+    resource: "",
+    gender: "",
+    releaseYear: 0,
+    squareUrl: "",
+    splashUrl: ""
+  };
+
+  return {
+    champion,
+    role: "Lane",
+    wins: 0,
+    games: 0,
+    winRate: 0,
+    sampleMatches: 0
   };
 }
 

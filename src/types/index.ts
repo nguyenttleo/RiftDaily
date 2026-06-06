@@ -5,6 +5,7 @@ export type ChallengeType =
   | "item-recipe"
   | "guess-elo"
   | "dodge-queue"
+  | "champion-matchup"
   | "skillshot-dodge";
 export type AbilitySlot = "P" | "Q" | "W" | "E" | "R";
 export type DamageType = "Physical" | "Magic" | "True" | "Mixed" | "Utility";
@@ -212,6 +213,30 @@ export interface DodgeQueueChallenge extends DodgeQueueRound {
   rounds?: DodgeQueueRound[];
 }
 
+export interface ChampionMatchupPick {
+  champion: PublicChampion;
+  role: string;
+  wins: number;
+  games: number;
+  winRate: number;
+  sampleMatches: number;
+}
+
+export interface ChampionMatchupRound {
+  id: string;
+  date: string;
+  left: ChampionMatchupPick;
+  right: ChampionMatchupPick;
+  answerSide: "left" | "right";
+  dataSource: string;
+  unavailableReason?: string;
+}
+
+export interface ChampionMatchupChallenge extends ChampionMatchupRound {
+  type: "champion-matchup";
+  rounds?: ChampionMatchupRound[];
+}
+
 export interface SkillshotDodgeChallenge {
   id: string;
   type: "skillshot-dodge";
@@ -235,6 +260,7 @@ export interface ExpandedDailyChallenges {
   itemRecipe: ItemRecipeChallenge;
   guessElo: GuessEloChallenge;
   dodgeQueue: DodgeQueueChallenge;
+  championMatchup: ChampionMatchupChallenge;
   skillshotDodge: SkillshotDodgeChallenge;
 }
 
