@@ -16,6 +16,7 @@ const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
 const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
+const MIN_BUILD_SAMPLE_GAMES = 5;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
 const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_REQUEST = 100;
@@ -250,7 +251,7 @@ export async function getVerifiedRankedMatchChallenges({
   const analysisTargetMatchCount = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
   const analysisFetchBudget = shouldCollectLiveMatchups
     ? Math.min(MAX_ANALYSIS_MATCH_FETCH_BUDGET, Math.max(analysisTargetMatchCount, requestedMatchupSampleSize * 3))
-    : analysisTargetMatchCount;
+    : Math.max(analysisTargetMatchCount, requestedBuildSampleSize * 3);
   const matchIdsPerSourceBudget = MATCH_IDS_PER_REQUEST * (shouldCollectLiveMatchups ? matchHistoryPagesPerSource : 1);
   const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisFetchBudget / RANK_BUCKETS.length));
   const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / matchIdsPerSourceBudget) + 1));
@@ -370,6 +371,7 @@ export async function getVerifiedRankedMatchChallenges({
           requestedBuildSampleSize,
           requestedMatchupSampleSize,
           shouldCollectLiveMatchups,
+          championWinrates,
           championMatchupSamples
         ) ||
         seenMatches.size >= analysisFetchBudget
@@ -399,6 +401,7 @@ export async function getVerifiedRankedMatchChallenges({
             requestedBuildSampleSize,
             requestedMatchupSampleSize,
             shouldCollectLiveMatchups,
+            championWinrates,
             championMatchupSamples
           ) ||
           seenMatches.size >= analysisFetchBudget
@@ -450,6 +453,7 @@ export async function getVerifiedRankedMatchChallenges({
     const guessEloRounds = orderRoundsWithoutConsecutivePlayers(collectedGuessEloRounds, `${date}:guess-elo-round-order`, guessEloRoundPlayers);
     const orderedDodgeQueueRounds = orderRoundsWithoutConsecutivePlayers(dodgeQueueRounds, `${date}:dodge-queue-round-order`, dodgeQueueRoundPlayers);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
+    const hasVerifiedBuildSamples = hasBuildWinrateCandidate(championWinrates);
     const liveChampionMatchupRounds = toChampionMatchupRounds(championMatchupSamples, date);
     const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
     const championMatchupRounds = mergeChampionMatchupRounds(refreshedPersistedChampionMatchupRounds, liveChampionMatchupRounds);
@@ -484,11 +488,13 @@ export async function getVerifiedRankedMatchChallenges({
       ...(championMatchupMessage ? { championMatchupMessage } : {})
     };
 
-    cachedMatchSet = {
-      key: cacheKey,
-      expiresAt: Date.now() + 1000 * 60 * 60 * 2,
-      value
-    };
+    if (hasVerifiedBuildSamples) {
+      cachedMatchSet = {
+        key: cacheKey,
+        expiresAt: Date.now() + 1000 * 60 * 60 * 2,
+        value
+      };
+    }
 
     return value;
   } catch (error) {
@@ -855,14 +861,20 @@ function isAnalysisComplete(
   requestedBuildSampleSize: number,
   requestedMatchupSampleSize: number,
   needsLiveMatchupRounds: boolean,
+  championWinrates: Map<string, WinrateAccumulator>,
   championMatchupSamples: Map<string, ChampionMatchupAccumulator>
 ) {
   return (
     seenMatchCount >= requestedBuildSampleSize &&
+    hasBuildWinrateCandidate(championWinrates) &&
     (!needsLiveMatchupRounds ||
       eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS ||
       currentPatchMatchupMatchCount >= requestedMatchupSampleSize)
   );
+}
+
+function hasBuildWinrateCandidate(championWinrates: Map<string, WinrateAccumulator>) {
+  return [...championWinrates.values()].some((sample) => sample.games >= MIN_BUILD_SAMPLE_GAMES);
 }
 
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
