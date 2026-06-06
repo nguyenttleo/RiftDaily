@@ -89,12 +89,44 @@ export interface BuildWinrateStats {
   source: string;
 }
 
+export interface VerifiedMatchData {
+  gameDurationSeconds?: number;
+  gameMode: string;
+  queueId: number;
+  mapId: number;
+  teams: Array<{
+    teamId: 100 | 200;
+    name: string;
+    win: boolean;
+    bans: PublicChampion[];
+    participants: Array<{
+      role: string;
+      playerName?: string;
+      champion: PublicChampion;
+      spells: SummonerSpellRef[];
+      items: Array<{
+        id: string;
+        imageUrl: string;
+      }>;
+      kills: number;
+      deaths: number;
+      assists: number;
+      cs: number;
+      gold: number;
+      damageToChampions: number;
+      visionScore: number;
+      championLevel: number;
+    }>;
+  }>;
+}
+
 export interface OptionItem {
   id: string;
   label: string;
   sublabel?: string;
   imageUrl?: string;
   spells?: SummonerSpellRef[];
+  playerName?: string;
 }
 
 export interface PublicAbilityChallenge {
@@ -163,11 +195,13 @@ export interface GuessEloRound {
     role: string;
     champion: PublicChampion;
     spells: SummonerSpellRef[];
+    playerName?: string;
   }>;
   enemyLanes: Array<{
     role: string;
     champion: PublicChampion;
     spells: SummonerSpellRef[];
+    playerName?: string;
   }>;
   options: string[];
   answerTier: string;
@@ -175,9 +209,13 @@ export interface GuessEloRound {
   dataSource: string;
   sourceMatch?: {
     matchId: string;
+    gameId?: number;
     gameVersion: string;
+    gameCreation?: number;
     queueId: number;
     platform: string;
+    sourcePlayer?: string;
+    matchData?: VerifiedMatchData;
   };
   unavailableReason?: string;
 }
@@ -194,16 +232,22 @@ export interface DodgeQueueRound {
   enemyTeam: PublicChampion[];
   allySpells: SummonerSpellRef[][];
   enemySpells: SummonerSpellRef[][];
+  allyPlayerNames?: string[];
+  enemyPlayerNames?: string[];
   allyBans: PublicChampion[];
   enemyBans: PublicChampion[];
   answer: "queue" | "dodge";
   explanation: string;
   sourceMatch?: {
     matchId: string;
+    gameId?: number;
     gameVersion: string;
+    gameCreation?: number;
     queueId: number;
     platform: string;
     allyTeamWon: boolean;
+    sourcePlayer?: string;
+    matchData?: VerifiedMatchData;
   };
   unavailableReason?: string;
 }

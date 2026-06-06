@@ -31,6 +31,9 @@ export async function generateExpandedDailyChallenges(
     championWinrateSamples?: Record<string, BuildWinrateStats>;
     status?: "ready" | "unconfigured" | "unavailable";
     message?: string;
+    guessEloMessage?: string;
+    dodgeQueueMessage?: string;
+    championMatchupMessage?: string;
   },
   date = new Date()
 ): Promise<ExpandedDailyChallenges> {
@@ -46,12 +49,12 @@ export async function generateExpandedDailyChallenges(
       verifiedMatches?.championWinrateSamples ?? {}
     ),
     itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`, gameItems),
-    guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.message),
-    dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.message),
+    guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.guessEloMessage ?? verifiedMatches?.message),
+    dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.dodgeQueueMessage ?? verifiedMatches?.message),
     championMatchup: generateChampionMatchupChallenge(
       dateKey,
       verifiedMatches?.championMatchupRounds ?? [],
-      verifiedMatches?.status === "unconfigured" ? verifiedMatches.message : undefined
+      verifiedMatches?.championMatchupMessage ?? (verifiedMatches?.status === "unconfigured" ? verifiedMatches.message : undefined)
     ),
     skillshotDodge: generateSkillshotDodgeChallenge(dateKey)
   };
@@ -391,7 +394,8 @@ function generateChampionMatchupChallenge(date: string, rounds: ChampionMatchupR
     right: emptyMatchupPick(),
     answerSide: "left",
     dataSource: "Riot Match-V5",
-    unavailableReason: unavailableReason ?? "Champion Matchup needs at least two different lane samples with 20+ verified Riot Match-V5 ranked games."
+    unavailableReason:
+      unavailableReason ?? "Champion Matchup needs verified Riot Match-V5 ranked games where both selected champion-lane picks appear on opposite teams in the same match."
   };
   const first = rounds[0] ?? fallback;
 

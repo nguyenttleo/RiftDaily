@@ -9,7 +9,8 @@ import {
   seededIndex
 } from "@/game/generators/daily";
 import { env, isDatabaseConfigured } from "@/lib/env";
-import { getLatestDataDragonVersion } from "@/lib/riot/data-dragon";
+import { getLatestDataDragonVersion, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
+import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
 import type { ChallengeType } from "@/types";
 
 export const runtime = "nodejs";
@@ -42,6 +43,16 @@ async function generate(request: Request) {
   const version = await getLatestDataDragonVersion();
   const ability = await ensureChallenge("ability", date, version);
   const champion = await ensureChallenge("champion", date, version);
+  const [publicChampions, summonerSpells] = await Promise.all([
+    getLivePublicChampions(version),
+    getLiveSummonerSpells(version)
+  ]);
+  const verified = await getVerifiedRankedMatchChallenges({
+    date,
+    publicChampions,
+    summonerSpells,
+    allowLiveMatchupCollection: true
+  });
 
   return NextResponse.json({
     ok: true,
@@ -49,6 +60,13 @@ async function generate(request: Request) {
     challenges: {
       ability,
       champion
+    },
+    verified: {
+      guessEloRounds: verified.guessEloRounds.length,
+      dodgeQueueRounds: verified.dodgeQueueRounds.length,
+      championMatchupRounds: verified.championMatchupRounds.length,
+      status: verified.status,
+      message: verified.message
     }
   });
 }

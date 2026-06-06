@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
+import { CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -18,7 +18,8 @@ import type {
   ItemRecipeChallenge,
   OptionItem,
   PublicChampion,
-  SummonerSpellRef
+  SummonerSpellRef,
+  VerifiedMatchData
 } from "@/types";
 
 const BUILD_MAX_GUESSES = 6;
@@ -38,7 +39,8 @@ export function ItemBuildGame({
   items?: GameItem[];
   username?: string;
 }) {
-  const rounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
+  const generatedRounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
+  const rounds = useRandomizedRounds(generatedRounds, "item-build", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
@@ -359,6 +361,8 @@ function BuildWordleModal({
   onReset: () => void;
   onNext: () => void;
 }) {
+  useBodyScrollLock();
+
   const answerSet = new Set(round.answerItemIds);
   const targetItems = round.answerItemIds
     .map((id) => round.possibleItems.find((item) => item.id === id))
@@ -368,7 +372,7 @@ function BuildWordleModal({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-md border border-[#c89b3c]/60 bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)]">
+      <div className="w-full max-w-xl rounded-xl border border-[#c89b3c]/60 bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)]">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="font-display text-3xl font-extrabold text-[#f5c542]">{solved ? "Build diff." : "Shopkeeper wins."}</div>
@@ -379,7 +383,7 @@ function BuildWordleModal({
           <button
             type="button"
             onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-sm border border-white/10 bg-white/5 text-[color:var(--muted)] transition hover:border-[#c89b3c] hover:text-white"
+            className="grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-white/5 text-[color:var(--muted)] transition hover:border-[#c89b3c] hover:text-white"
             aria-label="Close result"
           >
             <X size={16} />
@@ -389,7 +393,7 @@ function BuildWordleModal({
           {guesses.map((guess, rowIndex) => (
             <div key={`${guess.boots}:${rowIndex}`} className="grid grid-cols-6 gap-1.5">
               {[...guess.items.map((id) => answerSet.has(id)), guess.boots === round.answerBootsId].map((correct, index) => (
-                <div key={index} className={cn("h-8 rounded-sm border", correct ? "border-green-300/60 bg-green-500/70" : "border-white/10 bg-[#2b313d]")} />
+                <div key={index} className={cn("h-8 rounded-md border", correct ? "border-green-300/60 bg-green-500/70" : "border-white/10 bg-[#2b313d]")} />
               ))}
             </div>
           ))}
@@ -398,7 +402,7 @@ function BuildWordleModal({
           <div className="text-xs uppercase text-[#c89b3c]">Target Build</div>
           <div className="mt-2 grid grid-cols-6 gap-2">
             {targetBuild.map((item) => (
-              <div key={item.id} className="grid min-h-16 place-items-center rounded-sm border border-green-400/45 bg-green-500/12 p-1 text-center">
+              <div key={item.id} className="grid min-h-16 place-items-center rounded-md border border-green-400/45 bg-green-500/12 p-1 text-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
                 <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
@@ -815,7 +819,8 @@ function isBuildBootUpgrade(item: GameItem) {
 }
 
 export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = "Guest" }: { challenge: ItemRecipeChallenge; items?: GameItem[]; username?: string }) {
-  const rounds = useMemo(() => createRecipeRounds(challenge, itemCatalog), [challenge, itemCatalog]);
+  const generatedRounds = useMemo(() => createRecipeRounds(challenge, itemCatalog), [challenge, itemCatalog]);
+  const rounds = useRandomizedRounds(generatedRounds, "item-recipe", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -1155,6 +1160,44 @@ function InfiniteStreakBar({ round, current, best }: { round: number; current: n
   );
 }
 
+function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: string, username: string) {
+  const [loadSeed] = useState(() => `${Date.now()}:${Math.random()}`);
+  const storageKey = `rift-daily:last-first-round:${gameKey}:${normalize(username || "guest")}`;
+  const orderedRounds = useMemo(() => {
+    if (rounds.length <= 1) {
+      return rounds;
+    }
+
+    const randomized = [...rounds].sort((a, b) => {
+      const aHash = hashString(`${loadSeed}:${a.id}`);
+      const bHash = hashString(`${loadSeed}:${b.id}`);
+
+      return aHash - bHash || a.id.localeCompare(b.id);
+    });
+    const lastFirstRoundId = typeof window === "undefined" ? "" : window.localStorage.getItem(storageKey);
+
+    if (lastFirstRoundId && randomized[0]?.id === lastFirstRoundId) {
+      const swapIndex = randomized.findIndex((round) => round.id !== lastFirstRoundId);
+
+      if (swapIndex > 0) {
+        [randomized[0], randomized[swapIndex]] = [randomized[swapIndex], randomized[0]];
+      }
+    }
+
+    return randomized;
+  }, [loadSeed, rounds, storageKey]);
+
+  useEffect(() => {
+    const firstRound = orderedRounds[0];
+
+    if (firstRound) {
+      window.localStorage.setItem(storageKey, firstRound.id);
+    }
+  }, [orderedRounds, storageKey]);
+
+  return orderedRounds;
+}
+
 function usePersonalModeStreak(gameKey: string, username: string) {
   const storageKey = `rift-daily:${gameKey}:${normalize(username || "guest")}`;
   const [streak, setStreak] = useState({ current: 0, best: 0, played: 0 });
@@ -1274,7 +1317,8 @@ type EloRound = GuessEloRound;
 type MatchupSide = "left" | "right";
 
 export function ChampionMatchupGame({ challenge, username = "Guest" }: { challenge: ChampionMatchupChallenge; username?: string }) {
-  const rounds = useMemo(() => createChampionMatchupRounds(challenge), [challenge]);
+  const generatedRounds = useMemo(() => createChampionMatchupRounds(challenge), [challenge]);
+  const rounds = useRandomizedRounds(generatedRounds, "champion-matchup", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState<MatchupSide | "">("");
   const [submitted, setSubmitted] = useState(false);
@@ -1439,10 +1483,12 @@ function createChampionMatchupRounds(base: ChampionMatchupChallenge): ChampionMa
 }
 
 export function GuessEloGame({ challenge, username = "Guest" }: { challenge: GuessEloChallenge; username?: string }) {
-  const rounds = useMemo(() => createEloRounds(challenge), [challenge]);
+  const generatedRounds = useMemo(() => createEloRounds(challenge), [challenge]);
+  const rounds = useRandomizedRounds(generatedRounds, "guess-elo", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [resultModalOpen, setResultModalOpen] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("guess-elo", username);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerTier;
@@ -1454,6 +1500,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
 
     setAnswer(option);
     setSubmitted(true);
+    setResultModalOpen(true);
 
     recordStreak(option === round.answerTier);
   }
@@ -1462,6 +1509,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
     setRoundIndex((current) => current + 1);
     setAnswer("");
     setSubmitted(false);
+    setResultModalOpen(false);
   }
 
   return (
@@ -1503,24 +1551,347 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
         <div className="flex flex-wrap gap-2">
           <ResultPill submitted={submitted} correct={correct} answer={round.answerTier} />
           {submitted && (
+            <Button type="button" variant="secondary" onClick={() => setResultModalOpen(true)}>
+              Result
+            </Button>
+          )}
+          {submitted && (
             <Button type="button" onClick={nextRound}>
               Next lobby
             </Button>
           )}
         </div>
-        {submitted && (
-          <div className="grid grid-cols-3 gap-2 text-sm">
-            {round.signalNotes.map((note) => (
-              <div key={note} className="rounded-sm border border-[#2b2f38] bg-[#111722] p-2">
-                {note}
-              </div>
-            ))}
-          </div>
+        {submitted && resultModalOpen && (
+          <VerifiedAnswerModal
+            title="Elo read locked"
+            correct={correct}
+            selectedLabel={answer}
+            answerLabel={round.answerTier}
+            selectedIcons={rankIcons(answer)}
+            answerIcons={rankIcons(round.answerTier)}
+            streak={streak}
+            sourceMatch={round.sourceMatch}
+            note={getGuessEloSourceRankNote(round.signalNotes)}
+            onClose={() => setResultModalOpen(false)}
+            onNext={nextRound}
+            nextLabel="Next lobby"
+          />
         )}
       </div>
       )}
     </PuzzleFrame>
   );
+}
+
+function getGuessEloSourceRankNote(notes: string[]) {
+  return notes.find((note) => note.toLowerCase().includes("source player official ranked tier")) ?? notes[0];
+}
+
+function VerifiedAnswerModal({
+  title,
+  correct,
+  selectedLabel,
+  answerLabel,
+  selectedIcons,
+  answerIcons,
+  streak,
+  sourceMatch,
+  note,
+  onClose,
+  onNext,
+  nextLabel
+}: {
+  title: string;
+  correct: boolean;
+  selectedLabel: string;
+  answerLabel: string;
+  selectedIcons?: string[];
+  answerIcons?: string[];
+  streak: { current: number; best: number; played: number };
+  sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"];
+  note?: string;
+  onClose: () => void;
+  onNext: () => void;
+  nextLabel: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  useBodyScrollLock();
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
+      <div
+        className={cn(
+          "grid w-full gap-4 overscroll-contain rounded-xl border bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)] transition-[max-width]",
+          expanded
+            ? "max-h-[calc(100vh-2rem)] max-w-[min(92rem,calc(100vw-2rem))] overflow-y-auto border-[#c89b3c]/70 fine-scrollbar"
+            : "max-h-[calc(100vh-2rem)] max-w-xl overflow-y-auto border-[#c89b3c]/60 fine-scrollbar"
+        )}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className={cn("font-display text-3xl font-extrabold", correct ? "text-green-300" : "text-red-300")}>
+              {correct ? "Correct call." : "Not this one."}
+            </div>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">{title}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-white/5 text-[color:var(--muted)] transition hover:border-[#c89b3c] hover:text-white"
+            aria-label="Close result"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <ResultStat label="Your Answer" value={selectedLabel || "No answer"} iconUrls={selectedIcons} tone={correct ? "good" : "bad"} />
+          <ResultStat label="Correct Answer" value={answerLabel} iconUrls={answerIcons} tone="gold" />
+          <ResultStat label="Current Streak" value={String(streak.current)} detail={`Best ${streak.best}`} tone={correct ? "good" : "muted"} />
+        </div>
+
+        {note && (
+          <div className="rounded-lg border border-[#2b2f38] bg-[#111722] p-3 text-sm text-[color:var(--muted)]">
+            {note}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+          {sourceMatch && (
+            <Button type="button" variant={expanded ? "secondary" : "primary"} onClick={() => setExpanded((current) => !current)}>
+              {expanded ? "Hide match data" : "View match data"}
+            </Button>
+          )}
+          <Button type="button" onClick={onNext}>
+            {nextLabel}
+          </Button>
+        </div>
+
+        {expanded && (
+          <div className="min-h-0 pr-1">
+            <MatchProofCard sourceMatch={sourceMatch} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function useBodyScrollLock() {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousPaddingRight = document.body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+    document.body.style.overflow = "hidden";
+
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.paddingRight = previousPaddingRight;
+    };
+  }, []);
+}
+
+function ResultStat({
+  label,
+  value,
+  detail,
+  iconUrls = [],
+  tone = "muted"
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  iconUrls?: string[];
+  tone?: "good" | "bad" | "gold" | "muted";
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-[#0b111b] p-3">
+      <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
+      {iconUrls.length > 0 && (
+        <div className="mt-2 flex min-h-12 items-center -space-x-4">
+          {iconUrls.map((src) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={src} src={src} alt="" className="h-12 w-12 object-contain drop-shadow-[0_8px_16px_rgba(0,0,0,.45)]" />
+          ))}
+        </div>
+      )}
+      <div
+        className={cn(
+          "mt-1 truncate font-display text-2xl font-extrabold",
+          tone === "good" && "text-green-300",
+          tone === "bad" && "text-red-300",
+          tone === "gold" && "text-[#f5c542]",
+          tone === "muted" && "text-white"
+        )}
+        title={value}
+      >
+        {value}
+      </div>
+      {detail && <div className="mt-1 text-xs text-[color:var(--muted)]">{detail}</div>}
+    </div>
+  );
+}
+
+function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"] }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!sourceMatch) {
+    return null;
+  }
+
+  const match = sourceMatch;
+
+  async function copyMatchId() {
+    await navigator.clipboard.writeText(match.matchId);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <div className="rounded-lg border border-[#3c3421] bg-[#0b111b] p-3 text-sm">
+      <div className="text-xs uppercase text-[#c89b3c]">Verified match proof</div>
+      <div className="mt-2 flex items-center gap-2">
+        <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-[color:var(--muted)]" title={match.matchId}>
+          {match.matchId}
+        </div>
+        <button
+          type="button"
+          onClick={copyMatchId}
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 font-display text-[10px] font-bold uppercase tracking-[0.08em] text-[#f0d99d] transition hover:border-[#c89b3c]/60 hover:bg-[#c89b3c]/12"
+        >
+          <Copy size={13} />
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      {match.sourcePlayer && <div className="mt-1 text-xs text-[color:var(--muted)]">Source player: {match.sourcePlayer}</div>}
+      {match.matchData ? (
+        <VerifiedMatchReport match={match.matchData} />
+      ) : (
+        <div className="mt-3 rounded-lg border border-[#2b2f38] bg-[#111722] p-2 text-xs text-[color:var(--muted)]">
+          Match details unavailable in this payload, but the exact Riot Match-V5 ID is shown above.
+        </div>
+      )}
+      <div className="mt-2 text-[11px] leading-snug text-[color:var(--muted)]">
+        Data comes from Riot Match-V5. No OP.GG-only match token required.
+      </div>
+    </div>
+  );
+}
+
+function VerifiedMatchReport({ match }: { match: VerifiedMatchData }) {
+  return (
+    <div className="mt-3 grid gap-3 rounded-lg border border-[#2b2f38] bg-[#050607]/80 p-3">
+      <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">
+        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Queue {match.queueId}</span>
+        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">{match.gameMode}</span>
+        <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">Map {match.mapId}</span>
+        {match.gameDurationSeconds && <span className="rounded-md border border-white/10 bg-white/5 px-2 py-1">{formatMatchDuration(match.gameDurationSeconds)}</span>}
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        {match.teams.map((team) => (
+          <MatchTeamPanel key={team.teamId} team={team} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MatchTeamPanel({ team }: { team: VerifiedMatchData["teams"][number] }) {
+  return (
+    <div className={cn("rounded-lg border bg-[#0b111b]", team.win ? "border-green-400/45" : "border-red-400/35")}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 p-3">
+        <div>
+          <div className="font-display text-lg font-bold text-white">{team.name}</div>
+          <div className={cn("text-xs font-bold uppercase tracking-[0.1em]", team.win ? "text-green-300" : "text-red-300")}>{team.win ? "Victory" : "Defeat"}</div>
+        </div>
+        <div className="flex items-center gap-1">
+          {team.bans.slice(0, 5).map((champion) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={champion.id} src={champion.squareUrl} alt={champion.name} title={`Ban: ${champion.name}`} className="h-7 w-7 rounded-sm border border-[#3c3421] object-cover grayscale" />
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-1 p-2">
+        {team.participants.map((participant) => (
+          <MatchParticipantRow key={`${team.teamId}:${participant.role}`} participant={participant} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MatchParticipantRow({ participant }: { participant: VerifiedMatchData["teams"][number]["participants"][number] }) {
+  return (
+    <div className="grid gap-2 rounded-md border border-white/10 bg-[#111722] p-2 md:grid-cols-[2.8rem_minmax(0,1.15fr)_5.5rem_minmax(8rem,1fr)] md:items-center">
+      <div className="flex items-center gap-2 md:block">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={participant.champion.squareUrl} alt="" className="h-11 w-11 rounded-sm border border-[#3c3421] object-cover" />
+        <div className="md:hidden">
+          <div className="font-bold">{participant.champion.name}</div>
+          <div className="text-xs uppercase text-[#c89b3c]">{participant.role}</div>
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="hidden truncate font-bold md:block">{participant.champion.name}</div>
+        <div className="text-xs uppercase text-[#c89b3c]">{participant.role} - Lv {participant.championLevel}</div>
+        {participant.playerName && (
+          <div title={participant.playerName} className="truncate text-xs font-semibold text-[#9fb7d5]">
+            {participant.playerName}
+          </div>
+        )}
+        <div className="mt-1 flex gap-1">
+          {participant.spells.map((spell) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421]" />
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-1 text-center text-xs md:block md:text-right">
+        <div className="font-display text-base font-bold text-white">
+          {participant.kills}/{participant.deaths}/{participant.assists}
+        </div>
+        <div className="text-[color:var(--muted)]">{participant.cs} CS</div>
+        <div className="text-[color:var(--muted)]">{compactNumber(participant.gold)}g</div>
+      </div>
+      <div className="grid gap-2">
+        <div className="grid grid-cols-7 gap-1">
+          {Array.from({ length: 7 }).map((_, index) => {
+            const item = participant.items[index];
+
+            return item ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={item.id} src={item.imageUrl} alt="" title={`Item ${item.id}`} className="aspect-square w-full rounded-sm border border-[#3c3421] bg-[#050607] object-contain" />
+            ) : (
+              <div key={index} className="aspect-square rounded-sm border border-white/10 bg-[#050607]" />
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap justify-between gap-2 text-[11px] text-[color:var(--muted)]">
+          <span>{compactNumber(participant.damageToChampions)} dmg</span>
+          <span>{participant.visionScore} vision</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatMatchDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.floor(seconds % 60);
+
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
+}
+
+function compactNumber(value: number) {
+  return Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] }) {
@@ -1536,6 +1907,11 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
           <div className="relative flex h-full min-h-0 flex-col justify-end p-2">
             <span className="text-[10px] uppercase leading-tight text-[#c89b3c]">{lane.role}</span>
             <span className="truncate text-base font-bold leading-tight">{lane.champion.name}</span>
+            {lane.playerName && (
+              <span title={lane.playerName} className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-[#9fb7d5]">
+                {lane.playerName}
+              </span>
+            )}
             <div className="mt-1 flex gap-1">
               {lane.spells.map((spell) => (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -1550,10 +1926,12 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
 }
 
 export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: DodgeQueueChallenge; username?: string }) {
-  const rounds = useMemo(() => createDodgeQueueRounds(challenge), [challenge]);
+  const generatedRounds = useMemo(() => createDodgeQueueRounds(challenge), [challenge]);
+  const rounds = useRandomizedRounds(generatedRounds, "dodge-queue", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [resultModalOpen, setResultModalOpen] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("dodge-queue", username);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answer;
@@ -1565,6 +1943,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
 
     setAnswer(call);
     setSubmitted(true);
+    setResultModalOpen(true);
     recordStreak(call === round.answer);
   }
 
@@ -1572,6 +1951,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
     setRoundIndex((current) => current + 1);
     setAnswer("");
     setSubmitted(false);
+    setResultModalOpen(false);
   }
 
   return (
@@ -1584,8 +1964,8 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
-          bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => championToOption(champion, round.allySpells[index])), laneLabels)}
-          redPicks={applyLaneLabels(round.enemyTeam.map((champion, index) => championToOption(champion, round.enemySpells[index])), laneLabels)}
+          bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => championToOption(champion, round.allySpells[index], round.allyPlayerNames?.[index])), laneLabels)}
+          redPicks={applyLaneLabels(round.enemyTeam.map((champion, index) => championToOption(champion, round.enemySpells[index], round.enemyPlayerNames?.[index])), laneLabels)}
           blueBans={round.allyBans.map((champion) => championToOption(champion))}
           redBans={round.enemyBans.map((champion) => championToOption(champion))}
         />
@@ -1597,8 +1977,8 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             className={cn(
               "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
               answer === "dodge"
-                ? "border-green-300 bg-green-500 text-[#071018]"
-                : "border-green-400/35 bg-green-500/14 text-green-100 hover:bg-green-500/24"
+                ? "border-red-300 bg-red-500 text-white"
+                : "border-red-400/35 bg-red-500/14 text-red-100 hover:bg-red-500/24"
             )}
           >
             Dodge
@@ -1610,8 +1990,8 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             className={cn(
               "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
               answer === "queue"
-                ? "border-red-300 bg-red-500 text-white"
-                : "border-red-400/35 bg-red-500/14 text-red-100 hover:bg-red-500/24"
+                ? "border-green-300 bg-green-500 text-[#071018]"
+                : "border-green-400/35 bg-green-500/14 text-green-100 hover:bg-green-500/24"
             )}
           >
             Queue
@@ -1620,16 +2000,29 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
         <div className="flex flex-wrap gap-2">
           <ResultPill submitted={submitted} correct={correct} answer={round.answer === "queue" ? "Queue" : "Dodge"} />
           {submitted && (
-            <Button type="button" variant="secondary" onClick={nextLobby}>
+            <Button type="button" variant="secondary" onClick={() => setResultModalOpen(true)}>
+              Result
+            </Button>
+          )}
+          {submitted && (
+            <Button type="button" onClick={nextLobby}>
               Next lobby
             </Button>
           )}
         </div>
-        {submitted && (
-          <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-            <div className="text-xs uppercase text-[#c89b3c]">Verified match result</div>
-            <p className="mt-2 text-sm text-[color:var(--muted)]">{round.explanation}</p>
-          </div>
+        {submitted && resultModalOpen && (
+          <VerifiedAnswerModal
+            title="Champ-select call locked"
+            correct={correct}
+            selectedLabel={answer === "queue" ? "Queue" : "Dodge"}
+            answerLabel={round.answer === "queue" ? "Queue" : "Dodge"}
+            streak={streak}
+            sourceMatch={round.sourceMatch}
+            note={round.explanation}
+            onClose={() => setResultModalOpen(false)}
+            onNext={nextLobby}
+            nextLabel="Next lobby"
+          />
         )}
       </div>
       )}
@@ -1803,6 +2196,11 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
       <div className="min-w-0">
         <div className="truncate text-lg font-bold leading-tight">{pick?.label ?? hiddenLabel}</div>
         <div className="truncate text-sm leading-tight text-[#c89b3c]">{pick?.sublabel ?? "Champion select"}</div>
+        {pick?.playerName && (
+          <div title={pick.playerName} className="mt-0.5 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5]">
+            {pick.playerName}
+          </div>
+        )}
         {pick?.spells && (
           <div className="mt-1 flex gap-1">
             {pick.spells.map((spell) => (
@@ -1829,13 +2227,14 @@ function BanIcon({ pick }: { pick?: OptionItem }) {
   );
 }
 
-function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[]): OptionItem {
+function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[], playerName?: string): OptionItem {
   return {
     id: champion.id,
     label: champion.name,
     sublabel: champion.roles.join(" / "),
     imageUrl: champion.squareUrl,
-    spells
+    spells,
+    ...(playerName ? { playerName } : {})
   };
 }
 

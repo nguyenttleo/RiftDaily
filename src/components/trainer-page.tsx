@@ -47,6 +47,8 @@ interface PlayerState {
   y: number;
 }
 
+const TRAINER_RANDOM_ROUND_POOL = 96;
+
 export function TrainerPage({ dodge, username = "Guest" }: TrainerPageProps) {
   return <SkillshotDodgeTrainer challenge={dodge} username={username} />;
 }
@@ -57,7 +59,8 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
   const [runId, setRunId] = useState(0);
   const [roundIndex, setRoundIndex] = useState(0);
   const [streak, recordStreak] = useTrainerModeStreak("skillshot-dodge", username);
-  const abilityRotation = useMemo(() => createDailyAbilityRotation(`${challenge.date}:${roundIndex}`), [challenge.date, roundIndex]);
+  const roundSeedOffset = useNonRepeatingTrainerOffset("skillshot-dodge", username);
+  const abilityRotation = useMemo(() => createDailyAbilityRotation(`${challenge.date}:${roundSeedOffset + roundIndex}`), [challenge.date, roundIndex, roundSeedOffset]);
   const [hud, setHud] = useState({
     time: challenge.durationSeconds,
     hits: 0,
@@ -406,6 +409,32 @@ function useTrainerModeStreak(mode: string, username: string) {
   );
 
   return [streak, record] as const;
+}
+
+function useNonRepeatingTrainerOffset(mode: string, username: string) {
+  const [offset] = useState(() => {
+    const candidate = Math.floor(Math.random() * TRAINER_RANDOM_ROUND_POOL);
+
+    if (typeof window === "undefined") {
+      return candidate;
+    }
+
+    const storageKey = `rift-daily:last-trainer-offset:${mode}:${normalizeStorageKey(username || "guest")}`;
+    const lastOffset = Number(window.localStorage.getItem(storageKey));
+    const nextOffset =
+      Number.isFinite(lastOffset) && TRAINER_RANDOM_ROUND_POOL > 1 && candidate === lastOffset
+        ? (candidate + 1 + Math.floor(Math.random() * (TRAINER_RANDOM_ROUND_POOL - 1))) % TRAINER_RANDOM_ROUND_POOL
+        : candidate;
+
+    window.localStorage.setItem(storageKey, String(nextOffset));
+    return nextOffset;
+  });
+
+  return offset;
+}
+
+function normalizeStorageKey(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 function Hud({ label, value }: { label: string; value: string }) {

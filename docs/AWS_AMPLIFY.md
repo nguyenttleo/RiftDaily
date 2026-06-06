@@ -44,11 +44,11 @@ Use these values:
 - `NEXTAUTH_SECRET`: long random secret.
 - `CHALLENGE_SALT`: long random secret used for deterministic daily seeds.
 - `CRON_SECRET`: long random secret for `/api/cron/generate-daily`.
-- `RIOT_API_KEY`: required for Guess the Elo, Champion Matchup, and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments, 20+ game champion-lane winrate samples, and summoner spells are real.
+- `RIOT_API_KEY`: required for Guess the Elo, Champion Matchup, and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments, champion-lane matchup samples, and summoner spells are real.
 - `RIOT_REGION`: `na1` unless you want a different Riot platform route.
 - `RIOT_MATCH_SAMPLE_SIZE`: number of verified ranked matches to prepare for infinite-style Elo/Lobby queues. `16` is a good free-tier default.
 - `RIOT_BUILD_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Build baseline/correct-build winrate samples. `128` is the recommended production value so Build stats can find 5+ verified-game build samples more reliably.
-- `RIOT_MATCHUP_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Champion Matchup champion-lane winrate samples. `512` is recommended so each displayed champion-lane side can require 20+ games.
+- `RIOT_MATCHUP_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used by the cron warmer for Champion Matchup champion-lane samples. `1600` is recommended so exact same-match champion-lane pairs can reach preferred 20+ shared games; verified 5+ warming samples keep the game playable while the cache grows.
 
 Generate secrets locally:
 
@@ -71,7 +71,7 @@ Redeploy after changing those values so auth callbacks and public links use the 
 
 ## 5. Schedule Daily Generation
 
-The app generates deterministic daily content on demand, but you can warm/store daily challenge rows with:
+The app generates deterministic daily content on demand, but you should warm/store daily challenge rows and verified Riot samples with:
 
 ```text
 GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily
@@ -84,7 +84,7 @@ Recommended AWS path:
 2. Use an EventBridge API Destination or Lambda target that calls the URL above.
 3. Add the `Authorization: Bearer ...` header.
 
-You can also call the endpoint manually after deploy to verify it:
+The response includes verified round counts for Guess the Elo, Dodge-or-Queue, and Champion Matchup. You can also call the endpoint manually after deploy to verify it:
 
 ```powershell
 Invoke-WebRequest `

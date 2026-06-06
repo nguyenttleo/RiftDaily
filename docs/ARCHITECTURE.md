@@ -19,13 +19,14 @@ flowchart TD
 3. Item and recipe modes use live Riot Data Dragon champion/item/spell data hydrated server-side.
 4. Build mode displays champion winrate stats only when they can be derived from verified Riot Match-V5 ranked solo sample outcomes.
 5. Guess the Elo and Dodge/Queue use Riot League-V4 source players plus Match-V5 ranked solo matches. A round is accepted only when Match-V5 provides five lane positions per team and exactly one Smite jungler on each team.
-6. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
-7. Auth, stats, guesses, suggestions, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
+6. Champion Matchup uses only exact same-match head-to-head samples: both champion-lane picks must appear on opposite teams in the same ranked Match-V5 games. The game prefers 20+ samples and can use verified 5+ warming samples until Supabase has enough cached pairs.
+7. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
+8. Auth, stats, guesses, suggestions, matchup sample cache rows, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
 
 ## Data Sources
 
 - Riot Data Dragon: champion, item, spell, splash, square, and versioned static data.
-- Riot Match-V5: `teamPosition`, `summoner1Id`, `summoner2Id`, bans, team outcome, match ID, queue, and game version for ranked lobby rounds.
+- Riot Match-V5: `teamPosition`, `summoner1Id`, `summoner2Id`, bans, team outcome, match ID, queue, and game version for ranked lobby rounds and exact champion-lane matchup samples.
 - Riot League-V4: ranked source tier for Guess the Elo answer buckets.
 - CommunityDragon: ranked emblem and trainer character-render assets.
 - Bundled Riot-derived catalog: fallback metadata only if Data Dragon is temporarily unreachable.
@@ -44,6 +45,7 @@ flowchart TD
 - `guess_elo_attempts`
 - `dodge_queue_attempts`
 - `dodge_runs`
+- `champion_matchup_samples`
 - `suggestions`
 
 ## Deployment Model

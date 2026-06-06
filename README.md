@@ -2,7 +2,7 @@
 
 Rift Daily is a League-inspired infinite challenge hub for item builds, item recipes, verified Match-V5 loading-screen reads, champion matchup calls, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
 
-The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo, Champion Matchup, and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments, summoner spell choices, and 20+ game champion-lane winrate samples. Build mode shows Match-V5 ranked-sample baseline and target-build-core winrates only when each stat has at least 5 verified games and the build sample is at or above the baseline. Supabase enables persisted auth, suggestions, stats, and leaderboards in production.
+The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Champion Matchup prefers 20+ game head-to-head samples where both champion-lane picks appeared on opposite teams in the same Riot Match-V5 ranked games, with verified 5+ game warming samples used while Supabase builds that cache. Build mode shows Match-V5 ranked-sample baseline and target-build-core winrates only when each stat has at least 5 verified games and the build sample is at or above the baseline. Supabase enables persisted auth, suggestions, stats, matchup sample caching, and leaderboards in production.
 
 ## Stack
 
@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Catalog gameplay loads verified Riot Data Dragon data without secrets. Guess the Elo, Champion Matchup, and Dodge-or-Queue require `RIOT_API_KEY` because they only display real Match-V5 `teamPosition`, champion-lane winrate, and `summoner1Id`/`summoner2Id` data. Account creation, saved stats, and leaderboards require `DATABASE_URL`.
+Open `http://localhost:3000`. Catalog gameplay loads verified Riot Data Dragon data without secrets. Guess the Elo, Champion Matchup, and Dodge-or-Queue require `RIOT_API_KEY` because they only display real Match-V5 `teamPosition`, same-match matchup, and `summoner1Id`/`summoner2Id` data. Account creation, saved stats, matchup sample caching, and leaderboards require `DATABASE_URL`.
 
 ## Useful Scripts
 

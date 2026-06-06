@@ -1,11 +1,13 @@
-import { env, isRiotApiConfigured } from "@/lib/env";
+import { query } from "@/db/client";
+import { env, isDatabaseConfigured, isRiotApiConfigured } from "@/lib/env";
 import type {
   BuildWinrateStats,
   ChampionMatchupRound,
   DodgeQueueRound,
   GuessEloRound,
   PublicChampion,
-  SummonerSpellRef
+  SummonerSpellRef,
+  VerifiedMatchData
 } from "@/types";
 
 const RANKED_SOLO_QUEUE_ID = 420;
@@ -14,9 +16,11 @@ const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"] as const;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
+const WARMING_MATCHUP_SAMPLE_GAMES = 5;
+const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_SOURCE = 20;
-const MAX_ANALYSIS_MATCH_SAMPLE_SIZE = 512;
-const MAX_SOURCES_PER_RANK_BUCKET = 12;
+const MAX_ANALYSIS_MATCH_SAMPLE_SIZE = 4096;
+const MAX_SOURCES_PER_RANK_BUCKET = 32;
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
@@ -44,6 +48,10 @@ interface RiotMatchDto {
   };
   info: {
     gameVersion: string;
+    gameCreation?: number;
+    gameStartTimestamp?: number;
+    gameDuration?: number;
+    gameId?: number;
     mapId: number;
     queueId: number;
     gameMode: string;
@@ -67,6 +75,18 @@ interface RiotParticipantDto {
   summoner1Id: number;
   summoner2Id: number;
   teamPosition: string;
+  kills: number;
+  deaths: number;
+  assists: number;
+  totalMinionsKilled: number;
+  neutralMinionsKilled: number;
+  goldEarned: number;
+  totalDamageDealtToChampions: number;
+  visionScore: number;
+  champLevel: number;
+  riotIdGameName?: string;
+  riotIdTagline?: string;
+  summonerName?: string;
 }
 
 interface RiotTeamDto {
@@ -91,6 +111,9 @@ export interface VerifiedMatchChallengeSet {
   championWinrateSamples: Record<string, BuildWinrateStats>;
   status: "ready" | "unconfigured" | "unavailable";
   message?: string;
+  guessEloMessage?: string;
+  dodgeQueueMessage?: string;
+  championMatchupMessage?: string;
 }
 
 interface WinrateAccumulator {
@@ -105,12 +128,41 @@ interface WinrateAccumulator {
   }>;
 }
 
-interface ChampionLaneAccumulator {
+interface ChampionLanePick {
   champion: PublicChampion;
+  position: RiotPosition;
   role: string;
-  wins: number;
+  teamId: TeamId;
+}
+
+interface ChampionMatchupAccumulator {
+  left: ChampionLanePick;
+  right: ChampionLanePick;
+  leftWins: number;
   games: number;
   matchIds: Set<string>;
+}
+
+interface ChampionMatchupSampleRecord {
+  matchId: string;
+  platform: string;
+  gameVersion: string;
+  gameCreation?: number;
+  leftChampionId: string;
+  leftRole: string;
+  rightChampionId: string;
+  rightRole: string;
+  leftWon: boolean;
+}
+
+interface PersistedMatchupAggregateRow {
+  left_champion_id: string;
+  left_role: string;
+  right_champion_id: string;
+  right_role: string;
+  games: string | number;
+  left_wins: string | number;
+  sample_matches: string | number;
 }
 
 let cachedMatchSet: {
@@ -118,15 +170,18 @@ let cachedMatchSet: {
   expiresAt: number;
   value: VerifiedMatchChallengeSet;
 } | null = null;
+let matchupSampleTableReady: Promise<void> | null = null;
 
 export async function getVerifiedRankedMatchChallenges({
   date,
   publicChampions,
-  summonerSpells
+  summonerSpells,
+  allowLiveMatchupCollection = false
 }: {
   date: string;
   publicChampions: PublicChampion[];
   summonerSpells: SummonerSpellRef[];
+  allowLiveMatchupCollection?: boolean;
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
     return {
@@ -146,10 +201,13 @@ export async function getVerifiedRankedMatchChallenges({
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
   const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
   const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount) ? Math.max(sampleSize, Math.min(MAX_ANALYSIS_MATCH_SAMPLE_SIZE, env.riotMatchupSampleMatchCount)) : MAX_ANALYSIS_MATCH_SAMPLE_SIZE;
-  const analysisSampleSize = Math.max(requestedBuildSampleSize, requestedMatchupSampleSize);
+  const championLookup = createChampionLookup(publicChampions);
+  const persistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions);
+  const shouldCollectLiveMatchups = allowLiveMatchupCollection && persistedChampionMatchupRounds.length < TARGET_MATCHUP_ROUNDS;
+  const analysisSampleSize = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
   const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisSampleSize / RANK_BUCKETS.length));
   const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / MATCH_IDS_PER_SOURCE) + 1));
-  const cacheKey = `${date}:${platform}:${sampleSize}:${analysisMatchesPerRank}:${sourceCountPerBucket}`;
+  const cacheKey = `${date}:${platform}:${sampleSize}:${analysisMatchesPerRank}:${sourceCountPerBucket}:${persistedChampionMatchupRounds.length}`;
 
   if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
@@ -158,21 +216,28 @@ export async function getVerifiedRankedMatchChallenges({
   try {
     const sources = await getRankedSources(platform, date, sourceCountPerBucket);
     const sourcesByBucket = groupSourcesByBucket(sources);
-    const championLookup = createChampionLookup(publicChampions);
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
     const seenMatches = new Set<string>();
     const guessRoundsByBucket = createEmptyRankBucketMap();
-    const buildMatchesByBucket = createEmptyRankCountMap();
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
-    const championLaneSamples = new Map<string, ChampionLaneAccumulator>();
+    const championMatchupSamples = new Map<string, ChampionMatchupAccumulator>();
+    const matchupSampleRecords: ChampionMatchupSampleRecord[] = [];
+    const flushMatchupSampleRecords = async (force = false) => {
+      if (matchupSampleRecords.length < 800 && !force) {
+        return;
+      }
+
+      const records = matchupSampleRecords.splice(0, matchupSampleRecords.length);
+      await persistChampionMatchupSamples(records);
+    };
 
     for (const bucket of RANK_BUCKETS) {
       const bucketRounds = guessRoundsByBucket.get(bucket) ?? [];
       const bucketSources = sourcesByBucket.get(bucket) ?? [];
 
       for (const source of bucketSources) {
-        if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= analysisMatchesPerRank) {
+        if (bucketRounds.length >= roundsPerRank) {
           break;
         }
 
@@ -188,7 +253,7 @@ export async function getVerifiedRankedMatchChallenges({
         }
 
         for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
-          if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= analysisMatchesPerRank) {
+          if (bucketRounds.length >= roundsPerRank) {
             break;
           }
 
@@ -209,15 +274,15 @@ export async function getVerifiedRankedMatchChallenges({
             const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
 
             addChampionWinrateSamples(match, championLookup, championWinrates);
-            addChampionLaneWinrateSamples(match, championLookup, championLaneSamples);
-            buildMatchesByBucket.set(bucket, (buildMatchesByBucket.get(bucket) ?? 0) + 1);
+            matchupSampleRecords.push(...addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples));
+            await flushMatchupSampleRecords();
+
+            if (dodgeQueueRounds.length < sampleSize) {
+              dodgeQueueRounds.push(verified.dodgeQueue);
+            }
 
             if (usedForPuzzleRound) {
               bucketRounds.push(verified.guessElo);
-
-              if (dodgeQueueRounds.length < sampleSize) {
-                dodgeQueueRounds.push(verified.dodgeQueue);
-              }
             }
           } catch {
             continue;
@@ -226,24 +291,85 @@ export async function getVerifiedRankedMatchChallenges({
       }
     }
 
-    const guessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
-    const distribution = rankDistribution(guessEloRounds);
+    for (const source of seededOrder(sources, `${date}:analysis-sources`)) {
+      if (isAnalysisComplete(seenMatches.size, requestedBuildSampleSize, shouldCollectLiveMatchups, championMatchupSamples) || seenMatches.size >= analysisSampleSize) {
+        break;
+      }
+
+      let matchIds: string[] = [];
+
+      try {
+        matchIds = await riotFetch<string[]>(
+          regional,
+          `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${MATCH_IDS_PER_SOURCE}`
+        );
+      } catch {
+        continue;
+      }
+
+      for (const matchId of seededOrder(matchIds, `${date}:analysis:${source.bucket}:${source.puuid}`)) {
+        if (isAnalysisComplete(seenMatches.size, requestedBuildSampleSize, shouldCollectLiveMatchups, championMatchupSamples) || seenMatches.size >= analysisSampleSize) {
+          break;
+        }
+
+        if (seenMatches.has(matchId)) {
+          continue;
+        }
+
+        seenMatches.add(matchId);
+
+        try {
+          const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+          const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
+
+          if (!verified) {
+            continue;
+          }
+
+          addChampionWinrateSamples(match, championLookup, championWinrates);
+          matchupSampleRecords.push(...addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples));
+          await flushMatchupSampleRecords();
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    await flushMatchupSampleRecords(true);
+
+    const collectedGuessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
+    const distribution = rankDistribution(collectedGuessEloRounds);
+    const guessEloRounds = orderRoundsWithoutConsecutivePlayers(collectedGuessEloRounds, `${date}:guess-elo-round-order`, guessEloRoundPlayers);
+    const orderedDodgeQueueRounds = orderRoundsWithoutConsecutivePlayers(dodgeQueueRounds, `${date}:dodge-queue-round-order`, dodgeQueueRoundPlayers);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
-    const championMatchupRounds = toChampionMatchupRounds(championLaneSamples, date);
+    const liveChampionMatchupRounds = toChampionMatchupRounds(championMatchupSamples, date);
+    const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions);
+    const championMatchupRounds = mergeChampionMatchupRounds(refreshedPersistedChampionMatchupRounds, liveChampionMatchupRounds);
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
       RANK_BUCKETS.every((bucket) => distribution[bucket] === roundsPerRank);
-    const value: VerifiedMatchChallengeSet =
-      hasBalancedGuessRounds && dodgeQueueRounds.length > 0
-        ? { guessEloRounds, dodgeQueueRounds, championMatchupRounds, championWinrateSamples, status: "ready" }
-        : {
-            guessEloRounds: [],
-            dodgeQueueRounds: [],
-            championMatchupRounds,
-            championWinrateSamples,
-            status: "unavailable",
-            message: `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`
-          };
+    const guessEloMessage = hasBalancedGuessRounds
+      ? undefined
+      : `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`;
+    const dodgeQueueMessage =
+      orderedDodgeQueueRounds.length > 0
+        ? undefined
+        : "Could not collect any verified ranked lobbies from Riot Match-V5 with one Smite jungler per team, complete lane assignments, summoner spells, bans, and match outcome.";
+    const championMatchupMessage =
+      championMatchupRounds.length > 0
+        ? undefined
+        : `Champion Matchup needs ${MIN_MATCHUP_SAMPLE_GAMES}+ Riot Match-V5 ranked games containing both champions in their selected lanes in the same match.`;
+    const value: VerifiedMatchChallengeSet = {
+      guessEloRounds: hasBalancedGuessRounds ? guessEloRounds : [],
+      dodgeQueueRounds: orderedDodgeQueueRounds,
+      championMatchupRounds,
+      championWinrateSamples,
+      status: hasBalancedGuessRounds || orderedDodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : "unavailable",
+      message: guessEloMessage ?? dodgeQueueMessage ?? championMatchupMessage,
+      ...(guessEloMessage ? { guessEloMessage } : {}),
+      ...(dodgeQueueMessage ? { dodgeQueueMessage } : {}),
+      ...(championMatchupMessage ? { championMatchupMessage } : {})
+    };
 
     cachedMatchSet = {
       key: cacheKey,
@@ -300,107 +426,414 @@ function addChampionWinrateSamples(
   }
 }
 
-function addChampionLaneWinrateSamples(
+function addChampionHeadToHeadSamples(
   match: RiotMatchDto,
+  platform: string,
   championLookup: Map<number, PublicChampion>,
-  championLaneSamples: Map<string, ChampionLaneAccumulator>
+  championMatchupSamples: Map<string, ChampionMatchupAccumulator>
 ) {
   const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
+  const records: ChampionMatchupSampleRecord[] = [];
+  const picks = match.info.participants
+    .filter((participant) => isRiotPosition(participant.teamPosition))
+    .map((participant): ChampionLanePick | null => {
+      const champion = championLookup.get(participant.championId);
 
-  for (const participant of match.info.participants) {
-    if (!isRiotPosition(participant.teamPosition)) {
-      continue;
-    }
+      if (!champion || !isRiotPosition(participant.teamPosition)) {
+        return null;
+      }
 
-    const champion = championLookup.get(participant.championId);
+      return {
+        champion,
+        position: participant.teamPosition,
+        role: toLaneLabel(participant.teamPosition),
+        teamId: participant.teamId
+      };
+    })
+    .filter((pick): pick is ChampionLanePick => Boolean(pick));
+  const blue = picks.filter((pick) => pick.teamId === 100);
+  const red = picks.filter((pick) => pick.teamId === 200);
 
-    if (!champion) {
-      continue;
-    }
-
-    const key = `${participant.teamPosition}:${champion.id}`;
-    const current = championLaneSamples.get(key) ?? {
-      role: toLaneLabel(participant.teamPosition),
-      champion,
-      wins: 0,
-      games: 0,
-      matchIds: new Set<string>()
-    };
-
-    current.games += 1;
-    current.wins += winningTeams.get(participant.teamId) ? 1 : 0;
-    current.matchIds.add(match.metadata.matchId);
-    championLaneSamples.set(key, current);
-  }
-}
-
-function toChampionMatchupRounds(championLaneSamples: Map<string, ChampionLaneAccumulator>, date: string) {
-  const dataSource = "Riot Match-V5 ranked solo champion-lane winrate sample";
-  const samples = [...championLaneSamples.entries()]
-    .map(([key, sample]) => ({ key, sample }))
-    .filter(({ sample }) => sample.games >= MIN_MATCHUP_SAMPLE_GAMES)
-    .sort((a, b) => seededOrderKey(`${date}:champion-lane:${a.key}`) - seededOrderKey(`${date}:champion-lane:${b.key}`));
-  const pairCandidates: Array<{
-    leftKey: string;
-    rightKey: string;
-    left: ChampionLaneAccumulator;
-    right: ChampionLaneAccumulator;
-  }> = [];
-
-  for (let leftIndex = 0; leftIndex < samples.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < samples.length; rightIndex += 1) {
-      const left = samples[leftIndex];
-      const right = samples[rightIndex];
-      const leftWinRate = toWinRate(left.sample.wins, left.sample.games);
-      const rightWinRate = toWinRate(right.sample.wins, right.sample.games);
-
-      if (
-        left.sample.champion.id === right.sample.champion.id ||
-        left.sample.role === right.sample.role ||
-        leftWinRate === rightWinRate
-      ) {
+  for (const bluePick of blue) {
+    for (const redPick of red) {
+      if (bluePick.champion.id === redPick.champion.id) {
         continue;
       }
 
-      pairCandidates.push({
-        leftKey: left.key,
-        rightKey: right.key,
-        left: left.sample,
-        right: right.sample
-      });
+      addChampionMatchupSample(championMatchupSamples, bluePick, redPick, Boolean(winningTeams.get(bluePick.teamId)), match.metadata.matchId);
+      records.push(toChampionMatchupSampleRecord(match, platform, bluePick, redPick, Boolean(winningTeams.get(bluePick.teamId))));
     }
   }
 
-  return pairCandidates
-    .sort((a, b) => seededOrderKey(`${date}:champion-matchup:${a.leftKey}:${a.rightKey}`) - seededOrderKey(`${date}:champion-matchup:${b.leftKey}:${b.rightKey}`))
-    .slice(0, 96)
-    .map((pair, index): ChampionMatchupRound => {
-      const leftPick = toMatchupPick(pair.left.champion, pair.left.role, pair.left.wins, pair.left.games, pair.left.matchIds.size);
-      const rightPick = toMatchupPick(pair.right.champion, pair.right.role, pair.right.wins, pair.right.games, pair.right.matchIds.size);
-      const shouldFlip = hashString(`${date}:champion-matchup:flip:${pair.leftKey}:${pair.rightKey}`) % 2 === 0;
-      const displayLeft = shouldFlip ? rightPick : leftPick;
-      const displayRight = shouldFlip ? leftPick : rightPick;
-
-      return {
-        id: `${date}:champion-matchup:${index}:${normalize(displayLeft.role)}:${displayLeft.champion.id}:vs:${normalize(displayRight.role)}:${displayRight.champion.id}`,
-        date,
-        left: displayLeft,
-        right: displayRight,
-        answerSide: displayLeft.winRate > displayRight.winRate ? "left" : "right",
-        dataSource
-      };
-    });
+  return records;
 }
 
-function toMatchupPick(champion: PublicChampion, role: string, wins: number, games: number, sampleMatches: number) {
+function addChampionMatchupSample(
+  championMatchupSamples: Map<string, ChampionMatchupAccumulator>,
+  first: ChampionLanePick,
+  second: ChampionLanePick,
+  firstWon: boolean,
+  matchId: string
+) {
+  const firstKey = championLaneKey(first);
+  const secondKey = championLaneKey(second);
+  const shouldSwap = firstKey.localeCompare(secondKey) > 0;
+  const left = shouldSwap ? second : first;
+  const right = shouldSwap ? first : second;
+  const leftWon = shouldSwap ? !firstWon : firstWon;
+  const key = `${championLaneKey(left)}:vs:${championLaneKey(right)}`;
+  const current = championMatchupSamples.get(key) ?? {
+    left,
+    right,
+    leftWins: 0,
+    games: 0,
+    matchIds: new Set<string>()
+  };
+
+  current.games += 1;
+  current.leftWins += leftWon ? 1 : 0;
+  current.matchIds.add(matchId);
+  championMatchupSamples.set(key, current);
+}
+
+function toChampionMatchupSampleRecord(
+  match: RiotMatchDto,
+  platform: string,
+  first: ChampionLanePick,
+  second: ChampionLanePick,
+  firstWon: boolean
+): ChampionMatchupSampleRecord {
+  const firstKey = championLaneKey(first);
+  const secondKey = championLaneKey(second);
+  const shouldSwap = firstKey.localeCompare(secondKey) > 0;
+  const left = shouldSwap ? second : first;
+  const right = shouldSwap ? first : second;
+  const leftWon = shouldSwap ? !firstWon : firstWon;
+  const gameCreation = match.info.gameCreation ?? match.info.gameStartTimestamp;
+
+  return {
+    matchId: match.metadata.matchId,
+    platform,
+    gameVersion: match.info.gameVersion,
+    ...(gameCreation ? { gameCreation } : {}),
+    leftChampionId: left.champion.id,
+    leftRole: left.role,
+    rightChampionId: right.champion.id,
+    rightRole: right.role,
+    leftWon
+  };
+}
+
+function championLaneKey(pick: Pick<ChampionLanePick, "champion" | "position">) {
+  return `${pick.position}:${pick.champion.id}`;
+}
+
+function toChampionMatchupRounds(championMatchupSamples: Map<string, ChampionMatchupAccumulator>, date: string) {
+  const strictRounds = toChampionMatchupRoundsForThreshold(
+    championMatchupSamples,
+    date,
+    MIN_MATCHUP_SAMPLE_GAMES,
+    "Riot Match-V5 ranked solo head-to-head champion-lane sample"
+  );
+
+  if (strictRounds.length > 0) {
+    return strictRounds;
+  }
+
+  return toChampionMatchupRoundsForThreshold(
+    championMatchupSamples,
+    date,
+    WARMING_MATCHUP_SAMPLE_GAMES,
+    "Riot Match-V5 ranked solo head-to-head champion-lane warming sample"
+  );
+}
+
+function toChampionMatchupRoundsForThreshold(
+  championMatchupSamples: Map<string, ChampionMatchupAccumulator>,
+  date: string,
+  minimumGames: number,
+  dataSource: string
+) {
+  const pairCandidates = [...championMatchupSamples.entries()]
+    .map(([key, sample]) => ({ key, sample }))
+    .filter(({ sample }) => sample.games >= minimumGames && sample.leftWins !== sample.games - sample.leftWins)
+    .sort((a, b) => seededOrderKey(`${date}:champion-matchup:${minimumGames}:${a.key}`) - seededOrderKey(`${date}:champion-matchup:${minimumGames}:${b.key}`));
+
+  return pairCandidates.slice(0, 96).map(({ key, sample }, index): ChampionMatchupRound => {
+    const leftWinRate = toWinRate(sample.leftWins, sample.games);
+    const rightWinRate = Math.round((100 - leftWinRate) * 10) / 10;
+    const leftPick = toMatchupPick(sample.left.champion, sample.left.role, sample.leftWins, sample.games, sample.matchIds.size, leftWinRate);
+    const rightPick = toMatchupPick(sample.right.champion, sample.right.role, sample.games - sample.leftWins, sample.games, sample.matchIds.size, rightWinRate);
+    const shouldFlip = hashString(`${date}:champion-matchup:flip:${key}`) % 2 === 0;
+    const displayLeft = shouldFlip ? rightPick : leftPick;
+    const displayRight = shouldFlip ? leftPick : rightPick;
+
+    return {
+      id: `${date}:champion-matchup:${index}:${normalize(displayLeft.role)}:${displayLeft.champion.id}:vs:${normalize(displayRight.role)}:${displayRight.champion.id}`,
+      date,
+      left: displayLeft,
+      right: displayRight,
+      answerSide: displayLeft.winRate > displayRight.winRate ? "left" : "right",
+      dataSource
+    };
+  });
+}
+
+function isAnalysisComplete(
+  seenMatchCount: number,
+  requestedBuildSampleSize: number,
+  needsLiveMatchupRounds: boolean,
+  championMatchupSamples: Map<string, ChampionMatchupAccumulator>
+) {
+  return (
+    seenMatchCount >= requestedBuildSampleSize &&
+    (!needsLiveMatchupRounds || eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS)
+  );
+}
+
+function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
+  return [...championMatchupSamples.values()].filter(
+    (sample) => sample.games >= MIN_MATCHUP_SAMPLE_GAMES && sample.leftWins !== sample.games - sample.leftWins
+  ).length;
+}
+
+function toMatchupPick(champion: PublicChampion, role: string, wins: number, games: number, sampleMatches: number, winRate = toWinRate(wins, games)) {
   return {
     champion,
     role,
     wins,
     games,
-    winRate: toWinRate(wins, games),
+    winRate,
     sampleMatches
   };
+}
+
+async function persistChampionMatchupSamples(records: ChampionMatchupSampleRecord[]) {
+  if (!isDatabaseConfigured() || records.length === 0) {
+    return;
+  }
+
+  const uniqueRecords = uniqueMatchupSampleRecords(records);
+
+  try {
+    await ensureChampionMatchupSampleTable();
+    await query(
+      `insert into champion_matchup_samples (
+        match_id,
+        platform,
+        game_version,
+        game_creation,
+        left_champion_id,
+        left_role,
+        right_champion_id,
+        right_role,
+        left_won
+      )
+      select *
+      from unnest(
+        $1::text[],
+        $2::text[],
+        $3::text[],
+        $4::timestamptz[],
+        $5::text[],
+        $6::text[],
+        $7::text[],
+        $8::text[],
+        $9::boolean[]
+      )
+      on conflict (match_id, left_champion_id, left_role, right_champion_id, right_role)
+      do nothing`,
+      [
+        uniqueRecords.map((record) => record.matchId),
+        uniqueRecords.map((record) => record.platform),
+        uniqueRecords.map((record) => record.gameVersion),
+        uniqueRecords.map((record) => (record.gameCreation ? new Date(record.gameCreation).toISOString() : null)),
+        uniqueRecords.map((record) => record.leftChampionId),
+        uniqueRecords.map((record) => record.leftRole),
+        uniqueRecords.map((record) => record.rightChampionId),
+        uniqueRecords.map((record) => record.rightRole),
+        uniqueRecords.map((record) => record.leftWon)
+      ]
+    );
+  } catch {
+    // The app can still use live Riot samples when the optional Supabase cache table has not been migrated yet.
+  }
+}
+
+function uniqueMatchupSampleRecords(records: ChampionMatchupSampleRecord[]) {
+  const seen = new Set<string>();
+  const uniqueRecords: ChampionMatchupSampleRecord[] = [];
+
+  for (const record of records) {
+    const key = `${record.matchId}:${record.leftChampionId}:${record.leftRole}:${record.rightChampionId}:${record.rightRole}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueRecords.push(record);
+    }
+  }
+
+  return uniqueRecords;
+}
+
+async function getPersistedChampionMatchupRounds(date: string, publicChampions: PublicChampion[]) {
+  if (!isDatabaseConfigured()) {
+    return [];
+  }
+
+  try {
+    await ensureChampionMatchupSampleTable();
+    const strictResult = await query<PersistedMatchupAggregateRow>(
+      `select
+        left_champion_id,
+        left_role,
+        right_champion_id,
+        right_role,
+        count(*)::int as games,
+        sum(case when left_won then 1 else 0 end)::int as left_wins,
+        count(distinct match_id)::int as sample_matches
+      from champion_matchup_samples
+      group by left_champion_id, left_role, right_champion_id, right_role
+      having count(*) >= $1
+        and sum(case when left_won then 1 else 0 end) <> count(*) - sum(case when left_won then 1 else 0 end)`,
+      [MIN_MATCHUP_SAMPLE_GAMES]
+    );
+    const strictRounds = toPersistedChampionMatchupRounds(
+      strictResult.rows,
+      publicChampions,
+      date,
+      MIN_MATCHUP_SAMPLE_GAMES,
+      "Supabase cached Riot Match-V5 head-to-head champion-lane sample"
+    );
+
+    if (strictRounds.length > 0) {
+      return strictRounds;
+    }
+
+    const warmingResult = await query<PersistedMatchupAggregateRow>(
+      `select
+        left_champion_id,
+        left_role,
+        right_champion_id,
+        right_role,
+        count(*)::int as games,
+        sum(case when left_won then 1 else 0 end)::int as left_wins,
+        count(distinct match_id)::int as sample_matches
+      from champion_matchup_samples
+      group by left_champion_id, left_role, right_champion_id, right_role
+      having count(*) >= $1
+        and sum(case when left_won then 1 else 0 end) <> count(*) - sum(case when left_won then 1 else 0 end)`,
+      [WARMING_MATCHUP_SAMPLE_GAMES]
+    );
+
+    return toPersistedChampionMatchupRounds(
+      warmingResult.rows,
+      publicChampions,
+      date,
+      WARMING_MATCHUP_SAMPLE_GAMES,
+      "Supabase cached Riot Match-V5 head-to-head champion-lane warming sample"
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function ensureChampionMatchupSampleTable() {
+  if (!isDatabaseConfigured()) {
+    return;
+  }
+
+  matchupSampleTableReady ??= (async () => {
+    await query(`create table if not exists champion_matchup_samples (
+      match_id text not null,
+      platform text not null,
+      game_version text not null,
+      game_creation timestamptz,
+      left_champion_id text not null,
+      left_role text not null,
+      right_champion_id text not null,
+      right_role text not null,
+      left_won boolean not null,
+      created_at timestamptz not null default now(),
+      primary key (match_id, left_champion_id, left_role, right_champion_id, right_role)
+    )`);
+    await query(
+      "create index if not exists champion_matchup_samples_pair_idx on champion_matchup_samples (left_champion_id, left_role, right_champion_id, right_role)"
+    );
+    await query("create index if not exists champion_matchup_samples_created_idx on champion_matchup_samples (created_at desc)");
+  })().catch((error) => {
+    matchupSampleTableReady = null;
+    throw error;
+  });
+
+  await matchupSampleTableReady;
+}
+
+function toPersistedChampionMatchupRounds(
+  rows: PersistedMatchupAggregateRow[],
+  publicChampions: PublicChampion[],
+  date: string,
+  minimumGames: number,
+  dataSource: string
+) {
+  const championLookup = new Map(publicChampions.map((champion) => [champion.id, champion]));
+
+  return rows
+    .map((row) => {
+      const leftChampion = championLookup.get(row.left_champion_id);
+      const rightChampion = championLookup.get(row.right_champion_id);
+      const games = Number(row.games);
+      const leftWins = Number(row.left_wins);
+      const sampleMatches = Number(row.sample_matches);
+
+      if (!leftChampion || !rightChampion || !Number.isFinite(games) || !Number.isFinite(leftWins) || games < minimumGames) {
+        return null;
+      }
+
+      const leftWinRate = toWinRate(leftWins, games);
+      const rightWinRate = Math.round((100 - leftWinRate) * 10) / 10;
+      const leftPick = toMatchupPick(leftChampion, row.left_role, leftWins, games, sampleMatches, leftWinRate);
+      const rightPick = toMatchupPick(rightChampion, row.right_role, games - leftWins, games, sampleMatches, rightWinRate);
+      const key = `${row.left_role}:${row.left_champion_id}:vs:${row.right_role}:${row.right_champion_id}`;
+      const shouldFlip = hashString(`${date}:persisted-champion-matchup:flip:${key}`) % 2 === 0;
+      const displayLeft = shouldFlip ? rightPick : leftPick;
+      const displayRight = shouldFlip ? leftPick : rightPick;
+
+      return {
+        id: `${date}:champion-matchup:persisted:${normalize(displayLeft.role)}:${displayLeft.champion.id}:vs:${normalize(displayRight.role)}:${displayRight.champion.id}`,
+        date,
+        left: displayLeft,
+        right: displayRight,
+        answerSide: displayLeft.winRate > displayRight.winRate ? "left" as const : "right" as const,
+        dataSource
+      };
+    })
+    .filter((round): round is ChampionMatchupRound => Boolean(round))
+    .sort((a, b) => seededOrderKey(`${date}:persisted-champion-matchup:${minimumGames}:${matchupRoundKey(a)}`) - seededOrderKey(`${date}:persisted-champion-matchup:${minimumGames}:${matchupRoundKey(b)}`))
+    .slice(0, 96);
+}
+
+function mergeChampionMatchupRounds(primary: ChampionMatchupRound[], secondary: ChampionMatchupRound[]) {
+  const seen = new Set<string>();
+  const rounds: ChampionMatchupRound[] = [];
+
+  for (const round of [...primary, ...secondary]) {
+    const key = matchupRoundKey(round);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      rounds.push(round);
+    }
+  }
+
+  return rounds.slice(0, 96);
+}
+
+function matchupRoundKey(round: ChampionMatchupRound) {
+  return [round.left, round.right]
+    .map((pick) => `${pick.role}:${pick.champion.id}`)
+    .sort()
+    .join(":vs:");
 }
 
 function toWinRate(wins: number, games: number) {
@@ -447,10 +880,6 @@ function createEmptyRankBucketMap() {
   return new Map<RankBucket, GuessEloRound[]>(RANK_BUCKETS.map((bucket) => [bucket, []]));
 }
 
-function createEmptyRankCountMap() {
-  return new Map<RankBucket, number>(RANK_BUCKETS.map((bucket) => [bucket, 0]));
-}
-
 function groupSourcesByBucket(sources: RankedSource[]) {
   const grouped = new Map<RankBucket, RankedSource[]>(RANK_BUCKETS.map((bucket) => [bucket, []]));
 
@@ -475,6 +904,65 @@ function interleaveRankBuckets(roundsByBucket: Map<RankBucket, GuessEloRound[]>,
   }
 
   return rounds;
+}
+
+function orderRoundsWithoutConsecutivePlayers<T extends { id: string }>(rounds: T[], seed: string, getPlayers: (round: T) => string[]) {
+  const remaining = [...rounds].sort((a, b) => hashString(`${seed}:${a.id}`) - hashString(`${seed}:${b.id}`));
+  const ordered: T[] = [];
+
+  while (remaining.length > 0) {
+    const previousPlayers = new Set(normalizePlayerNames(ordered.at(-1) ? getPlayers(ordered[ordered.length - 1]) : []));
+    const playerFrequency = playerFrequencies(remaining, getPlayers);
+    const candidates = remaining.map((round, index) => {
+      const players = normalizePlayerNames(getPlayers(round));
+      const overlapCount = players.filter((player) => previousPlayers.has(player)).length;
+      const pressure = players.reduce((max, player) => Math.max(max, playerFrequency.get(player) ?? 0), 0);
+
+      return { index, overlapCount, pressure };
+    });
+    const best = candidates
+      .sort((a, b) => a.overlapCount - b.overlapCount || b.pressure - a.pressure || a.index - b.index)[0];
+    const pickedIndex = best?.index ?? 0;
+    const [next] = remaining.splice(pickedIndex, 1);
+
+    if (next) {
+      ordered.push(next);
+    }
+  }
+
+  return ordered;
+}
+
+function normalizePlayerNames(players: string[]) {
+  return players.map((player) => player.trim().toLowerCase()).filter(Boolean);
+}
+
+function playerFrequencies<T>(rounds: T[], getPlayers: (round: T) => string[]) {
+  const frequencies = new Map<string, number>();
+
+  for (const round of rounds) {
+    for (const player of new Set(normalizePlayerNames(getPlayers(round)))) {
+      frequencies.set(player, (frequencies.get(player) ?? 0) + 1);
+    }
+  }
+
+  return frequencies;
+}
+
+function guessEloRoundPlayers(round: GuessEloRound) {
+  return [
+    round.sourceMatch?.sourcePlayer,
+    ...round.lanes.map((lane) => lane.playerName),
+    ...round.enemyLanes.map((lane) => lane.playerName)
+  ].filter((player): player is string => Boolean(player));
+}
+
+function dodgeQueueRoundPlayers(round: DodgeQueueRound) {
+  return [
+    round.sourceMatch?.sourcePlayer,
+    ...(round.allyPlayerNames ?? []),
+    ...(round.enemyPlayerNames ?? [])
+  ].filter((player): player is string => Boolean(player));
 }
 
 function rankDistribution(rounds: GuessEloRound[]) {
@@ -581,11 +1069,19 @@ function toVerifiedRounds(
   const enemyPicks = enemyTeamId === 100 ? blue : red;
   const allyTeam = match.info.teams.find((team) => team.teamId === allyTeamId);
   const allyTeamWon = Boolean(allyTeam?.win);
+  const sourcePlayer = formatRiotId(sourceParticipant);
+  const gameCreation = match.info.gameCreation ?? match.info.gameStartTimestamp;
+  const gameId = match.info.gameId ?? gameIdFromMatchId(match.metadata.matchId);
+  const matchData = toVerifiedMatchData(match, championLookup, spellLookup);
   const sourceMatch = {
     matchId: match.metadata.matchId,
+    ...(gameId ? { gameId } : {}),
     gameVersion: match.info.gameVersion,
+    ...(gameCreation ? { gameCreation } : {}),
     queueId: match.info.queueId,
-    platform
+    platform,
+    ...(sourcePlayer ? { sourcePlayer } : {}),
+    ...(matchData ? { matchData } : {})
   };
   const dataSource = "Riot Match-V5 teamPosition + summoner IDs, mapped through Riot Data Dragon summoner.json";
 
@@ -612,6 +1108,8 @@ function toVerifiedRounds(
     enemyTeam: enemyPicks.map((pick) => pick.champion),
     allySpells: allyPicks.map((pick) => pick.spells),
     enemySpells: enemyPicks.map((pick) => pick.spells),
+    allyPlayerNames: allyPicks.map((pick) => pick.playerName ?? ""),
+    enemyPlayerNames: enemyPicks.map((pick) => pick.playerName ?? ""),
     allyBans: bansForTeam(match, allyTeamId, championLookup),
     enemyBans: bansForTeam(match, enemyTeamId, championLookup),
     answer: allyTeamWon ? "queue" : "dodge",
@@ -639,6 +1137,7 @@ function toLanePicks(
     const champion = participant ? championLookup.get(participant.championId) : undefined;
     const firstSpell = participant ? spellLookup.get(participant.summoner1Id) : undefined;
     const secondSpell = participant ? spellLookup.get(participant.summoner2Id) : undefined;
+    const playerName = participant ? formatRiotId(participant) : undefined;
 
     if (!participant || !champion || !firstSpell || !secondSpell) {
       return null;
@@ -647,7 +1146,8 @@ function toLanePicks(
     return {
       role: toLaneLabel(position),
       champion,
-      spells: [firstSpell, secondSpell]
+      spells: [firstSpell, secondSpell],
+      ...(playerName ? { playerName } : {})
     };
   });
 
@@ -684,6 +1184,105 @@ function bansForTeam(match: RiotMatchDto, teamId: TeamId, championLookup: Map<nu
     .sort((a, b) => a.pickTurn - b.pickTurn)
     .map((ban) => championLookup.get(ban.championId))
     .filter(Boolean) as PublicChampion[];
+}
+
+function toVerifiedMatchData(
+  match: RiotMatchDto,
+  championLookup: Map<number, PublicChampion>,
+  spellLookup: Map<number, SummonerSpellRef>
+): VerifiedMatchData | undefined {
+  const itemVersion = dataDragonVersionFromGameVersion(match.info.gameVersion);
+  const teams = TEAM_IDS.map((teamId) => {
+    const team = match.info.teams.find((candidate) => candidate.teamId === teamId);
+    const participants = POSITION_ORDER.map((position) => {
+      const participant = match.info.participants.find((candidate) => candidate.teamId === teamId && candidate.teamPosition === position);
+      const champion = participant ? championLookup.get(participant.championId) : undefined;
+      const firstSpell = participant ? spellLookup.get(participant.summoner1Id) : undefined;
+      const secondSpell = participant ? spellLookup.get(participant.summoner2Id) : undefined;
+
+      if (!participant || !champion || !firstSpell || !secondSpell) {
+        return null;
+      }
+
+      return {
+        role: toLaneLabel(position),
+        ...(formatRiotId(participant) ? { playerName: formatRiotId(participant) } : {}),
+        champion,
+        spells: [firstSpell, secondSpell],
+        items: participantItemSlotIds(participant).map((id) => ({
+          id,
+          imageUrl: `https://ddragon.leagueoflegends.com/cdn/${itemVersion}/img/item/${id}.png`
+        })),
+        kills: participant.kills,
+        deaths: participant.deaths,
+        assists: participant.assists,
+        cs: participant.totalMinionsKilled + participant.neutralMinionsKilled,
+        gold: participant.goldEarned,
+        damageToChampions: participant.totalDamageDealtToChampions,
+        visionScore: participant.visionScore,
+        championLevel: participant.champLevel
+      };
+    });
+
+    if (!team || participants.some((participant) => !participant)) {
+      return null;
+    }
+
+    return {
+      teamId,
+      name: teamId === 100 ? "Blue Team" : "Red Team",
+      win: team.win,
+      bans: bansForTeam(match, teamId, championLookup),
+      participants: participants as NonNullable<(typeof participants)[number]>[]
+    };
+  });
+
+  if (teams.some((team) => !team)) {
+    return undefined;
+  }
+
+  return {
+    ...(match.info.gameDuration ? { gameDurationSeconds: match.info.gameDuration } : {}),
+    gameMode: match.info.gameMode,
+    queueId: match.info.queueId,
+    mapId: match.info.mapId,
+    teams: teams as VerifiedMatchData["teams"]
+  };
+}
+
+function participantItemSlotIds(participant: RiotParticipantDto) {
+  return [
+    participant.item0,
+    participant.item1,
+    participant.item2,
+    participant.item3,
+    participant.item4,
+    participant.item5,
+    participant.item6
+  ]
+    .filter((id) => id > 0)
+    .map((id) => String(id));
+}
+
+function dataDragonVersionFromGameVersion(gameVersion: string) {
+  const [major, minor] = gameVersion.split(".");
+
+  return major && minor ? `${major}.${minor}.1` : gameVersion;
+}
+
+function formatRiotId(participant?: RiotParticipantDto) {
+  if (!participant?.riotIdGameName) {
+    return participant?.summonerName;
+  }
+
+  return participant.riotIdTagline ? `${participant.riotIdGameName}#${participant.riotIdTagline}` : participant.riotIdGameName;
+}
+
+function gameIdFromMatchId(matchId: string) {
+  const rawGameId = matchId.split("_").at(-1);
+  const gameId = rawGameId ? Number(rawGameId) : NaN;
+
+  return Number.isFinite(gameId) ? gameId : undefined;
 }
 
 function createChampionLookup(publicChampions: PublicChampion[]) {

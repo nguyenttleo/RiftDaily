@@ -12,9 +12,10 @@ Use Supabase only as Postgres. The app talks to it from Next.js API/server code 
 supabase/migrations/001_initial_schema.sql
 supabase/migrations/002_expanded_games.sql
 supabase/migrations/003_suggestions.sql
+supabase/migrations/004_champion_matchup_samples.sql
 ```
 
-The schema creates users, daily challenge metadata, guesses, results, stats, leaderboards, expanded-game attempt tables, trainer runs, and suggestions.
+The schema creates users, daily challenge metadata, guesses, results, stats, leaderboards, expanded-game attempt tables, trainer runs, suggestions, and cached Riot Match-V5 head-to-head matchup samples.
 
 ## 2. Get the Connection String
 
@@ -54,6 +55,7 @@ Run these in the Supabase SQL editor:
 select count(*) from champions;
 select username, email from users order by created_at desc limit 5;
 select * from suggestions order by created_at desc limit 5;
+select count(*) from champion_matchup_samples;
 ```
 
 If `champions` has the full roster and suggestions insert from `/suggest`, Supabase is wired correctly.
@@ -62,4 +64,5 @@ If `champions` has the full roster and suggestions insert from `/suggest`, Supab
 
 - Keep `DATABASE_URL` server-side only. Do not prefix it with `NEXT_PUBLIC_`.
 - The suggestion form posts to `/api/suggestions` and persists into the `suggestions` table when `DATABASE_URL` is configured.
+- Champion Matchup samples accumulate in `champion_matchup_samples` from verified Riot Match-V5 ranked games; the game prefers 20+ exact same-match samples and can display verified 5+ warming samples while the cache grows.
 - Free-tier Supabase can pause after inactivity. If accounts, saved stats, or leaderboards stop updating, check whether the project needs to be resumed.
