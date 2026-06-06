@@ -1,10 +1,11 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { applyRankedResult, createInitialRankState, parseLeagueRankState, rankedStorageKey } from "@/game/scoring";
 import { cn } from "@/lib/utils";
 import type {
   ChampionMatchupChallenge,
@@ -135,7 +136,15 @@ export function ItemBuildGame({
     setSelectedBoots("");
 
     if (nextSolved || nextGuesses.length >= BUILD_MAX_GUESSES) {
-      recordStreak(nextSolved);
+      recordStreak(nextSolved, {
+        performanceQuality: buildPerformanceQuality(nextSolved, nextGuesses, answerSet, round.answerBootsId),
+        roundId: round.id,
+        metadata: {
+          champion: round.champion.name,
+          guesses: nextGuesses.length,
+          correctSlots: Math.max(...nextGuesses.map((row) => buildGuessCorrectCount(row, answerSet, round.answerBootsId)))
+        }
+      });
       setModalOpen(true);
     }
   }
@@ -169,7 +178,6 @@ export function ItemBuildGame({
               <div>
                 <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
                 <div className="font-display text-3xl font-bold sm:text-4xl">{round.champion.name}</div>
-                <div className="text-sm text-[color:var(--muted)]">{round.champion.roles.join(" / ")}</div>
               </div>
               <BuildWinrateCard stats={round.winrateStats} />
             </div>
@@ -423,6 +431,19 @@ function isBuildGuessSolved(guess: { items: string[]; boots: string }, answerSet
   return guess.items.length === 5 && guess.items.every((id) => answerSet.has(id)) && guess.boots === answerBootsId;
 }
 
+function buildGuessCorrectCount(guess: { items: string[]; boots: string }, answerSet: Set<string>, answerBootsId: string) {
+  return guess.items.filter((id) => answerSet.has(id)).length + (guess.boots === answerBootsId ? 1 : 0);
+}
+
+function buildPerformanceQuality(solved: boolean, guesses: Array<{ items: string[]; boots: string }>, answerSet: Set<string>, answerBootsId: string) {
+  if (solved) {
+    return Math.max(0, Math.min(1, 1 - ((guesses.length - 1) / Math.max(1, BUILD_MAX_GUESSES - 1))));
+  }
+
+  const bestCorrect = Math.max(0, ...guesses.map((guess) => buildGuessCorrectCount(guess, answerSet, answerBootsId)));
+  return bestCorrect / 6;
+}
+
 function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"] }) {
   if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
     return (
@@ -439,7 +460,7 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
   const buildDetail = hasBuildSample
     ? (stats.buildMatchedItemCount ?? 0) > 0
       ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
-      : "verified baseline fallback"
+      : undefined
     : undefined;
 
   return (
@@ -828,7 +849,14 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
 
     const solved = answer === round.missingComponentId;
     setSubmitted(true);
-    recordStreak(solved);
+    recordStreak(solved, {
+      performanceQuality: solved ? 0.8 : 0.2,
+      roundId: round.id,
+      metadata: {
+        resultItem: round.resultItem.name,
+        selectedItem: selected?.name ?? answer
+      }
+    });
   }
 
   function nextRecipe() {
@@ -1234,6 +1262,12 @@ function orderRoundsAvoidingTripleKey<T extends { id: string }>(rounds: T[], key
   return ordered;
 }
 
+interface RankedRecordOptions {
+  performanceQuality?: number;
+  roundId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 function usePersonalModeStreak(gameKey: string, username: string) {
   const storageKey = `rift-daily:${gameKey}:${normalize(username || "guest")}`;
   const [streak, setStreak] = useState({ current: 0, best: 0, played: 0, wins: 0 });
@@ -1253,7 +1287,10 @@ function usePersonalModeStreak(gameKey: string, username: string) {
     }
   }, [storageKey]);
 
-  function record(correct: boolean) {
+  function record(correct: boolean, options: RankedRecordOptions = {}) {
+    const performanceQuality = Math.max(0, Math.min(1, options.performanceQuality ?? (correct ? 0.75 : 0.25)));
+    const roundId = options.roundId ?? `${gameKey}:${Date.now()}`;
+
     setStreak((current) => {
       const nextCurrent = correct ? current.current + 1 : 0;
       const next = {
@@ -1263,12 +1300,67 @@ function usePersonalModeStreak(gameKey: string, username: string) {
         wins: current.wins + (correct ? 1 : 0)
       };
       window.localStorage.setItem(storageKey, JSON.stringify(next));
+      updateLocalRankState(username, correct, performanceQuality);
       window.dispatchEvent(new Event("rift-daily:streak-updated"));
       return next;
     });
+
+    void persistRankedResult(gameKey, username, correct, performanceQuality, roundId, options.metadata);
   }
 
   return [streak, record] as const;
+}
+
+function updateLocalRankState(username: string, won: boolean, performanceQuality: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const key = rankedStorageKey(username);
+  const current = parseLeagueRankState(window.localStorage.getItem(key)) ?? createInitialRankState();
+  const next = applyRankedResult(current, { won, performanceQuality });
+  window.localStorage.setItem(key, JSON.stringify(next));
+}
+
+async function persistRankedResult(
+  gameKey: string,
+  username: string,
+  won: boolean,
+  performanceQuality: number,
+  roundId: string,
+  metadata?: Record<string, unknown>
+) {
+  if (typeof window === "undefined" || username.trim().toLowerCase() === "guest") {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/ranked/results", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        gameKey,
+        roundId,
+        won,
+        performanceQuality,
+        metadata
+      })
+    });
+
+    if (response.ok) {
+      const body = (await response.json()) as { rankState?: unknown };
+
+      if (body.rankState) {
+        window.localStorage.setItem(rankedStorageKey(username), JSON.stringify(body.rankState));
+      }
+
+      window.dispatchEvent(new Event("rift-daily:streak-updated"));
+    }
+  } catch {
+    // Network failures should not block the game loop; signed-in stats sync on the next successful submission.
+  }
 }
 
 function createRecipeRounds(base: ItemRecipeChallenge, itemCatalog: GameItem[]) {
@@ -1372,7 +1464,19 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
 
     setAnswer(side);
     setSubmitted(true);
-    recordStreak(side === round.answerSide);
+    recordStreak(side === round.answerSide, {
+      performanceQuality: side === round.answerSide ? 0.8 : 0.2,
+      roundId: round.id,
+      metadata: {
+        selectedSide: side,
+        answerSide: round.answerSide,
+        leftChampion: round.left.champion.name,
+        leftRole: round.left.role,
+        rightChampion: round.right.champion.name,
+        rightRole: round.right.role,
+        sampleSize: round.left.games
+      }
+    });
   }
 
   function nextRound() {
@@ -1541,7 +1645,15 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
     setSubmitted(true);
     setResultModalOpen(true);
 
-    recordStreak(option === round.answerTier);
+    recordStreak(option === round.answerTier, {
+      performanceQuality: option === round.answerTier ? 0.8 : 0.2,
+      roundId: round.id,
+      metadata: {
+        selectedTier: option,
+        answerTier: round.answerTier,
+        sourceMatchId: round.sourceMatch?.matchId
+      }
+    });
   }
 
   function nextRound() {
@@ -1570,20 +1682,14 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
               onClick={() => choose(option)}
               disabled={submitted}
               className={cn(
-                "grid min-h-16 min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition hover:border-[#c89b3c] disabled:cursor-default",
+                "group relative isolate min-h-16 min-w-0 overflow-hidden rounded-sm border bg-[#111722] p-1.5 text-left transition hover:border-[#c89b3c] hover:shadow-[0_0_22px_rgba(200,155,60,.16)] disabled:cursor-default",
                 answer === option && option === round.answerTier && "border-green-400/70 bg-green-500/18 ring-1 ring-green-300/35",
                 answer === option && option !== round.answerTier && "border-red-400/70 bg-red-500/16 ring-1 ring-red-300/30",
                 answer !== option && submitted && option === round.answerTier && "border-green-400/70 bg-green-500/18",
                 !submitted && answer !== option && "border-[#26313f]"
               )}
             >
-              <span className="flex -space-x-4">
-                {rankIcons(option).map((src) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img key={src} src={src} alt="" className="h-10 w-10 object-contain drop-shadow" />
-                ))}
-              </span>
-              <span className="min-w-0 text-sm font-semibold leading-tight">{option}</span>
+              <RankSplitLabel option={option} compact />
             </button>
           ))}
         </div>
@@ -1595,19 +1701,14 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
             </Button>
           )}
           {submitted && (
-            <Button type="button" onClick={nextRound}>
-              Next lobby
-            </Button>
+            <NextLobbyButton onClick={nextRound} />
           )}
         </div>
         {submitted && resultModalOpen && (
           <VerifiedAnswerModal
-            title="Elo read locked"
             correct={correct}
             selectedLabel={answer}
             answerLabel={round.answerTier}
-            selectedIcons={rankIcons(answer)}
-            answerIcons={rankIcons(round.answerTier)}
             streak={streak}
             sourceMatch={round.sourceMatch}
             note={getGuessEloSourceRankNote(round.signalNotes)}
@@ -1631,12 +1732,9 @@ function getGuessEloSourceRankNote(notes: string[]) {
 }
 
 function VerifiedAnswerModal({
-  title,
   correct,
   selectedLabel,
   answerLabel,
-  selectedIcons,
-  answerIcons,
   streak,
   sourceMatch,
   note,
@@ -1644,12 +1742,9 @@ function VerifiedAnswerModal({
   onNext,
   nextLabel
 }: {
-  title: string;
   correct: boolean;
   selectedLabel: string;
   answerLabel: string;
-  selectedIcons?: string[];
-  answerIcons?: string[];
   streak: { current: number; best: number; played: number };
   sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"];
   note?: string;
@@ -1659,42 +1754,69 @@ function VerifiedAnswerModal({
 }) {
   const [expanded, setExpanded] = useState(false);
   useBodyScrollLock();
+  const outcome = correct
+    ? {
+        eyebrow: "Victory",
+        headline: "Correct read.",
+        copy: "You called it clean. Keep the streak moving.",
+        icon: <CheckCircle2 size={28} />,
+        shell: "border-green-300/45 bg-[radial-gradient(circle_at_18%_10%,rgba(74,222,128,.26),transparent_34%),linear-gradient(135deg,rgba(20,83,45,.78),rgba(7,16,24,.96)_58%)]",
+        ring: "border-green-200/60 bg-green-300/18 text-green-100 shadow-[0_0_34px_rgba(74,222,128,.24)]",
+        text: "text-green-200"
+      }
+    : {
+        eyebrow: "Defeat",
+        headline: "Read missed.",
+        copy: "The answer is revealed. Run the next lobby back.",
+        icon: <XCircle size={28} />,
+        shell: "border-red-300/45 bg-[radial-gradient(circle_at_18%_10%,rgba(248,113,113,.24),transparent_34%),linear-gradient(135deg,rgba(127,29,29,.76),rgba(7,16,24,.96)_58%)]",
+        ring: "border-red-200/60 bg-red-300/18 text-red-100 shadow-[0_0_34px_rgba(248,113,113,.20)]",
+        text: "text-red-200"
+      };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-3 backdrop-blur-sm sm:p-4">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.16),transparent_32%),rgba(0,0,0,.76)] p-3 backdrop-blur-md sm:p-4">
       <div
         className={cn(
-          "grid w-full gap-4 overscroll-contain rounded-xl border bg-[#071018] p-4 shadow-[0_24px_90px_rgba(0,0,0,.65)] transition-[max-width] sm:p-5",
+          "relative grid w-full gap-4 overscroll-contain rounded-3xl border bg-[linear-gradient(180deg,rgba(13,20,31,.98),rgba(5,8,13,.98))] p-3 shadow-[0_30px_110px_rgba(0,0,0,.72),inset_0_1px_0_rgba(255,255,255,.06)] transition-[max-width] sm:p-4",
           expanded
             ? "max-h-[calc(100dvh-1.5rem)] max-w-[min(92rem,calc(100vw-1.5rem))] overflow-y-auto border-[#c89b3c]/70 fine-scrollbar sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(92rem,calc(100vw-2rem))]"
-            : "max-h-[calc(100dvh-1.5rem)] max-w-xl overflow-y-auto border-[#c89b3c]/60 fine-scrollbar sm:max-h-[calc(100dvh-2rem)]"
+            : "max-h-[calc(100dvh-1.5rem)] max-w-2xl overflow-y-auto border-[#c89b3c]/55 fine-scrollbar sm:max-h-[calc(100dvh-2rem)]"
         )}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className={cn("font-display text-3xl font-extrabold", correct ? "text-green-300" : "text-red-300")}>
-              {correct ? "Correct call." : "Not this one."}
+        <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+        <div className={cn("relative overflow-hidden rounded-2xl border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.07)] sm:p-5", outcome.shell)}>
+          <div className="pointer-events-none absolute -right-14 -top-14 h-36 w-36 rounded-full bg-white/10 blur-3xl" />
+          <div className="relative flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className={cn("grid h-14 w-14 shrink-0 place-items-center rounded-2xl border", outcome.ring)}>
+                {outcome.icon}
+              </div>
+              <div className="min-w-0">
+                <div className={cn("font-display text-xs font-black uppercase tracking-[0.16em]", outcome.text)}>{outcome.eyebrow}</div>
+                <div className="mt-1 font-display text-3xl font-black leading-none tracking-tight text-white sm:text-4xl">{outcome.headline}</div>
+                <p className="mt-2 text-sm font-medium text-white/72">{outcome.copy}</p>
+              </div>
             </div>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">{title}</p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/12 bg-black/18 text-white/60 transition hover:border-white/28 hover:bg-white/10 hover:text-white"
+              aria-label="Close result"
+            >
+              <X size={17} />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-md border border-white/10 bg-white/5 text-[color:var(--muted)] transition hover:border-[#c89b3c] hover:text-white"
-            aria-label="Close result"
-          >
-            <X size={16} />
-          </button>
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
-          <ResultStat label="Your Answer" value={selectedLabel || "No answer"} iconUrls={selectedIcons} tone={correct ? "good" : "bad"} />
-          <ResultStat label="Correct Answer" value={answerLabel} iconUrls={answerIcons} tone="gold" />
+          <AnswerResultCard label="Your Answer" value={selectedLabel || "No answer"} tone={correct ? "good" : "bad"} />
+          <AnswerResultCard label="Correct Answer" value={answerLabel} tone="gold" />
           <ResultStat label="Current Streak" value={String(streak.current)} detail={`Best ${streak.best}`} tone={correct ? "good" : "muted"} />
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-white/8 bg-white/[.035] p-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
             Close
           </Button>
           {sourceMatch && (
@@ -1702,9 +1824,7 @@ function VerifiedAnswerModal({
               {expanded ? "Hide match data" : "View match data"}
             </Button>
           )}
-          <Button type="button" onClick={onNext}>
-            {nextLabel}
-          </Button>
+          <NextLobbyButton onClick={onNext} label={nextLabel} />
         </div>
 
         {expanded && (
@@ -1741,30 +1861,73 @@ function useBodyScrollLock() {
   }, []);
 }
 
+function AnswerResultCard({ label, value, tone }: { label: string; value: string; tone: "good" | "bad" | "gold" }) {
+  return (
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-2xl border p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.045)]",
+        tone === "good" && "border-green-300/30 bg-[linear-gradient(180deg,rgba(22,101,52,.22),rgba(11,17,27,.92))]",
+        tone === "bad" && "border-red-300/30 bg-[linear-gradient(180deg,rgba(127,29,29,.22),rgba(11,17,27,.92))]",
+        tone === "gold" && "border-[#c89b3c]/42 bg-[linear-gradient(180deg,rgba(200,155,60,.18),rgba(11,17,27,.92))]"
+      )}
+    >
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+      <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
+      <div className="mt-3">
+        {isRankOption(value) ? (
+          <RankSplitLabel option={value} />
+        ) : (
+          <CallAnswerLabel value={value} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CallAnswerLabel({ value }: { value: string }) {
+  const normalized = value.toLowerCase();
+  const tone =
+    normalized === "queue"
+      ? { color: "#86efac", background: "rgba(34, 197, 94, 0.14)", border: "rgba(134, 239, 172, 0.34)" }
+      : normalized === "dodge"
+        ? { color: "#fca5a5", background: "rgba(239, 68, 68, 0.14)", border: "rgba(252, 165, 165, 0.34)" }
+        : { color: "#f5c542", background: "rgba(200, 155, 60, 0.12)", border: "rgba(200, 155, 60, 0.34)" };
+
+  return (
+    <div
+      className="grid min-h-20 place-items-center rounded-xl border px-3 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.05)]"
+      style={{ background: tone.background, borderColor: tone.border }}
+    >
+      <span className="font-display text-2xl font-black uppercase tracking-[0.08em]" style={{ color: tone.color }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function ResultStat({
   label,
   value,
   detail,
-  iconUrls = [],
   tone = "muted"
 }: {
   label: string;
   value: string;
   detail?: string;
-  iconUrls?: string[];
   tone?: "good" | "bad" | "gold" | "muted";
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-[#0b111b] p-3">
-      <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
-      {iconUrls.length > 0 && (
-        <div className="mt-2 flex min-h-12 items-center -space-x-4">
-          {iconUrls.map((src) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={src} src={src} alt="" className="h-12 w-12 object-contain drop-shadow-[0_8px_16px_rgba(0,0,0,.45)]" />
-          ))}
-        </div>
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-2xl border p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.045)]",
+        tone === "good" && "border-green-300/30 bg-[linear-gradient(180deg,rgba(22,101,52,.24),rgba(11,17,27,.92))]",
+        tone === "bad" && "border-red-300/30 bg-[linear-gradient(180deg,rgba(127,29,29,.24),rgba(11,17,27,.92))]",
+        tone === "gold" && "border-[#c89b3c]/42 bg-[linear-gradient(180deg,rgba(200,155,60,.18),rgba(11,17,27,.92))]",
+        tone === "muted" && "border-white/10 bg-[#0b111b]"
       )}
+    >
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+      <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
       <div
         className={cn(
           "mt-1 truncate font-display text-2xl font-extrabold",
@@ -1779,6 +1942,19 @@ function ResultStat({
       </div>
       {detail && <div className="mt-1 text-xs text-[color:var(--muted)]">{detail}</div>}
     </div>
+  );
+}
+
+function NextLobbyButton({ onClick, label = "Next lobby" }: { onClick: () => void; label?: string }) {
+  return (
+    <Button
+      type="button"
+      onClick={onClick}
+      className="min-h-12 rounded-xl border-[#ffe27a]/80 bg-[linear-gradient(180deg,#ffe27a_0%,#f6bd38_58%,#c88717_100%)] px-5 text-sm font-black text-[#090d14] shadow-[0_12px_34px_rgba(246,189,56,.28),inset_0_1px_0_rgba(255,255,255,.55)] hover:translate-y-[-1px] hover:bg-[linear-gradient(180deg,#fff0a3_0%,#f6c94a_58%,#d99a1c_100%)] hover:shadow-[0_16px_42px_rgba(246,189,56,.34),inset_0_1px_0_rgba(255,255,255,.6)]"
+    >
+      <span>{label}</span>
+      <ArrowRight size={16} strokeWidth={2.8} />
+    </Button>
   );
 }
 
@@ -1983,7 +2159,15 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
     setAnswer(call);
     setSubmitted(true);
     setResultModalOpen(true);
-    recordStreak(call === round.answer);
+    recordStreak(call === round.answer, {
+      performanceQuality: call === round.answer ? 0.8 : 0.2,
+      roundId: round.id,
+      metadata: {
+        selectedCall: call,
+        answerCall: round.answer,
+        sourceMatchId: round.sourceMatch?.matchId
+      }
+    });
   }
 
   function nextLobby() {
@@ -2044,14 +2228,11 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             </Button>
           )}
           {submitted && (
-            <Button type="button" onClick={nextLobby}>
-              Next lobby
-            </Button>
+            <NextLobbyButton onClick={nextLobby} />
           )}
         </div>
         {submitted && resultModalOpen && (
           <VerifiedAnswerModal
-            title="Champ-select call locked"
             correct={correct}
             selectedLabel={answer === "queue" ? "Queue" : "Dodge"}
             answerLabel={round.answer === "queue" ? "Queue" : "Dodge"}
@@ -2132,12 +2313,11 @@ function ChampionLine({ label, champions, compact }: { label: string; champions:
       <div className="text-sm uppercase text-[#c89b3c]">{label}</div>
       <div className={cn("grid gap-2", compact ? "grid-cols-5" : "grid-cols-5")}>
         {champions.map((champion) => (
-          <div key={champion.id} className={cn("overflow-hidden rounded-sm border border-white/10 bg-[#111722]", compact && "bg-[#050607]/75")} title={`${champion.name} - ${champion.roles.join(" / ")}`}>
+          <div key={champion.id} className={cn("overflow-hidden rounded-sm border border-white/10 bg-[#111722]", compact && "bg-[#050607]/75")} title={champion.name}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={champion.squareUrl} alt="" className={cn("aspect-square w-full object-contain", compact ? "h-12" : "h-16")} />
             <div className={cn("p-2", compact && "hidden xl:block px-1.5 py-1")}>
               <div className="truncate text-sm font-semibold leading-tight">{champion.name}</div>
-              <div className="truncate text-[11px] leading-tight text-[color:var(--muted)]">{champion.roles.join(" / ")}</div>
             </div>
           </div>
         ))}
@@ -2369,16 +2549,57 @@ function createEloRounds(base: GuessEloChallenge): EloRound[] {
   return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
-function rankIcons(option: string) {
-  if (option === "Iron/Bronze") return [rankIconUrl("iron"), rankIconUrl("bronze")];
-  if (option === "Silver/Gold") return [rankIconUrl("silver"), rankIconUrl("gold")];
-  if (option === "Platinum/Emerald") return [rankIconUrl("platinum"), rankIconUrl("emerald")];
-  if (option === "Diamond/Master") return [rankIconUrl("diamond"), rankIconUrl("master")];
-  return [rankIconUrl("grandmaster"), rankIconUrl("challenger")];
+const rankVisuals: Record<string, { color: string; background: string; border: string }> = {
+  Iron: { color: "#cbd5df", background: "rgba(99, 110, 123, 0.18)", border: "rgba(203, 213, 223, 0.24)" },
+  Bronze: { color: "#d59a62", background: "rgba(166, 106, 58, 0.20)", border: "rgba(213, 154, 98, 0.28)" },
+  Silver: { color: "#e5eef5", background: "rgba(190, 205, 214, 0.18)", border: "rgba(229, 238, 245, 0.26)" },
+  Gold: { color: "#f5c542", background: "rgba(239, 184, 65, 0.18)", border: "rgba(245, 197, 66, 0.30)" },
+  Platinum: { color: "#68e3d4", background: "rgba(57, 193, 181, 0.18)", border: "rgba(104, 227, 212, 0.28)" },
+  Emerald: { color: "#43e68b", background: "rgba(25, 176, 103, 0.18)", border: "rgba(67, 230, 139, 0.28)" },
+  Diamond: { color: "#83ccff", background: "rgba(75, 172, 255, 0.18)", border: "rgba(131, 204, 255, 0.30)" },
+  Master: { color: "#d79aff", background: "rgba(178, 88, 255, 0.18)", border: "rgba(215, 154, 255, 0.30)" },
+  Grandmaster: { color: "#ff7a86", background: "rgba(239, 82, 96, 0.18)", border: "rgba(255, 122, 134, 0.30)" },
+  Challenger: { color: "#74ecff", background: "rgba(86, 216, 255, 0.18)", border: "rgba(116, 236, 255, 0.30)" }
+};
+
+function RankSplitLabel({ option, compact = false }: { option: string; compact?: boolean }) {
+  const ranks = rankOptionParts(option);
+
+  if (ranks.length === 0) {
+    return (
+      <div className={cn("grid place-items-center rounded-xl border border-[#c89b3c]/28 bg-[#c89b3c]/10 px-3 text-center", compact ? "min-h-[3.25rem]" : "min-h-20")}>
+        <span className={cn("font-display font-black uppercase tracking-[0.08em] text-[#f5c542]", compact ? "text-sm" : "text-2xl")}>{option}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("relative grid overflow-hidden rounded-xl border border-white/10 bg-[#071018] shadow-[inset_0_1px_0_rgba(255,255,255,.04)]", ranks.length > 1 && "grid-cols-2", compact ? "min-h-[3.25rem]" : "min-h-20")}>
+      {ranks.map((rank) => {
+        const visual = rankVisuals[rank];
+
+        return (
+          <div key={rank} className="relative grid place-items-center px-2 py-2 text-center" style={{ background: visual.background, borderColor: visual.border }}>
+            <span className={cn("font-display font-black uppercase leading-none tracking-[0.08em]", compact ? "text-sm sm:text-[15px]" : "text-xl sm:text-2xl")} style={{ color: visual.color }}>
+              {rank}
+            </span>
+          </div>
+        );
+      })}
+      {ranks.length > 1 && <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 bg-white/12" />}
+    </div>
+  );
 }
 
-function rankIconUrl(rank: string) {
-  return `https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-${rank}.png`;
+function isRankOption(value: string) {
+  return rankOptionParts(value).length > 0;
+}
+
+function rankOptionParts(option: string) {
+  return option
+    .split("/")
+    .map((rank) => rank.trim())
+    .filter((rank) => Boolean(rankVisuals[rank]));
 }
 
 function ResultPill({ submitted, correct, answer }: { submitted: boolean; correct: boolean; answer?: string }) {

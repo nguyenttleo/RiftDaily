@@ -376,6 +376,12 @@ export interface UserStats {
   fastestSolveMs: number | null;
   favoriteRole: string;
   rank: string;
+  rankTier: string;
+  rankDivision: string | null;
+  rankLp: number;
+  lastLpChange: number | null;
+  rankedGamesPlayed: number;
+  rankedWins: number;
 }
 
 export interface LeaderboardEntry {

@@ -28,7 +28,14 @@ import {
 import { LeaderboardPanel } from "@/components/leaderboard-panel";
 import { TrainerPage } from "@/components/trainer-page";
 import { Button } from "@/components/ui/button";
-import { nextRankProgress, rankFromProgress } from "@/game/scoring";
+import {
+  createInitialRankState,
+  nextRankProgress,
+  normalizeRankState,
+  parseLeagueRankState,
+  rankedStorageKey,
+  type LeagueRankState
+} from "@/game/scoring";
 import { cn } from "@/lib/utils";
 import type { DailyChallengeResponse, LeaderboardEntry, UserStats } from "@/types";
 
@@ -51,7 +58,13 @@ const guestStats: UserStats = {
   perfectSolves: 0,
   fastestSolveMs: null,
   favoriteRole: "Unclaimed",
-  rank: "Unranked"
+  rank: "Unranked",
+  rankTier: "Unranked",
+  rankDivision: null,
+  rankLp: 0,
+  lastLpChange: null,
+  rankedGamesPlayed: 0,
+  rankedWins: 0
 };
 
 export function AppShell() {
@@ -129,7 +142,20 @@ export function AppShell() {
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
   const displayStats = useRankedStats(daily?.stats ?? guestStats);
-  const rankProgress = nextRankProgress(displayStats);
+  const rankState = rankStateFromStats(displayStats);
+  const rankProgress = nextRankProgress(rankState);
+
+  useEffect(() => {
+    const syncStats = () => {
+      void loadStats();
+      void loadLeaderboard();
+    };
+
+    window.addEventListener(streakUpdateEventName, syncStats);
+    return () => {
+      window.removeEventListener(streakUpdateEventName, syncStats);
+    };
+  }, [loadLeaderboard, loadStats]);
 
   if (loading) {
     return (
@@ -222,7 +248,7 @@ export function AppShell() {
         </div>
       </section>
 
-      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.16),transparent_28%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-4 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:grid lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:gap-4">
+      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.16),transparent_28%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-4 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:flex lg:flex-col lg:gap-4">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
         <div className="relative">
           <h1 className="font-display text-3xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>
@@ -235,14 +261,14 @@ export function AppShell() {
             resetCountdown={resetCountdown}
             leaderboard={leaderboard}
           />
+          <AuthPanel
+            onAuthChange={() => {
+              void loadDaily();
+              void loadStats();
+              void loadLeaderboard();
+            }}
+          />
         </div>
-        <AuthPanel
-          onAuthChange={() => {
-            void loadDaily();
-            void loadStats();
-            void loadLeaderboard();
-          }}
-        />
       </aside>
     </main>
   );
@@ -272,7 +298,7 @@ function MobileHub({
             </div>
           </div>
           <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[11px] font-bold uppercase text-[#f2d36b]">
-            {stats.rank}
+            {stats.rank} {stats.rankLp} LP
           </span>
         </div>
       </HubCard>
@@ -281,7 +307,7 @@ function MobileHub({
           <MobileProgressStat label="Streak" value={String(stats.currentStreak)} />
           <MobileProgressStat label="Best" value={String(stats.maxStreak)} />
           <MobileProgressStat label="Win" value={`${stats.winRate}%`} />
-          <MobileProgressStat label="LP" value={String(rankProgress.points)} />
+          <MobileProgressStat label="LP" value={String(rankProgress.lp)} />
         </div>
       </HubCard>
     </div>
@@ -348,8 +374,9 @@ function SidebarGroup({ title, children, accent = false }: { title: string; chil
 }
 
 function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: ReturnType<typeof nextRankProgress> }) {
-  const recordLine = stats.gamesPlayed > 0 ? `${stats.wins}W / ${stats.gamesPlayed}G` : "No games yet";
+  const recordLine = stats.rankedGamesPlayed > 0 ? `${stats.rankedWins}W / ${stats.rankedGamesPlayed}G` : stats.gamesPlayed > 0 ? `${stats.wins}W / ${stats.gamesPlayed}G` : "No games yet";
   const roleLine = stats.favoriteRole !== "Unclaimed" ? stats.favoriteRole : "Role unclaimed";
+  const lpDelta = progress.lastLpChange;
 
   return (
     <SidebarGroup title="Player" accent>
@@ -364,20 +391,40 @@ function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: R
 
       <div className="border-t border-white/8 pt-4">
         <div className="flex items-end justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Current Rank</div>
-            <div className="mt-1 font-display text-3xl font-black leading-none text-white">{stats.rank}</div>
+            <div className="mt-1 flex min-w-0 items-center gap-2" title={stats.rank}>
+              <div className="truncate font-display text-3xl font-black leading-none text-white">{stats.rank}</div>
+              {stats.rankTier !== "Unranked" && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={rankEmblemUrl(stats.rankTier)}
+                  alt=""
+                  className="pointer-events-none h-11 w-11 shrink-0 object-contain saturate-125 drop-shadow-[0_0_14px_rgba(245,197,66,.22)]"
+                />
+              )}
+            </div>
           </div>
           <div className="text-right">
-            <div className="font-display text-xl font-bold text-[#f5c542]">{progress.points}</div>
+            <div className="font-display text-xl font-bold text-[#f5c542]">{progress.lp}</div>
             <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">LP</div>
+            {typeof lpDelta === "number" && (
+              <div className={cn("mt-1 text-xs font-bold", lpDelta >= 0 ? "text-green-300" : "text-red-300")}>
+                {lpDelta > 0 ? "+" : ""}
+                {lpDelta} LP
+              </div>
+            )}
           </div>
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/8">
           <div className="h-1.5 rounded-full bg-[#f5c542] transition-all" style={{ width: `${progress.percent}%` }} />
         </div>
-        <div className="mt-2 text-xs text-[color:var(--muted)]">
-          {progress.nextRank ? `${progress.nextPoints} LP for ${progress.nextRank}` : "Peak rank unlocked"}
+        <div className="relative mt-2 text-xs text-[color:var(--muted)]">
+          {stats.rank === "Unranked"
+            ? "Play any mode to place into Iron IV."
+            : progress.nextRank
+              ? `Reach ${progress.nextPoints} LP to promote to ${progress.nextRank}`
+              : "Peak rank unlocked"}
         </div>
       </div>
 
@@ -477,10 +524,31 @@ function useRankedStats(stats: UserStats): UserStats {
 }
 
 function mergeStatsWithLocalStreaks(stats: UserStats): UserStats {
+  const serverRankState = rankStateFromStats(stats);
+
   if (typeof window === "undefined") {
     return {
       ...stats,
-      rank: rankFromProgress(stats)
+      rank: displayLocalRank(serverRankState),
+      rankTier: serverRankState.tier,
+      rankDivision: serverRankState.division,
+      rankLp: serverRankState.lp,
+      lastLpChange: serverRankState.lastLpChange,
+      rankedGamesPlayed: serverRankState.gamesPlayed,
+      rankedWins: serverRankState.wins
+    };
+  }
+
+  if (!isGuestUsername(stats.username)) {
+    return {
+      ...stats,
+      rank: displayLocalRank(serverRankState),
+      rankTier: serverRankState.tier,
+      rankDivision: serverRankState.division,
+      rankLp: serverRankState.lp,
+      lastLpChange: serverRankState.lastLpChange,
+      rankedGamesPlayed: serverRankState.gamesPlayed,
+      rankedWins: serverRankState.wins
     };
   }
 
@@ -500,11 +568,45 @@ function mergeStatsWithLocalStreaks(stats: UserStats): UserStats {
     wins,
     winRate
   };
+  const localRankState = parseLeagueRankState(window.localStorage.getItem(rankedStorageKey(stats.username))) ?? createInitialRankState(merged);
 
   return {
     ...merged,
-    rank: rankFromProgress(merged)
+    rank: displayLocalRank(localRankState),
+    rankTier: localRankState.tier,
+    rankDivision: localRankState.division,
+    rankLp: localRankState.lp,
+    lastLpChange: localRankState.lastLpChange,
+    rankedGamesPlayed: localRankState.gamesPlayed,
+    rankedWins: localRankState.wins
   };
+}
+
+function rankStateFromStats(stats: UserStats): LeagueRankState {
+  return normalizeRankState({
+    tier: stats.rankTier ?? stats.rank,
+    division: stats.rankDivision,
+    lp: stats.rankLp ?? 0,
+    lastLpChange: stats.lastLpChange ?? null,
+    gamesPlayed: stats.rankedGamesPlayed ?? stats.gamesPlayed,
+    wins: stats.rankedWins ?? stats.wins
+  });
+}
+
+function displayLocalRank(state: LeagueRankState) {
+  if (state.tier === "Unranked") {
+    return "Unranked";
+  }
+
+  return state.division ? `${state.tier} ${state.division}` : state.tier;
+}
+
+function rankEmblemUrl(rankTier: string) {
+  return `https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-${rankTier.toLowerCase()}.png`;
+}
+
+function isGuestUsername(username: string) {
+  return username.trim().toLowerCase() === "guest";
 }
 
 function readLocalModeStreaks(username: string): LocalModeStreak[] {

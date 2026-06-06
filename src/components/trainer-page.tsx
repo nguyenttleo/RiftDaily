@@ -4,6 +4,7 @@ import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { applyRankedResult, createInitialRankState, parseLeagueRankState, rankedStorageKey } from "@/game/scoring";
 import type { SkillshotDodgeChallenge } from "@/types";
 
 interface TrainerPageProps {
@@ -201,7 +202,20 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
       if (remaining <= 0 || hits >= challenge.player.health) {
         if (!reported) {
           reported = true;
-          recordStreak(remaining <= 0);
+          const survived = remaining <= 0;
+          const performanceQuality = survived
+            ? 1
+            : Math.max(0, Math.min(1, (elapsed / 1000 / challenge.durationSeconds) * 0.8 + (near / 20) * 0.2));
+          recordStreak(survived, {
+            performanceQuality,
+            roundId: `${challenge.id}:${roundSeedOffset + roundIndex}`,
+            metadata: {
+              hits,
+              nearMisses: near,
+              dodges,
+              durationSeconds: challenge.durationSeconds
+            }
+          });
         }
         const score = Math.max(0, Math.round((elapsed / 1000) * 100 + dodges * 50 + near * 25 - hits * 300 + (hits === 0 ? 500 : 0)));
         setHud({ time: remaining, hits, dodges, near, score, state: remaining <= 0 ? "survived" : "down", lastAbilities: abilityLog });
@@ -271,7 +285,7 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
       activeCanvas.removeEventListener("pointerdown", pointerDown);
       cancelAnimationFrame(animation);
     };
-  }, [abilityRotation, challenge, recordStreak, runId]);
+  }, [abilityRotation, challenge, recordStreak, roundIndex, roundSeedOffset, runId]);
 
   return (
     <div className="grid min-h-[calc(100dvh-5rem)] gap-3 rounded-lg border border-[#3c3421] bg-[#071018] p-3 sm:p-4 lg:h-full lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:rounded-sm">
@@ -357,6 +371,12 @@ interface TrainerModeStreak {
   wins: number;
 }
 
+interface TrainerRankedRecordOptions {
+  performanceQuality?: number;
+  roundId?: string;
+  metadata?: Record<string, unknown>;
+}
+
 function useTrainerModeStreak(mode: string, username: string) {
   const storageKey = `rift-daily:mode-streak:${mode}:${username}`;
   const [streak, setStreak] = useState<TrainerModeStreak>({ current: 0, best: 0, played: 0, wins: 0 });
@@ -385,7 +405,10 @@ function useTrainerModeStreak(mode: string, username: string) {
   }, [storageKey]);
 
   const record = useCallback(
-    (success: boolean) => {
+    (success: boolean, options: TrainerRankedRecordOptions = {}) => {
+      const performanceQuality = Math.max(0, Math.min(1, options.performanceQuality ?? (success ? 1 : 0.25)));
+      const roundId = options.roundId ?? `${mode}:${Date.now()}`;
+
       setStreak((current) => {
         const nextCurrent = success ? current.current + 1 : 0;
         const next = {
@@ -397,16 +420,71 @@ function useTrainerModeStreak(mode: string, username: string) {
 
         if (typeof window !== "undefined") {
           window.localStorage.setItem(storageKey, JSON.stringify(next));
+          updateTrainerLocalRankState(username, success, performanceQuality);
           window.dispatchEvent(new Event("rift-daily:streak-updated"));
         }
 
         return next;
       });
+
+      void persistTrainerRankedResult(mode, username, success, performanceQuality, roundId, options.metadata);
     },
-    [storageKey]
+    [mode, storageKey, username]
   );
 
   return [streak, record] as const;
+}
+
+function updateTrainerLocalRankState(username: string, won: boolean, performanceQuality: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const key = rankedStorageKey(username);
+  const current = parseLeagueRankState(window.localStorage.getItem(key)) ?? createInitialRankState();
+  const next = applyRankedResult(current, { won, performanceQuality });
+  window.localStorage.setItem(key, JSON.stringify(next));
+}
+
+async function persistTrainerRankedResult(
+  gameKey: string,
+  username: string,
+  won: boolean,
+  performanceQuality: number,
+  roundId: string,
+  metadata?: Record<string, unknown>
+) {
+  if (typeof window === "undefined" || username.trim().toLowerCase() === "guest") {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/ranked/results", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        gameKey,
+        roundId,
+        won,
+        performanceQuality,
+        metadata
+      })
+    });
+
+    if (response.ok) {
+      const body = (await response.json()) as { rankState?: unknown };
+
+      if (body.rankState) {
+        window.localStorage.setItem(rankedStorageKey(username), JSON.stringify(body.rankState));
+      }
+
+      window.dispatchEvent(new Event("rift-daily:streak-updated"));
+    }
+  } catch {
+    // Keep trainer input responsive even if the stats endpoint is temporarily unavailable.
+  }
 }
 
 function useNonRepeatingTrainerOffset(mode: string, username: string) {

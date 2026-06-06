@@ -1,9 +1,16 @@
 import { champions } from "@/game/data/champions";
-import { rankFromProgress } from "@/game/scoring";
+import {
+  applyRankedResult,
+  createInitialRankState,
+  displayRankName,
+  normalizeRankState,
+  rankFromProgress,
+  type LeagueRankState
+} from "@/game/scoring";
 import { isDatabaseConfigured } from "@/lib/env";
 import type { ChallengeType, LeaderboardEntry, UserStats } from "@/types";
 
-import { query } from "./client";
+import { query, withTransaction } from "./client";
 
 interface UserRow {
   id: string;
@@ -22,6 +29,16 @@ interface StatsRow {
   perfect_solves: number | null;
   fastest_solve_ms: number | null;
   favorite_role: string | null;
+  mode_current_streak?: number | null;
+  mode_max_streak?: number | null;
+  mode_games_played?: number | null;
+  mode_wins?: number | null;
+  rank_tier?: string | null;
+  rank_division?: string | null;
+  rank_lp?: number | null;
+  rank_last_lp_change?: number | null;
+  rank_games_played?: number | null;
+  rank_wins?: number | null;
 }
 
 interface ChallengeRow {
@@ -62,6 +79,26 @@ export interface CreateSuggestionInput {
   message: string;
   page?: string;
 }
+
+export interface RecordRankedGameResultInput {
+  userId: string;
+  gameKey: string;
+  roundId: string;
+  won: boolean;
+  performanceQuality: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface RankStateRow {
+  tier: string | null;
+  division: string | null;
+  lp: number | null;
+  last_lp_change: number | null;
+  games_played: number | null;
+  wins: number | null;
+}
+
+let rankSchemaReady = false;
 
 export async function findUserByEmail(email: string): Promise<UserRow | null> {
   if (!isDatabaseConfigured()) {
@@ -237,6 +274,94 @@ export async function recordGuess(input: RecordGuessInput): Promise<void> {
   }
 }
 
+export async function recordRankedGameResult(input: RecordRankedGameResultInput): Promise<{ rankState: LeagueRankState; lpDelta: number } | null> {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  await ensureRankSchema();
+
+  return withTransaction(async (client) => {
+    const rankResult = await client.query<RankStateRow>(
+      `select tier, division, lp, last_lp_change, games_played, wins
+       from user_rank_state
+       where user_id = $1
+       for update`,
+      [input.userId]
+    );
+    const before = rankStateFromRow(rankResult.rows[0]);
+    const after = applyRankedResult(before, {
+      won: input.won,
+      performanceQuality: input.performanceQuality
+    });
+    const lpDelta = after.lastLpChange ?? 0;
+
+    await client.query(
+      `insert into user_rank_state (user_id, tier, division, lp, last_lp_change, games_played, wins, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now())
+       on conflict (user_id)
+       do update set
+         tier = excluded.tier,
+         division = excluded.division,
+         lp = excluded.lp,
+         last_lp_change = excluded.last_lp_change,
+         games_played = excluded.games_played,
+         wins = excluded.wins,
+         updated_at = now()`,
+      [input.userId, after.tier, after.division, after.lp, lpDelta, after.gamesPlayed, after.wins]
+    );
+
+    await client.query(
+      `insert into ranked_game_results (
+        user_id,
+        game_key,
+        round_id,
+        won,
+        performance_quality,
+        lp_delta,
+        tier_before,
+        division_before,
+        lp_before,
+        tier_after,
+        division_after,
+        lp_after,
+        metadata
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)`,
+      [
+        input.userId,
+        input.gameKey,
+        input.roundId,
+        input.won,
+        Math.max(0, Math.min(1, input.performanceQuality)),
+        lpDelta,
+        before.tier,
+        before.division,
+        before.lp,
+        after.tier,
+        after.division,
+        after.lp,
+        JSON.stringify(input.metadata ?? {})
+      ]
+    );
+
+    await client.query(
+      `insert into game_mode_stats (user_id, game_key, current_streak, best_streak, games_played, wins, updated_at)
+       values ($1, $2, case when $3 then 1 else 0 end, case when $3 then 1 else 0 end, 1, case when $3 then 1 else 0 end, now())
+       on conflict (user_id, game_key)
+       do update set
+         current_streak = case when $3 then game_mode_stats.current_streak + 1 else 0 end,
+         best_streak = greatest(game_mode_stats.best_streak, case when $3 then game_mode_stats.current_streak + 1 else 0 end),
+         games_played = game_mode_stats.games_played + 1,
+         wins = game_mode_stats.wins + case when $3 then 1 else 0 end,
+         updated_at = now()`,
+      [input.userId, input.gameKey, input.won]
+    );
+
+    return { rankState: after, lpDelta };
+  });
+}
+
 export async function getUserStats(userId?: string | null, username = "Guest"): Promise<UserStats> {
   if (!isDatabaseConfigured() || !userId) {
     return {
@@ -249,9 +374,17 @@ export async function getUserStats(userId?: string | null, username = "Guest"): 
       perfectSolves: 0,
       fastestSolveMs: null,
       favoriteRole: "Unclaimed",
-      rank: "Unranked"
+      rank: "Unranked",
+      rankTier: "Unranked",
+      rankDivision: null,
+      rankLp: 0,
+      lastLpChange: null,
+      rankedGamesPlayed: 0,
+      rankedWins: 0
     };
   }
+
+  await ensureRankSchema();
 
   const result = await query<StatsRow & { username: string }>(
     `select
@@ -263,9 +396,30 @@ export async function getUserStats(userId?: string | null, username = "Guest"): 
         coalesce(s.win_rate, 0) as win_rate,
         coalesce(s.perfect_solves, 0) as perfect_solves,
         s.fastest_solve_ms,
-        coalesce(s.favorite_role, 'Unclaimed') as favorite_role
+        coalesce(s.favorite_role, 'Unclaimed') as favorite_role,
+        coalesce(ms.current_streak, 0) as mode_current_streak,
+        coalesce(ms.max_streak, 0) as mode_max_streak,
+        coalesce(ms.games_played, 0) as mode_games_played,
+        coalesce(ms.wins, 0) as mode_wins,
+        r.tier as rank_tier,
+        r.division as rank_division,
+        coalesce(r.lp, 0) as rank_lp,
+        r.last_lp_change as rank_last_lp_change,
+        coalesce(r.games_played, 0) as rank_games_played,
+        coalesce(r.wins, 0) as rank_wins
       from users u
       left join user_stats s on s.user_id = u.id
+      left join (
+        select
+          user_id,
+          max(current_streak) as current_streak,
+          max(best_streak) as max_streak,
+          sum(games_played) as games_played,
+          sum(wins) as wins
+        from game_mode_stats
+        group by user_id
+      ) ms on ms.user_id = u.id
+      left join user_rank_state r on r.user_id = u.id
       where u.id = $1
       limit 1`,
     [userId]
@@ -386,24 +540,135 @@ async function recomputeUserStats(userId: string): Promise<void> {
 }
 
 function normalizeStatsRow(username: string, row: StatsRow): UserStats {
-  const currentStreak = Number(row.current_streak ?? 0);
-  const maxStreak = Number(row.max_streak ?? 0);
-  const gamesPlayed = Number(row.games_played ?? 0);
+  const currentStreak = Math.max(Number(row.current_streak ?? 0), Number(row.mode_current_streak ?? 0));
+  const maxStreak = Math.max(Number(row.max_streak ?? 0), Number(row.mode_max_streak ?? 0));
+  const gamesPlayed = Number(row.games_played ?? 0) + Number(row.mode_games_played ?? 0);
+  const wins = Number(row.wins ?? 0) + Number(row.mode_wins ?? 0);
   const perfectSolves = Number(row.perfect_solves ?? 0);
-  const winRate = Number(row.win_rate ?? 0);
+  const winRate = gamesPlayed > 0 ? Math.round((wins / gamesPlayed) * 100) : Number(row.win_rate ?? 0);
+  const rankState = normalizeRankState({
+    tier: row.rank_tier ?? rankFromProgress({ currentStreak, maxStreak, gamesPlayed, winRate, perfectSolves }),
+    division: row.rank_division,
+    lp: row.rank_lp ?? 0,
+    lastLpChange: row.rank_last_lp_change,
+    gamesPlayed: row.rank_games_played ?? gamesPlayed,
+    wins: row.rank_wins ?? wins
+  });
 
   return {
     username,
     currentStreak,
     maxStreak,
     gamesPlayed,
-    wins: Number(row.wins ?? 0),
+    wins,
     winRate,
     perfectSolves,
     fastestSolveMs: row.fastest_solve_ms,
     favoriteRole: row.favorite_role ?? "Unclaimed",
-    rank: rankFromProgress({ currentStreak, maxStreak, gamesPlayed, winRate, perfectSolves })
+    rank: displayRankName(rankState),
+    rankTier: rankState.tier,
+    rankDivision: rankState.division,
+    rankLp: rankState.lp,
+    lastLpChange: rankState.lastLpChange,
+    rankedGamesPlayed: rankState.gamesPlayed,
+    rankedWins: rankState.wins
   };
+}
+
+async function ensureRankSchema(): Promise<void> {
+  if (rankSchemaReady || !isDatabaseConfigured()) {
+    return;
+  }
+
+  await query(
+    `create table if not exists user_rank_state (
+      user_id uuid primary key references users(id) on delete cascade,
+      tier text not null default 'Unranked' check (tier in ('Unranked', 'Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Emerald', 'Diamond', 'Master', 'Grandmaster', 'Challenger')),
+      division text,
+      lp integer not null default 0 check (lp >= 0),
+      last_lp_change integer,
+      games_played integer not null default 0,
+      wins integer not null default 0,
+      updated_at timestamptz not null default now()
+    )`
+  );
+  await query("alter table user_rank_state add column if not exists division text");
+  await query("alter table user_rank_state drop constraint if exists user_rank_state_lp_check");
+  await query("alter table user_rank_state add constraint user_rank_state_lp_check check (lp >= 0)");
+  await query(
+    `update user_rank_state
+     set division = case
+       when tier in ('Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Emerald', 'Diamond') and (division is null or division not in ('IV', 'III', 'II', 'I')) then 'IV'
+       when tier in ('Unranked', 'Master', 'Grandmaster', 'Challenger') then null
+       else division
+     end
+     where
+       (tier in ('Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Emerald', 'Diamond') and (division is null or division not in ('IV', 'III', 'II', 'I')))
+       or
+       (tier in ('Unranked', 'Master', 'Grandmaster', 'Challenger') and division is not null)`
+  );
+  await query("alter table user_rank_state drop constraint if exists user_rank_state_division_check");
+  await query(
+    `alter table user_rank_state
+     add constraint user_rank_state_division_check check (
+       (tier in ('Iron', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Emerald', 'Diamond') and division in ('IV', 'III', 'II', 'I'))
+       or
+       (tier in ('Unranked', 'Master', 'Grandmaster', 'Challenger') and division is null)
+     )`
+  );
+  await query(
+    `create table if not exists ranked_game_results (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      game_key text not null,
+      round_id text not null,
+      won boolean not null,
+      performance_quality numeric(4, 3) not null,
+      lp_delta integer not null check (lp_delta between -30 and 30 and lp_delta <> 0),
+      tier_before text not null,
+      division_before text,
+      lp_before integer not null,
+      tier_after text not null,
+      division_after text,
+      lp_after integer not null,
+      metadata jsonb not null default '{}',
+      created_at timestamptz not null default now()
+    )`
+  );
+  await query("alter table ranked_game_results add column if not exists division_before text");
+  await query("alter table ranked_game_results add column if not exists division_after text");
+  await query(
+    `create table if not exists game_mode_stats (
+      user_id uuid not null references users(id) on delete cascade,
+      game_key text not null,
+      current_streak integer not null default 0,
+      best_streak integer not null default 0,
+      games_played integer not null default 0,
+      wins integer not null default 0,
+      updated_at timestamptz not null default now(),
+      primary key (user_id, game_key)
+    )`
+  );
+  await query("create index if not exists ranked_game_results_user_created_idx on ranked_game_results (user_id, created_at desc)");
+  await query("create index if not exists ranked_game_results_game_created_idx on ranked_game_results (game_key, created_at desc)");
+  await query("create index if not exists game_mode_stats_game_idx on game_mode_stats (game_key)");
+
+  rankSchemaReady = true;
+}
+
+function rankStateFromRow(row?: RankStateRow): LeagueRankState {
+  if (!row) {
+    return createInitialRankState();
+  }
+
+  return normalizeRankState({
+    tier: row.tier ?? "Unranked",
+    division: row.division,
+    lp: row.lp ?? 0,
+    lastLpChange: row.last_lp_change,
+    gamesPlayed: row.games_played ?? 0,
+    wins: row.wins ?? 0
+  });
 }
 
 function calculateCurrentStreak(sortedDateKeys: string[]): number {
