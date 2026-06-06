@@ -68,9 +68,8 @@ function generateItemBuildChallenge(
   version: string,
   winrateSamples: Record<string, BuildWinrateStats>
 ): ItemBuildChallenge {
-  const buildCandidateIds = buildCandidateItemIds(itemCatalog);
   const sampledChampions = publicChampions
-    .filter((champion) => hasPositiveBuildItemSample(winrateSamples[champion.id], buildCandidateIds))
+    .filter((champion) => hasVerifiedBuildChampionSample(winrateSamples[champion.id]))
     .sort((a, b) => (winrateSamples[b.id]?.games ?? 0) - (winrateSamples[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
     .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : publicChampions;
@@ -195,30 +194,16 @@ function withTargetBuildWinrate(stats: BuildWinrateStats | undefined, targetItem
   return {
     ...stats,
     targetItemIds,
-    buildWins: selected?.wins,
-    buildGames: selected?.games.length,
-    buildWinRate: selected?.winRate,
-    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : undefined,
-    buildMatchedItemCount: selected?.matchedItemCount
+    buildWins: selected?.wins ?? stats.wins,
+    buildGames: selected?.games.length ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.games : undefined),
+    buildWinRate: selected?.winRate ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.winRate : undefined),
+    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.sampleMatches : undefined,
+    buildMatchedItemCount: selected?.matchedItemCount ?? 0
   };
 }
 
-function buildCandidateItemIds(itemCatalog: GameItem[]) {
-  return new Set(itemCatalog.filter((item) => isBuildCandidateItem(item) || isBootUpgrade(item)).map((item) => item.id));
-}
-
-function hasPositiveBuildItemSample(stats: BuildWinrateStats | undefined, candidateItemIds: Set<string>) {
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return false;
-  }
-
-  for (const [itemId] of buildPositiveItemSamples(stats)) {
-    if (candidateItemIds.has(itemId)) {
-      return true;
-    }
-  }
-
-  return false;
+function hasVerifiedBuildChampionSample(stats: BuildWinrateStats | undefined) {
+  return Boolean(stats && stats.games >= MIN_BUILD_WINRATE_GAMES);
 }
 
 function buildPositiveItemSamples(stats: BuildWinrateStats | undefined) {

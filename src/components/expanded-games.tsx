@@ -444,7 +444,9 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
   const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES && stats.buildWinRate >= stats.winRate;
   const delta = hasBuildSample ? stats.buildWinRate! - stats.winRate : null;
   const buildDetail = hasBuildSample
-    ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
+    ? (stats.buildMatchedItemCount ?? 0) > 0
+      ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
+      : "verified baseline fallback"
     : undefined;
 
   return (
@@ -554,11 +556,11 @@ function withTargetBuildWinrateForUi(stats: ItemBuildChallenge["winrateStats"] |
   return {
     ...stats,
     targetItemIds,
-    buildWins: selected?.wins,
-    buildGames: selected?.games.length,
-    buildWinRate: selected?.winRate,
-    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : undefined,
-    buildMatchedItemCount: selected?.matchedItemCount
+    buildWins: selected?.wins ?? stats.wins,
+    buildGames: selected?.games.length ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.games : undefined),
+    buildWinRate: selected?.winRate ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.winRate : undefined),
+    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.sampleMatches : undefined,
+    buildMatchedItemCount: selected?.matchedItemCount ?? 0
   };
 }
 
@@ -579,9 +581,8 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 
 function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge {
   const seed = `${base.date}:item-build-infinite:${round}`;
-  const buildCandidateIds = buildCandidateItemIdsForUi(itemCatalog);
   const sampledChampions = champions
-    .filter((champion) => hasPositiveBuildItemSampleForUi(base.winrateSamples?.[champion.id], buildCandidateIds))
+    .filter((champion) => hasVerifiedBuildChampionSampleForUi(base.winrateSamples?.[champion.id]))
     .sort((a, b) => (base.winrateSamples?.[b.id]?.games ?? 0) - (base.winrateSamples?.[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
     .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
@@ -661,22 +662,8 @@ function buildItemFrequencyForUi(stats: ItemBuildChallenge["winrateStats"] | und
   return frequency;
 }
 
-function buildCandidateItemIdsForUi(itemCatalog: GameItem[]) {
-  return new Set(itemCatalog.filter((item) => isBuildCandidateItemForUi(item) || isBuildBootUpgrade(item)).map((item) => item.id));
-}
-
-function hasPositiveBuildItemSampleForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, candidateItemIds: Set<string>) {
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return false;
-  }
-
-  for (const [itemId] of buildPositiveItemSamplesForUi(stats)) {
-    if (candidateItemIds.has(itemId)) {
-      return true;
-    }
-  }
-
-  return false;
+function hasVerifiedBuildChampionSampleForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
+  return Boolean(stats && stats.games >= MIN_BUILD_WINRATE_GAMES);
 }
 
 function buildPositiveItemSamplesForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
