@@ -150,21 +150,23 @@ export function ItemBuildGame({
   }
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-20 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
-      <div className="grid items-start gap-3 sm:gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+      <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         <aside className="xl:sticky xl:top-4 xl:self-start">
-          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
+            <div className="hidden flex-wrap items-center gap-2 sm:flex">
               <span className="text-[#c89b3c]">
                 <PackageSearch size={18} />
               </span>
-              <h2 className="text-xl font-semibold">Item Build Puzzle</h2>
+              <h2 className="text-lg font-semibold sm:text-xl">Build</h2>
             </div>
-            <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-            <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-3">
+            <div className="hidden sm:block">
+              <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+            </div>
+            <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
               <ChampionLine label="Enemy Team" champions={round.enemyTeam} compact />
             </div>
-            <div className="relative aspect-[21/9] min-h-36 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:aspect-[16/10] sm:min-h-56 xl:aspect-[16/11] xl:min-h-64">
+            <div className="relative hidden aspect-[21/9] min-h-36 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:block sm:aspect-[16/10] sm:min-h-48 xl:aspect-[16/11] xl:min-h-56">
               <div
                 className="absolute inset-0 bg-cover opacity-80"
                 style={{
@@ -174,26 +176,23 @@ export function ItemBuildGame({
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
             </div>
-            <div className="grid gap-3">
+            <div className="grid gap-2">
               <div>
-                <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
-                <div className="font-display text-3xl font-bold sm:text-4xl">{round.champion.name}</div>
+                <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">Your Champion</div>
+                <div className="font-display text-2xl font-bold sm:text-4xl">{round.champion.name}</div>
               </div>
               <BuildWinrateCard stats={round.winrateStats} />
             </div>
           </div>
         </aside>
 
-        <div className="grid gap-4">
-          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 sm:p-4">
-            <h3 className="font-display text-xl font-extrabold tracking-tight sm:text-2xl">
-              Pick {round.champion.name}&apos;s best build into this enemy team.
-            </h3>
-          </div>
+        <div className="grid gap-3">
           <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)] sm:p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm uppercase text-[#c89b3c]">Build Board</div>
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
+                  Pick {round.champion.name}&apos;s best build against the enemy team.
+                </div>
               </div>
               <div className="text-xs text-[color:var(--muted)]">Guess {Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}/{BUILD_MAX_GUESSES}</div>
             </div>
@@ -219,13 +218,13 @@ export function ItemBuildGame({
             })}
           </div>
 
-          <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_14rem]">
+          <div className="grid items-start gap-2 xl:grid-cols-[minmax(0,1fr)_13rem]">
             <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
                 <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
                 <span className="text-xs text-[color:var(--muted)]">{possibleItems.length}</span>
               </div>
-              <div className="grid grid-cols-2 content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
+              <div className="grid grid-cols-3 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 md:grid-cols-4 2xl:grid-cols-6">
                 {randomizedPossibleItems.map((item) => (
                   <ItemChoiceCard
                     key={item.id}
@@ -239,8 +238,8 @@ export function ItemBuildGame({
               </div>
             </div>
             <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
-              <div className="mb-2 text-sm uppercase text-[#c89b3c]">Boots</div>
-              <div className="grid grid-cols-2 content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-3 xl:grid-cols-1">
+              <div className="mb-1.5 text-sm uppercase text-[#c89b3c]">Boots</div>
+              <div className="grid grid-cols-2 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 xl:grid-cols-1">
                 {randomizedPossibleBoots.map((item) => (
                   <BootChoiceCard
                     key={item.id}
@@ -255,8 +254,8 @@ export function ItemBuildGame({
             </div>
           </div>
 
-          <div className="sticky bottom-2 z-20 grid gap-2 rounded-lg border border-white/10 bg-[#0b111b]/96 p-2 shadow-[0_18px_50px_rgba(0,0,0,.35)] backdrop-blur lg:static lg:grid-cols-[1fr_auto_auto] lg:items-center lg:rounded-sm lg:p-3 lg:shadow-none">
-            <div className="text-sm text-[color:var(--muted)]">
+          <div className="sticky bottom-2 z-20 grid gap-2 rounded-lg border border-white/10 bg-[#0b111b]/96 p-2 shadow-[0_18px_50px_rgba(0,0,0,.35)] backdrop-blur sm:grid-cols-[1fr_auto_auto] sm:items-center lg:static lg:rounded-sm lg:p-3 lg:shadow-none">
+            <div className="text-xs text-[color:var(--muted)] sm:text-sm">
               {finished ? (solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES}.` : "No guesses left.") : `Selected: ${selectedItems.length}/5 items - ${selectedBoots ? "boots ready" : "choose boots"}`}
             </div>
             <Button type="button" variant="secondary" onClick={reset}>
@@ -447,10 +446,9 @@ function buildPerformanceQuality(solved: boolean, guesses: Array<{ items: string
 function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"] }) {
   if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
     return (
-      <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-        <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Stats</div>
-        <div className="mt-1 font-display text-3xl font-bold text-[color:var(--muted)]">N/A</div>
-        <div className="text-xs text-[color:var(--muted)]">Needs at least {MIN_BUILD_WINRATE_GAMES} verified ranked games.</div>
+      <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:p-3">
+        <div className="text-[11px] uppercase text-[color:var(--muted)]">Winrate</div>
+        <div className="mt-1 font-display text-2xl font-bold text-[color:var(--muted)]">N/A</div>
       </div>
     );
   }
@@ -464,9 +462,8 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
     : undefined;
 
   return (
-    <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-      <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Stats</div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+    <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:p-3">
+      <div className="grid grid-cols-2 gap-2">
         <WinrateMiniStat label="Baseline" winRate={stats.winRate} wins={stats.wins} games={stats.games} />
         <WinrateMiniStat
           label="Correct Build"
@@ -481,7 +478,6 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
           {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% vs baseline
         </div>
       )}
-      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item samples at or above baseline.</div>}
     </div>
   );
 }
@@ -504,7 +500,7 @@ function WinrateMiniStat({
   return (
     <div className="rounded-sm border border-white/10 bg-[#050607]/70 p-2">
       <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
-      <div className={cn("font-display text-2xl font-bold", hasValue ? (winRate >= 50 ? "text-green-300" : "text-red-300") : "text-[color:var(--muted)]")}>
+      <div className={cn("font-display text-xl font-bold sm:text-2xl", hasValue ? (winRate >= 50 ? "text-green-300" : "text-red-300") : "text-[color:var(--muted)]")}>
         {hasValue ? `${winRate.toFixed(1)}%` : "N/A"}
       </div>
       <div className="text-[11px] text-[color:var(--muted)]">{games > 0 ? `${wins}W / ${games}G` : `<${MIN_BUILD_WINRATE_GAMES} games`}</div>
@@ -866,25 +862,25 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   }
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-20 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
-      <div className="grid items-start gap-3 sm:gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+      <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         <aside className="xl:sticky xl:top-4 xl:self-start">
-          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
+            <div className="hidden flex-wrap items-center gap-2 sm:flex">
               <span className="text-[#c89b3c]">
                 <Split size={18} />
               </span>
-              <h2 className="text-xl font-semibold">Item Recipe Puzzle</h2>
+              <h2 className="text-lg font-semibold sm:text-xl">Recipe</h2>
             </div>
-            <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-            <div className="grid justify-items-center gap-2 rounded-sm border border-white/10 bg-[#050607]/75 p-3">
-              <div className="text-sm uppercase text-[#c89b3c]">Result Item</div>
+            <div className="hidden sm:block">
+              <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+            </div>
+            <div className="grid justify-items-center gap-2 rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
               <ItemShopNode item={round.resultItem} size="large" />
             </div>
-            <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-              <div className="text-xs uppercase text-[color:var(--muted)]">Shop Recipe</div>
-              <div className="mx-auto h-8 w-px bg-[#3c3421]" />
-              <div className="grid grid-cols-3 items-start gap-3">
+            <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:gap-3 sm:p-3">
+              <div className="mx-auto h-5 w-px bg-[#3c3421] sm:h-8" />
+              <div className="grid grid-cols-4 items-start gap-2 sm:grid-cols-3 sm:gap-3">
                 {round.knownComponents.map((item) => (
                   <ItemShopNode key={item.id} item={item} />
                 ))}
@@ -902,11 +898,11 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                   Clear
                 </Button>
                 <Button type="button" onClick={submitRecipe} disabled={!answer || submitted}>
-                  Lock Component
+                  Lock
                 </Button>
                 {submitted && (
                   <Button type="button" variant="secondary" onClick={nextRecipe}>
-                    Next recipe
+                    Next
                   </Button>
                 )}
                 <ResultPill submitted={submitted} correct={correct} answer={getItemName(round.allComponents, round.missingComponentId)} />
@@ -915,18 +911,15 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
           </div>
         </aside>
 
-        <div className="grid gap-4 pb-10">
-          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 sm:p-4">
-            <h3 className="font-display text-xl font-extrabold tracking-tight sm:text-2xl">Find the missing component.</h3>
-          </div>
+        <div className="grid gap-3 pb-10">
           <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-4">
-            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
               <div>
-                <div className="text-sm uppercase text-[#c89b3c]">Component Shop</div>
+                <div className="font-display text-base font-extrabold text-white sm:text-xl">Find the missing component.</div>
               </div>
               <div className="text-xs text-[color:var(--muted)]">{componentChoices.length}</div>
             </div>
-            <div className="grid grid-cols-2 content-start gap-2 px-1 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
+            <div className="grid grid-cols-3 content-start gap-1.5 px-0.5 pb-4 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-5 sm:pt-2 md:grid-cols-4 2xl:grid-cols-6">
               {randomizedComponents.map((item) => {
                 const result: ItemGuessResult | undefined = submitted
                   ? item.id === round.missingComponentId
@@ -947,7 +940,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                       }
                     }}
                     className={cn(
-                      "relative grid min-h-24 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28",
+                      "relative grid min-h-20 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
                       result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
                       result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
                       !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
@@ -966,9 +959,9 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                       </span>
                     )}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={item.imageUrl} alt="" className="h-12 w-12 object-contain sm:h-14 sm:w-14" />
-                    <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{item.name}</span>
-                    <span className={cn("text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
+                    <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-14 sm:w-14" />
+                    <span className="line-clamp-2 text-center text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
+                    <span className={cn("text-[10px] sm:text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
                   </button>
                 );
               })}
@@ -999,7 +992,7 @@ function BuildSlot({
       onClick={onRemove}
       disabled={!onRemove}
       className={cn(
-        "group relative grid min-h-16 place-items-center rounded-sm border bg-[#111722] p-1 text-center transition disabled:cursor-default sm:min-h-20 sm:p-2",
+        "group relative grid min-h-9 place-items-center rounded-sm border bg-[#111722] p-0.5 text-center transition disabled:cursor-default sm:min-h-16 sm:p-1.5",
         item && !submitted && "border-[#c89b3c] bg-[#c89b3c]/10 shadow-[inset_0_0_0_1px_rgba(245,197,66,.18)]",
         !item && "border-dashed border-[#394150]",
         submitted && (correct ? "border-green-400/70 bg-green-500/18" : "border-[#394150] bg-[#151b26] grayscale")
@@ -1008,8 +1001,8 @@ function BuildSlot({
       {item ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-9 sm:w-9" />
-          <span className="line-clamp-2 text-[8px] font-semibold leading-tight sm:text-[10px]">{item.name}</span>
+          <img src={item.imageUrl} alt="" className="h-5 w-5 object-contain sm:h-8 sm:w-8" />
+          <span className="line-clamp-2 text-[7px] font-semibold leading-tight sm:text-[9px]">{item.name}</span>
           {!submitted && (
             <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#c89b3c]/40 bg-[#050607]/90 text-[#f5c542] opacity-0 transition group-hover:opacity-100">
               <X size={12} />
@@ -1017,7 +1010,7 @@ function BuildSlot({
           )}
         </>
       ) : (
-        <span className="text-[9px] uppercase text-[color:var(--muted)] sm:text-xs">{label}</span>
+        <span className="text-[7px] uppercase text-[color:var(--muted)] sm:text-xs">{label}</span>
       )}
     </button>
   );
@@ -1042,7 +1035,7 @@ function ItemChoiceCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "relative grid min-h-16 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+        "relative grid min-h-14 content-center justify-items-center gap-0.5 rounded-sm border bg-[#111722] p-1 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-16 sm:gap-1 sm:p-1.5",
         result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
         result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
         !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
@@ -1067,8 +1060,8 @@ function ItemChoiceCard({
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
-      <span className="line-clamp-2 text-[11px] font-semibold leading-tight">{item.name}</span>
+      <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
+      <span className="line-clamp-2 text-[9px] font-semibold leading-tight sm:text-[11px]">{item.name}</span>
     </button>
   );
 }
@@ -1092,7 +1085,7 @@ function BootChoiceCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "relative grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+        "relative grid grid-cols-[1.75rem_1fr] items-center gap-1.5 rounded-sm border bg-[#111722] p-1.5 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:grid-cols-[2rem_1fr] sm:gap-2 sm:p-2",
         result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
         result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
         !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
@@ -1117,19 +1110,19 @@ function BootChoiceCard({
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
-      <span className="truncate text-xs font-semibold">{item.name}</span>
+      <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
+      <span className="truncate text-[11px] font-semibold sm:text-xs">{item.name}</span>
     </button>
   );
 }
 
 function ItemShopNode({ item, size = "normal" }: { item: GameItem; size?: "normal" | "large" }) {
   return (
-    <div className={cn("grid justify-items-center gap-1 rounded-sm border border-[#3c3421] bg-[#111722] p-2 text-center", size === "large" && "min-w-36 p-3")}>
+    <div className={cn("grid justify-items-center gap-1 rounded-sm border border-[#3c3421] bg-[#111722] p-1.5 text-center sm:p-2", size === "large" && "min-w-28 p-2 sm:min-w-36 sm:p-3")}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-16 w-16" : "h-12 w-12")} />
-      <span className="line-clamp-2 text-xs font-semibold leading-tight">{item.name}</span>
-      <span className="text-[10px] text-[#c89b3c]">{item.goldTotal}g</span>
+      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-12 w-12 sm:h-16 sm:w-16" : "h-9 w-9 sm:h-12 sm:w-12")} />
+      <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
+      <span className="text-[9px] text-[#c89b3c] sm:text-[10px]">{item.goldTotal}g</span>
     </div>
   );
 }
@@ -1161,19 +1154,16 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
 
 function InfiniteStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
   return (
-    <div className="flex flex-wrap gap-2 text-center text-xs">
-      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-        <div className="font-display text-lg font-bold text-[#f5c542]">{round}</div>
-        <div className="uppercase text-[color:var(--muted)]">Round</div>
-      </div>
-      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-        <div className="font-display text-lg font-bold">{current}</div>
-        <div className="uppercase text-[color:var(--muted)]">Streak</div>
-      </div>
-      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-        <div className="font-display text-lg font-bold">{best}</div>
-        <div className="uppercase text-[color:var(--muted)]">Best</div>
-      </div>
+    <div className="flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+        Round <b className="relative top-px font-display leading-none text-[#f5c542]">{round}</b>
+      </span>
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+        Streak <b className="relative top-px font-display leading-none text-white">{current}</b>
+      </span>
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+        Best <b className="relative top-px font-display leading-none text-white">{best}</b>
+      </span>
     </div>
   );
 }
@@ -1490,9 +1480,9 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-        <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
+        <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
           <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-          <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 lg:min-h-[30rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
+          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:gap-3 sm:p-3 lg:min-h-[28rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
             <MatchupChampionCard side="left" pick={round.left} revealed={submitted} selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
             <div className="grid place-items-center">
               <div className="grid h-14 w-14 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-lg font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)] lg:h-20 lg:w-20 lg:text-2xl">
@@ -1538,7 +1528,6 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
                 Next matchup
               </Button>
             )}
-            <span className="text-xs text-[color:var(--muted)]">{round.dataSource}</span>
           </div>
           {submitted && (
             <div className="grid gap-2 text-sm sm:grid-cols-2">
@@ -1573,7 +1562,7 @@ function MatchupChampionCard({
     <article className={cn("relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
       <div className="absolute inset-0 bg-cover bg-center opacity-72" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.20),transparent_34%),linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
-      <div className="relative flex h-full min-h-[24rem] flex-col justify-between p-4 sm:min-h-[28rem] lg:min-h-[30rem] lg:p-5">
+      <div className="relative flex h-full min-h-[18rem] flex-col justify-between p-3 sm:min-h-[24rem] sm:p-4 lg:min-h-[28rem] lg:p-5">
         <div className={cn("flex items-center gap-2", side === "right" && "justify-end text-right")}>
           <span className="rounded-sm border border-[#c89b3c]/45 bg-[#050607]/82 px-3 py-1 font-display text-xs font-bold uppercase tracking-[0.12em] text-[#f1d58a]">
             {pick.role}
@@ -1584,22 +1573,22 @@ function MatchupChampionCard({
         </div>
         <div className={cn("grid gap-4", side === "right" && "justify-items-end text-right")}>
           <div>
-            <div className="font-display text-4xl font-black leading-none tracking-tight text-white drop-shadow sm:text-5xl">{pick.champion.name}</div>
+            <div className="font-display text-3xl font-black leading-none tracking-tight text-white drop-shadow sm:text-5xl">{pick.champion.name}</div>
             <div className="mt-2 text-sm uppercase tracking-[0.12em] text-[#c89b3c]">{pick.champion.title}</div>
           </div>
-          <div className={cn("grid max-w-xs gap-2 rounded-sm border border-white/10 bg-[#050607]/78 p-4 backdrop-blur", !revealed && "border-[#c89b3c]/35")}>
+          <div className={cn("grid max-w-xs gap-2 rounded-sm border border-white/10 bg-[#050607]/78 p-3 backdrop-blur sm:p-4", !revealed && "border-[#c89b3c]/35")}>
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.1em] text-[color:var(--muted)]">
               <TrendingUp size={14} />
               Champion-lane sample
             </div>
             {revealed ? (
               <>
-                <div className={cn("font-display text-5xl font-black leading-none", submitted && correctSide ? "text-green-300" : "text-[#f1d58a]")}>{pick.winRate.toFixed(1)}%</div>
+                <div className={cn("font-display text-4xl font-black leading-none sm:text-5xl", submitted && correctSide ? "text-green-300" : "text-[#f1d58a]")}>{pick.winRate.toFixed(1)}%</div>
                 <div className="text-sm text-[color:var(--muted)]">{pick.wins}W / {pick.games}G in this lane</div>
               </>
             ) : (
               <>
-                <div className="font-display text-5xl font-black leading-none text-[#f1d58a]">?.?%</div>
+                <div className="font-display text-4xl font-black leading-none text-[#f1d58a] sm:text-5xl">?.?%</div>
                 <div className="text-sm text-[color:var(--muted)]">Higher or lower?</div>
               </>
             )}
@@ -1668,13 +1657,13 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
+      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-3 lg:min-h-0 lg:grid-rows-2">
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
         </div>
-        <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(10.75rem,1fr))]">
+        <div className="grid grid-cols-2 gap-1.5 sm:gap-2 lg:[grid-template-columns:repeat(auto-fit,minmax(10.75rem,1fr))]">
           {round.options.map((option) => (
             <button
               key={option}
@@ -1682,7 +1671,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
               onClick={() => choose(option)}
               disabled={submitted}
               className={cn(
-                "group relative isolate min-h-16 min-w-0 overflow-hidden rounded-sm border bg-[#111722] p-1.5 text-left transition hover:border-[#c89b3c] hover:shadow-[0_0_22px_rgba(200,155,60,.16)] disabled:cursor-default",
+                "group relative isolate min-h-12 min-w-0 overflow-hidden rounded-sm border bg-[#111722] p-1 text-left transition hover:border-[#c89b3c] hover:shadow-[0_0_22px_rgba(200,155,60,.16)] disabled:cursor-default sm:min-h-16 sm:p-1.5",
                 answer === option && option === round.answerTier && "border-green-400/70 bg-green-500/18 ring-1 ring-green-300/35",
                 answer === option && option !== round.answerTier && "border-red-400/70 bg-red-500/16 ring-1 ring-red-300/30",
                 answer !== option && submitted && option === round.answerTier && "border-green-400/70 bg-green-500/18",
@@ -1809,7 +1798,7 @@ function VerifiedAnswerModal({
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_11rem]">
           <AnswerResultCard label="Your Answer" value={selectedLabel || "No answer"} tone={correct ? "good" : "bad"} />
           <AnswerResultCard label="Correct Answer" value={answerLabel} tone="gold" />
           <ResultStat label="Current Streak" value={String(streak.current)} detail={`Best ${streak.best}`} tone={correct ? "good" : "muted"} />
@@ -1862,6 +1851,8 @@ function useBodyScrollLock() {
 }
 
 function AnswerResultCard({ label, value, tone }: { label: string; value: string; tone: "good" | "bad" | "gold" }) {
+  const isRank = isRankOption(value);
+
   return (
     <div
       className={cn(
@@ -1873,13 +1864,48 @@ function AnswerResultCard({ label, value, tone }: { label: string; value: string
     >
       <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
       <div className="text-xs uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
-      <div className="mt-3">
-        {isRankOption(value) ? (
-          <RankSplitLabel option={value} />
+      <div className={cn("mt-3", isRank && "min-h-[5.5rem]")}>
+        {isRank ? (
+          <RankAnswerLabel option={value} />
         ) : (
           <CallAnswerLabel value={value} />
         )}
       </div>
+    </div>
+  );
+}
+
+function RankAnswerLabel({ option }: { option: string }) {
+  const ranks = rankOptionParts(option);
+
+  if (ranks.length === 0) {
+    return (
+      <div className="grid min-h-20 place-items-center rounded-xl border border-[#c89b3c]/34 bg-[#c89b3c]/10 px-3 text-center">
+        <span className="font-display text-xl font-black uppercase tracking-normal text-[#f5c542]">{option}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      {ranks.map((rank) => {
+        const visual = rankVisuals[rank];
+
+        return (
+          <div
+            key={rank}
+            className="relative min-w-0 overflow-hidden rounded-xl border px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.055)]"
+            style={{ background: visual.background, borderColor: visual.border }}
+          >
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-1" style={{ background: visual.color }} />
+            <div className="flex min-w-0 items-center">
+              <span className="min-w-0 break-words font-display text-[15px] font-black uppercase leading-tight tracking-normal sm:text-base" style={{ color: visual.color }}>
+                {rank}
+              </span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2111,17 +2137,17 @@ function compactNumber(value: number) {
 
 function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-[4.5rem_repeat(5,minmax(0,1fr))] sm:min-h-0">
-      <div className="font-display grid min-h-10 place-items-center rounded-sm border border-[#26313f] bg-[#0b111b] text-center text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c] sm:min-h-0">
+    <div className="grid grid-cols-2 gap-1.5 sm:min-h-0 sm:grid-cols-[4.5rem_repeat(5,minmax(0,1fr))] sm:gap-2">
+      <div className="font-display col-span-2 grid min-h-8 place-items-center rounded-sm border border-[#26313f] bg-[#0b111b] text-center text-[11px] font-bold uppercase tracking-[0.08em] text-[#c89b3c] sm:col-span-1 sm:min-h-0 sm:text-xs">
         {side}
       </div>
       {lanes.map((lane) => (
-        <div key={`${side}:${lane.role}`} className="relative min-h-28 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-0">
+        <div key={`${side}:${lane.role}`} className="relative min-h-24 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-0">
           <div className="absolute inset-0 bg-cover bg-center opacity-48" style={{ backgroundImage: `url(${lane.champion.splashUrl})` }} />
           <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/55 to-transparent" />
-          <div className="relative flex h-full min-h-0 flex-col justify-end p-2.5 sm:p-2">
+          <div className="relative flex h-full min-h-0 flex-col justify-end p-2 sm:p-2">
             <span className="text-[10px] uppercase leading-tight text-[#c89b3c]">{lane.role}</span>
-            <span className="truncate text-base font-bold leading-tight">{lane.champion.name}</span>
+            <span className="truncate text-sm font-bold leading-tight sm:text-base">{lane.champion.name}</span>
             {lane.playerName && (
               <span title={lane.playerName} className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-[#9fb7d5]">
                 {lane.playerName}
@@ -2130,7 +2156,7 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
             <div className="mt-1 flex gap-1">
               {lane.spells.map((spell) => (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-7 w-7 rounded-sm border border-[#3c3421]" />
+                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] sm:h-7 sm:w-7" />
               ))}
             </div>
           </div>
@@ -2182,7 +2208,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
+      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <DraftScreen
           blueName="Your Team"
@@ -2192,13 +2218,13 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
           blueBans={round.allyBans.map((champion) => championToOption(champion))}
           redBans={round.enemyBans.map((champion) => championToOption(champion))}
         />
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => lockCall("dodge")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
+              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
               answer === "dodge"
                 ? "border-red-300 bg-red-500 text-white"
                 : "border-red-400/35 bg-red-500/14 text-red-100 hover:bg-red-500/24"
@@ -2211,7 +2237,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             onClick={() => lockCall("queue")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-14 rounded-sm border px-4 text-lg font-extrabold transition disabled:cursor-default",
+              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
               answer === "queue"
                 ? "border-green-300 bg-green-500 text-[#071018]"
                 : "border-green-400/35 bg-green-500/14 text-green-100 hover:bg-green-500/24"
@@ -2275,11 +2301,11 @@ function pickUiUnique(list: PublicChampion[], seed: string, count: number, exclu
 
 function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
   return (
-    <section className="flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-3 rounded-lg border border-[#3c3421] bg-[#071018] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm">
+    <section className="flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[#c89b3c]">{icon}</span>
-        <h2 className="text-xl font-semibold">{title}</h2>
-        {kicker && <span className="text-sm text-[color:var(--muted)]">{kicker}</span>}
+        <h2 className="text-lg font-semibold sm:text-xl">{title}</h2>
+        {kicker && <span className="text-xs text-[color:var(--muted)] sm:text-sm">{kicker}</span>}
       </div>
       {children}
     </section>
@@ -2289,12 +2315,11 @@ function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title
 function VerifiedDataUnavailable({ reason }: { reason: string }) {
   return (
     <div
-      className="grid min-h-80 flex-1 place-items-center rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_50%_0%,rgba(200,155,60,.12),transparent_34%),linear-gradient(180deg,#0f1724,#071018)] p-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_22px_70px_rgba(0,0,0,.32)]"
+      className="grid min-h-56 flex-1 place-items-center rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_50%_0%,rgba(200,155,60,.12),transparent_34%),linear-gradient(180deg,#0f1724,#071018)] p-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_22px_70px_rgba(0,0,0,.32)] sm:min-h-80 sm:p-6"
       aria-label={reason}
     >
       <div className="max-w-lg">
-        <div className="font-display text-2xl font-bold text-[#c89b3c]">Rounds syncing</div>
-        <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">Live data is still preparing this mode.</p>
+        <div className="font-display text-xl font-bold text-[#c89b3c] sm:text-2xl">Rounds syncing</div>
         <button
           type="button"
           onClick={() => window.location.reload()}
@@ -2309,13 +2334,13 @@ function VerifiedDataUnavailable({ reason }: { reason: string }) {
 
 function ChampionLine({ label, champions, compact }: { label: string; champions: Array<{ id: string; name: string; squareUrl: string; roles: string[] }>; compact?: boolean }) {
   return (
-    <div className="grid gap-2">
-      <div className="text-sm uppercase text-[#c89b3c]">{label}</div>
-      <div className={cn("grid gap-2", compact ? "grid-cols-5" : "grid-cols-5")}>
+    <div className="grid gap-1.5 sm:gap-2">
+      <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">{label}</div>
+      <div className={cn("grid gap-1.5 sm:gap-2", compact ? "grid-cols-5" : "grid-cols-5")}>
         {champions.map((champion) => (
           <div key={champion.id} className={cn("overflow-hidden rounded-sm border border-white/10 bg-[#111722]", compact && "bg-[#050607]/75")} title={champion.name}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={champion.squareUrl} alt="" className={cn("aspect-square w-full object-contain", compact ? "h-12" : "h-16")} />
+            <img src={champion.squareUrl} alt="" className={cn("aspect-square w-full object-cover", compact ? "h-9 sm:h-12" : "h-14 sm:h-16")} />
             <div className={cn("p-2", compact && "hidden xl:block px-1.5 py-1")}>
               <div className="truncate text-sm font-semibold leading-tight">{champion.name}</div>
             </div>
@@ -2359,10 +2384,10 @@ function DraftScreen({
   hiddenLabel?: string;
 }) {
   return (
-    <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
+    <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} />
       <div className="grid place-items-center text-center">
-        <div className="rounded-full border border-[#3c3421] px-3 py-2 text-base font-bold text-[#c89b3c] md:px-4 md:py-3 md:text-xl">VS</div>
+        <div className="rounded-full border border-[#3c3421] px-3 py-1.5 text-sm font-bold text-[#c89b3c] md:px-4 md:py-3 md:text-xl">VS</div>
       </div>
       <DraftTeam side="red" name={redName} picks={redPicks} bans={redBans} hiddenLabel={hiddenLabel} />
     </div>
@@ -2383,13 +2408,13 @@ function DraftTeam({
   hiddenLabel: string;
 }) {
   return (
-    <div className="grid gap-2 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
+    <div className="grid gap-1.5 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
       <div className={cn("flex items-center gap-2", side === "red" ? "justify-end" : "justify-start")}>
         {side === "red" && <BanCluster bans={bans} />}
-        <div className={cn("truncate text-lg font-bold text-[#c89b3c]", side === "red" && "text-right")}>{name}</div>
+        <div className={cn("truncate text-base font-bold text-[#c89b3c] sm:text-lg", side === "red" && "text-right")}>{name}</div>
         {side === "blue" && <BanCluster bans={bans} />}
       </div>
-      <div className="grid gap-2 md:min-h-0 md:grid-rows-5">
+      <div className="grid gap-1.5 md:min-h-0 md:grid-rows-5 md:gap-2">
         {Array.from({ length: 5 }).map((_, index) => (
           <DraftPickCard key={index} pick={picks[index]} hiddenLabel={hiddenLabel} />
         ))}
@@ -2410,8 +2435,8 @@ function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
 
 function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: string }) {
   return (
-    <div className="grid min-h-16 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:grid-cols-[4.25rem_minmax(0,1fr)] sm:gap-3 md:min-h-20">
-      <div className="relative h-14 w-14 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:h-16 sm:w-16">
+    <div className="grid min-h-14 grid-cols-[3rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-1.5 sm:min-h-16 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:p-2 md:min-h-20 md:grid-cols-[4.25rem_minmax(0,1fr)] md:gap-3">
+      <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:h-14 sm:w-14 md:h-16 md:w-16">
         {pick?.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -2420,8 +2445,8 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
         )}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-base font-bold leading-tight sm:text-lg">{pick?.label ?? hiddenLabel}</div>
-        <div className="truncate text-xs leading-tight text-[#c89b3c] sm:text-sm">{pick?.sublabel ?? "Champion select"}</div>
+        <div className="truncate text-sm font-bold leading-tight sm:text-base md:text-lg">{pick?.label ?? hiddenLabel}</div>
+        <div className="truncate text-[11px] leading-tight text-[#c89b3c] sm:text-xs md:text-sm">{pick?.sublabel ?? "Champion select"}</div>
         {pick?.playerName && (
           <div title={pick.playerName} className="mt-0.5 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5]">
             {pick.playerName}
@@ -2431,7 +2456,7 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
           <div className="mt-1 flex gap-1">
             {pick.spells.map((spell) => (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421]" />
+              <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-5 w-5 rounded-sm border border-[#3c3421] sm:h-6 sm:w-6" />
             ))}
           </div>
         )}
@@ -2567,20 +2592,20 @@ function RankSplitLabel({ option, compact = false }: { option: string; compact?:
 
   if (ranks.length === 0) {
     return (
-      <div className={cn("grid place-items-center rounded-xl border border-[#c89b3c]/28 bg-[#c89b3c]/10 px-3 text-center", compact ? "min-h-[3.25rem]" : "min-h-20")}>
-        <span className={cn("font-display font-black uppercase tracking-[0.08em] text-[#f5c542]", compact ? "text-sm" : "text-2xl")}>{option}</span>
+      <div className={cn("grid place-items-center rounded-lg border border-[#c89b3c]/28 bg-[#c89b3c]/10 px-2 text-center sm:rounded-xl sm:px-3", compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20")}>
+        <span className={cn("font-display font-black uppercase tracking-[0.06em] text-[#f5c542] sm:tracking-[0.08em]", compact ? "text-xs sm:text-sm" : "text-lg sm:text-2xl")}>{option}</span>
       </div>
     );
   }
 
   return (
-    <div className={cn("relative grid overflow-hidden rounded-xl border border-white/10 bg-[#071018] shadow-[inset_0_1px_0_rgba(255,255,255,.04)]", ranks.length > 1 && "grid-cols-2", compact ? "min-h-[3.25rem]" : "min-h-20")}>
+    <div className={cn("relative grid overflow-hidden rounded-lg border border-white/10 bg-[#071018] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:rounded-xl", ranks.length > 1 && "grid-cols-2", compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20")}>
       {ranks.map((rank) => {
         const visual = rankVisuals[rank];
 
         return (
-          <div key={rank} className="relative grid place-items-center px-2 py-2 text-center" style={{ background: visual.background, borderColor: visual.border }}>
-            <span className={cn("font-display font-black uppercase leading-none tracking-[0.08em]", compact ? "text-sm sm:text-[15px]" : "text-xl sm:text-2xl")} style={{ color: visual.color }}>
+          <div key={rank} className="relative grid place-items-center px-1.5 py-1.5 text-center sm:px-2 sm:py-2" style={{ background: visual.background, borderColor: visual.border }}>
+            <span className={cn("font-display font-black uppercase leading-none tracking-[0.04em] sm:tracking-[0.08em]", compact ? "text-xs sm:text-[15px]" : "text-base sm:text-2xl")} style={{ color: visual.color }}>
               {rank}
             </span>
           </div>

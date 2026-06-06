@@ -288,7 +288,7 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
   }, [abilityRotation, challenge, recordStreak, roundIndex, roundSeedOffset, runId]);
 
   return (
-    <div className="grid min-h-[calc(100dvh-5rem)] gap-3 rounded-lg border border-[#3c3421] bg-[#071018] p-3 sm:p-4 lg:h-full lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:rounded-sm">
+    <div className="grid min-h-[calc(100dvh-5rem)] gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:rounded-sm">
       <TrainerHeader
         title={challenge.title}
         round={roundIndex + 1}
@@ -297,15 +297,15 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
         onRestart={restartRun}
         onNext={nextRun}
       />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
         <Hud label="Time" value={`${hud.time.toFixed(1)}s`} />
         <Hud label="Hits" value={`${hud.hits}/${challenge.player.health}`} />
         <Hud label="Dodges" value={String(hud.dodges)} />
         <Hud label="Near miss" value={String(hud.near)} />
         <Hud label="Score" value={String(hud.score)} />
       </div>
-      <div className="grid gap-3 lg:min-h-0 xl:grid-cols-[minmax(0,1fr)_14rem]">
-        <div className="aspect-[16/10] min-h-72 overflow-hidden rounded-sm border border-[#3c3421] bg-[#050607] sm:min-h-[26rem] lg:min-h-0">
+      <div className="grid gap-2 lg:min-h-0 xl:grid-cols-[minmax(0,1fr)_14rem] xl:gap-3">
+        <div className="aspect-[16/10] min-h-64 overflow-hidden rounded-sm border border-[#3c3421] bg-[#050607] sm:min-h-[26rem] lg:min-h-0">
           <canvas ref={canvasRef} width={challenge.arena.width} height={challenge.arena.height} className="h-full w-full touch-none" />
         </div>
         <aside className="hidden min-h-0 rounded-sm border border-[#2b2f38] bg-[#0b111b] p-3 xl:block">
@@ -336,8 +336,8 @@ function TrainerHeader({
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="grid gap-2">
-        <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="grid gap-1.5">
+        <h2 className="text-base font-semibold sm:text-lg">{title}</h2>
         <TrainerStreakBar round={round} current={streak.current} best={streak.best} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -356,10 +356,16 @@ function TrainerHeader({
 
 function TrainerStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-[color:var(--muted)]">
-      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Run {round}</span>
-      <span className="rounded-full border border-[#3c3421] bg-[#c89b3c]/10 px-2 py-1 text-[#c89b3c]">Streak {current}</span>
-      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Best {best}</span>
+    <div className="flex flex-wrap items-center gap-2 text-xs text-[color:var(--muted)]">
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+        Round <b className="relative top-px font-display leading-none text-white">{round}</b>
+      </span>
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-[#3c3421] bg-[#c89b3c]/10 px-3.5 py-1.5 leading-none text-[#c89b3c]">
+        Streak <b className="relative top-px font-display leading-none">{current}</b>
+      </span>
+      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+        Best <b className="relative top-px font-display leading-none text-white">{best}</b>
+      </span>
     </div>
   );
 }
@@ -515,9 +521,9 @@ function normalizeStorageKey(value: string) {
 
 function Hud({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-[color:var(--line)] bg-white/5 p-3">
-      <div className="text-xs uppercase text-[color:var(--muted)]">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
+    <div className="rounded-md border border-[color:var(--line)] bg-white/5 p-1.5 text-center sm:p-3 sm:text-left">
+      <div className="truncate text-[9px] uppercase text-[color:var(--muted)] sm:text-xs">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold sm:mt-1 sm:text-lg">{value}</div>
     </div>
   );
 }

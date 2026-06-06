@@ -177,15 +177,15 @@ export function AppShell() {
   }
 
   return (
-    <main className="grid min-h-dvh overflow-x-hidden bg-[#050607] lg:grid-cols-[minmax(0,1fr)_20rem]">
-      <section className="grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-3 p-2 sm:p-4 lg:grid-rows-[auto_minmax(0,1fr)]">
-        <nav className="sticky top-0 z-30 flex min-h-14 flex-nowrap items-center gap-2 overflow-x-auto rounded-lg border border-[color:var(--line)] bg-[#080a0d]/95 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_14px_40px_rgba(0,0,0,.32)] backdrop-blur fine-scrollbar sm:px-3 lg:static">
+    <main className="grid min-h-dvh overflow-x-hidden bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
+      <section className="grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 sm:gap-3 sm:p-4 lg:grid-rows-[auto_minmax(0,1fr)]">
+        <nav className="sticky top-0 z-30 flex min-h-12 flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border border-[color:var(--line)] bg-[#080a0d]/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_14px_40px_rgba(0,0,0,.32)] backdrop-blur fine-scrollbar sm:min-h-14 sm:gap-2 sm:px-3 sm:py-2 lg:static">
           <Link
             href="/"
-            className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-sm border border-[#2b2f38] bg-[#111722] px-3.5 text-sm font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
+            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border border-[#2b2f38] bg-[#111722] px-2.5 text-xs font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)] sm:min-h-10 sm:gap-2 sm:px-3.5 sm:text-sm"
           >
-            <Home size={16} />
-            Home
+            <Home size={15} />
+            <span className="hidden min-[390px]:inline">Home</span>
           </Link>
           <TabButton active={view === "item-build"} onClick={() => setView("item-build")} icon={<PackageSearch size={16} />} label="Build" />
           <TabButton active={view === "item-recipe"} onClick={() => setView("item-recipe")} icon={<Split size={16} />} label="Recipe" />
@@ -197,7 +197,7 @@ export function AppShell() {
           <Button
             type="button"
             variant="ghost"
-            className="ml-auto min-h-10 shrink-0 px-3.5"
+            className="ml-auto min-h-9 shrink-0 px-2.5 sm:min-h-10 sm:px-3.5"
             onClick={() => {
               setDataRecoveryAttempts(0);
               void loadDaily();
@@ -248,13 +248,13 @@ export function AppShell() {
         </div>
       </section>
 
-      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.16),transparent_28%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-4 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:flex lg:flex-col lg:gap-4">
+      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.14),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:flex lg:flex-col lg:gap-3">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
         <div className="relative">
-          <h1 className="font-display text-3xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>
-          <div className="mt-2 text-xs text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} | Patch {daily.dataDragonVersion}</div>
+          <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>
+          <div className="mt-1 text-[11px] text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
         </div>
-        <div className="relative flex min-h-0 flex-col gap-3 overflow-y-auto pr-1 pb-1 fine-scrollbar">
+        <div className="relative flex min-h-0 flex-col gap-2 overflow-y-auto pr-1 pb-1 fine-scrollbar">
           <PlayerSidebarGroup stats={displayStats} progress={rankProgress} />
           <TodaySidebarGroup
             puzzleLabel={view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)}
@@ -288,26 +288,24 @@ function MobileHub({
   rankProgress: ReturnType<typeof nextRankProgress>;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-[1.08fr_.92fr] lg:hidden">
-      <HubCard title="Now" accent>
-        <div className="mt-2 flex items-end justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-base font-semibold">{view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)}</div>
-            <div className="mt-1 text-xs text-[color:var(--muted)]">
-              Reset {formatReset(resetCountdown)} | Patch {daily.dataDragonVersion}
+    <div className="lg:hidden">
+      <HubCard accent>
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-white">{view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)}</div>
+              <div className="mt-0.5 text-[11px] text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
             </div>
+            <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[10px] font-bold uppercase text-[#f2d36b]">
+              {stats.rank} · {stats.rankLp} LP
+            </span>
           </div>
-          <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[11px] font-bold uppercase text-[#f2d36b]">
-            {stats.rank} {stats.rankLp} LP
-          </span>
-        </div>
-      </HubCard>
-      <HubCard title="Stats">
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          <MobileProgressStat label="Streak" value={String(stats.currentStreak)} />
-          <MobileProgressStat label="Best" value={String(stats.maxStreak)} />
-          <MobileProgressStat label="Win" value={`${stats.winRate}%`} />
-          <MobileProgressStat label="LP" value={String(rankProgress.lp)} />
+          <div className="grid grid-cols-4 gap-2 border-t border-white/8 pt-2">
+            <MobileProgressStat label="Streak" value={String(stats.currentStreak)} />
+            <MobileProgressStat label="Best" value={String(stats.maxStreak)} />
+            <MobileProgressStat label="Win" value={`${stats.winRate}%`} />
+            <MobileProgressStat label="LP" value={String(rankProgress.lp)} />
+          </div>
         </div>
       </HubCard>
     </div>
@@ -317,8 +315,8 @@ function MobileHub({
 function MobileProgressStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <div className="font-display truncate text-xl font-bold leading-none">{value}</div>
-      <div className="mt-1 truncate text-[10px] uppercase tracking-[0.06em] text-[color:var(--muted)]">{label}</div>
+      <div className="font-display truncate text-lg font-bold leading-none">{value}</div>
+      <div className="mt-0.5 truncate text-[9px] uppercase tracking-[0.06em] text-[color:var(--muted)]">{label}</div>
     </div>
   );
 }
@@ -329,7 +327,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-sm border px-3.5 text-sm font-semibold transition",
+        "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-semibold transition sm:min-h-10 sm:gap-2 sm:px-3.5 sm:text-sm",
         active
           ? "border-[#c89b3c] bg-[#c89b3c] text-[#071018]"
           : "border-[#2b2f38] bg-[#111722] text-[#8c95a3] hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
@@ -341,17 +339,17 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
   );
 }
 
-function HubCard({ title, children, accent = false }: { title: string; children: ReactNode; accent?: boolean }) {
+function HubCard({ title, children, accent = false }: { title?: string; children: ReactNode; accent?: boolean }) {
   return (
     <section
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-lg border bg-[linear-gradient(180deg,rgba(20,28,42,.9),rgba(8,12,20,.92))] p-3 shadow-[0_12px_30px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.05)]",
+        "relative shrink-0 overflow-hidden rounded-lg border bg-[linear-gradient(180deg,rgba(20,28,42,.9),rgba(8,12,20,.92))] p-2.5 shadow-[0_12px_30px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.05)]",
         accent ? "border-[#c89b3c]/36" : "border-white/10"
       )}
     >
       <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
       {accent && <div className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-[#c89b3c]/12 blur-2xl" />}
-      <div className="font-display text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">{title}</div>
+      {title && <div className="font-display text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">{title}</div>}
       {children}
     </section>
   );
@@ -361,14 +359,14 @@ function SidebarGroup({ title, children, accent = false }: { title: string; chil
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(16,24,36,.84),rgba(7,10,15,.9))] p-4 shadow-[0_18px_50px_rgba(0,0,0,.26),inset_0_1px_0_rgba(255,255,255,.045)]",
+        "relative overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(16,24,36,.84),rgba(7,10,15,.9))] p-3 shadow-[0_18px_50px_rgba(0,0,0,.26),inset_0_1px_0_rgba(255,255,255,.045)]",
         accent ? "border-[#c89b3c]/30" : "border-white/10"
       )}
     >
       <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/16 to-transparent" />
       {accent && <div className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full bg-[#c89b3c]/10 blur-3xl" />}
-      <div className="font-display text-xs font-bold uppercase tracking-[0.1em] text-[#c89b3c]">{title}</div>
-      <div className="mt-3 grid gap-4">{children}</div>
+      <div className="font-display text-[11px] font-bold uppercase tracking-[0.1em] text-[#c89b3c]">{title}</div>
+      <div className="mt-2.5 grid gap-3">{children}</div>
     </section>
   );
 }
@@ -381,45 +379,42 @@ function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: R
   return (
     <SidebarGroup title="Player" accent>
       <div>
-        <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Player Profile</div>
-        <div className="mt-1 truncate text-lg font-semibold text-white" title={stats.username}>{stats.username}</div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[color:var(--muted)]">
-          <span>{roleLine}</span>
-          <span>{recordLine}</span>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 truncate text-base font-semibold text-white" title={stats.username}>{stats.username}</div>
+          <span className="shrink-0 text-[11px] text-[color:var(--muted)]">{recordLine}</span>
         </div>
+        {roleLine !== "Role unclaimed" && <div className="mt-1 truncate text-xs text-[color:var(--muted)]">{roleLine}</div>}
       </div>
 
-      <div className="border-t border-white/8 pt-4">
-        <div className="flex items-end justify-between gap-3">
+      <div className="relative overflow-hidden border-t border-white/8 pt-3">
+        <div className="grid min-w-0 items-center" style={{ gridTemplateColumns: stats.rankTier === "Unranked" ? "1fr" : "max-content minmax(5.5rem, 1fr)" }}>
           <div className="min-w-0">
-            <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Current Rank</div>
-            <div className="mt-1 flex min-w-0 items-center gap-2" title={stats.rank}>
-              <div className="truncate font-display text-3xl font-black leading-none text-white">{stats.rank}</div>
-              {stats.rankTier !== "Unranked" && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={rankEmblemUrl(stats.rankTier)}
-                  alt=""
-                  className="pointer-events-none h-11 w-11 shrink-0 object-contain saturate-125 drop-shadow-[0_0_14px_rgba(245,197,66,.22)]"
-                />
-              )}
+            <div className="truncate font-display text-2xl font-black leading-none text-white" title={stats.rank}>
+              {stats.rank}
             </div>
           </div>
-          <div className="text-right">
-            <div className="font-display text-xl font-bold text-[#f5c542]">{progress.lp}</div>
-            <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">LP</div>
-            {typeof lpDelta === "number" && (
-              <div className={cn("mt-1 text-xs font-bold", lpDelta >= 0 ? "text-green-300" : "text-red-300")}>
-                {lpDelta > 0 ? "+" : ""}
-                {lpDelta} LP
-              </div>
-            )}
+          {stats.rankTier !== "Unranked" && (
+            <div className="flex min-w-0 justify-end pr-2">
+              <RankEmblem rankTier={stats.rankTier} />
+            </div>
+          )}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="font-display text-lg font-bold text-[#f5c542]">{progress.lp} LP</div>
+          {typeof lpDelta === "number" && (
+            <div className={cn("text-xs font-bold", lpDelta >= 0 ? "text-green-300" : "text-red-300")}>
+              {lpDelta > 0 ? "+" : ""}
+              {lpDelta} LP
+            </div>
+          )}
+          <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">
+            {progress.nextRank ? `to ${progress.nextRank}` : "Peak"}
           </div>
         </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/8">
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
           <div className="h-1.5 rounded-full bg-[#f5c542] transition-all" style={{ width: `${progress.percent}%` }} />
         </div>
-        <div className="relative mt-2 text-xs text-[color:var(--muted)]">
+        <div className="mt-1.5 text-[11px] text-[color:var(--muted)]">
           {stats.rank === "Unranked"
             ? "Play any mode to place into Iron IV."
             : progress.nextRank
@@ -428,9 +423,8 @@ function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: R
         </div>
       </div>
 
-      <div className="border-t border-white/8 pt-4">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Daily Progress</div>
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+      <div className="border-t border-white/8 pt-3">
+        <div className="grid grid-cols-4 gap-2">
           <ProgressStat label="Streak" value={String(stats.currentStreak)} />
           <ProgressStat label="Best" value={String(stats.maxStreak)} />
           <ProgressStat label="Winrate" value={`${stats.winRate}%`} />
@@ -454,18 +448,16 @@ function TodaySidebarGroup({
 
   return (
     <SidebarGroup title="Today">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Today&apos;s Puzzle</div>
-        <div className="mt-1 text-lg font-semibold text-white">{puzzleLabel}</div>
-        <div className="mt-1 text-xs text-[color:var(--muted)]">Resets in {formatReset(resetCountdown)}</div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 truncate text-base font-semibold text-white">{puzzleLabel}</div>
+        <div className="shrink-0 text-[11px] text-[color:var(--muted)]">{formatReset(resetCountdown)}</div>
       </div>
 
-      <div className="border-t border-white/8 pt-4">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">Today&apos;s Top Solves</div>
-        <div className="mt-3 grid gap-2">
+      <div className="border-t border-white/8 pt-3">
+        <div className="grid gap-1.5">
           {preview.length > 0 ? (
             preview.map((entry) => (
-              <div key={`${entry.rank}-${entry.username}:sidebar`} className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2 text-sm">
+              <div key={`${entry.rank}-${entry.username}:sidebar`} className="grid grid-cols-[1.35rem_minmax(0,1fr)_auto] items-center gap-2 text-sm">
                 <span className="font-display text-xs font-bold text-[#c89b3c]">#{entry.rank}</span>
                 <span className="truncate font-semibold text-white" title={entry.username}>{entry.username}</span>
                 <span className="text-xs text-[color:var(--muted)]">{entry.currentStreak} streak</span>
@@ -483,8 +475,8 @@ function TodaySidebarGroup({
 function ProgressStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="font-display text-2xl font-bold leading-none">{value}</div>
-      <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
+      <div className="font-display text-xl font-bold leading-none">{value}</div>
+      <div className="mt-0.5 text-[9px] uppercase tracking-[0.06em] text-[color:var(--muted)]">{label}</div>
     </div>
   );
 }
@@ -599,6 +591,23 @@ function displayLocalRank(state: LeagueRankState) {
   }
 
   return state.division ? `${state.tier} ${state.division}` : state.tier;
+}
+
+function RankEmblem({ rankTier }: { rankTier: string }) {
+  return (
+    <span className="relative -my-2 h-14 w-20 shrink-0 bg-transparent">
+      <span className="pointer-events-none absolute left-1/2 top-1/2 h-16 w-28 -translate-x-1/2 -translate-y-1/2 rounded-[999px] bg-[radial-gradient(ellipse_at_center,rgba(245,197,66,.11)_0%,rgba(245,197,66,.055)_38%,rgba(120,180,255,.025)_62%,transparent_82%)] blur-md" />
+      <span className="absolute inset-0 overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={rankEmblemUrl(rankTier)}
+          alt=""
+          className="pointer-events-none absolute left-1/2 top-1/2 max-w-none object-contain opacity-100 saturate-125"
+          style={{ width: "28rem", maxWidth: "none", transform: "translate(-50%, -50%)" }}
+        />
+      </span>
+    </span>
+  );
 }
 
 function rankEmblemUrl(rankTier: string) {
