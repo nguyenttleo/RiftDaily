@@ -348,7 +348,7 @@ function generateGuessEloChallenge(date: string, rounds: GuessEloRound[], unavai
     date,
     lanes: [],
     enemyLanes: [],
-    options: ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"],
+    options: ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"],
     answerTier: "",
     signalNotes: [],
     dataSource: "Riot Match-V5",

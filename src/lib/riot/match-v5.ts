@@ -14,7 +14,8 @@ const RANKED_SOLO_QUEUE_ID = 420;
 const SMITE_ID = 11;
 const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
-const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"] as const;
+const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
+const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
 const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_REQUEST = 100;
@@ -106,6 +107,12 @@ interface RankedSource {
   puuid: string;
   bucket: RankBucket;
   tier: string;
+}
+
+interface RankedEntryCandidate {
+  entry: RiotLeagueEntry;
+  tier: string;
+  division?: string;
 }
 
 export interface VerifiedMatchChallengeSet {
@@ -220,9 +227,10 @@ export async function getVerifiedRankedMatchChallenges({
   const regional = regionalRouteForPlatform(platform);
   const startedAt = Date.now();
   const isTimedOut = () => Date.now() - startedAt > timeBudgetMs;
-  const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(4, Math.min(32, env.riotMatchSampleSize)) : 16;
+  const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(RANK_BUCKETS.length, Math.min(100, env.riotMatchSampleSize)) : 100;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
+  const initialRoundsPerRank = Math.min(roundsPerRank, 4);
   const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
   const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount)
     ? Math.max(sampleSize, Math.min(MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE, env.riotMatchupSampleMatchCount))
@@ -286,7 +294,7 @@ export async function getVerifiedRankedMatchChallenges({
       const bucketSources = sourcesByBucket.get(bucket) ?? [];
 
       for (const source of bucketSources) {
-        if (bucketRounds.length >= roundsPerRank || isTimedOut()) {
+        if (bucketRounds.length >= initialRoundsPerRank || isTimedOut()) {
           break;
         }
 
@@ -299,7 +307,7 @@ export async function getVerifiedRankedMatchChallenges({
         }
 
         for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
-          if (bucketRounds.length >= roundsPerRank || isTimedOut()) {
+          if (bucketRounds.length >= initialRoundsPerRank || isTimedOut()) {
             break;
           }
 
@@ -325,7 +333,7 @@ export async function getVerifiedRankedMatchChallenges({
               continue;
             }
 
-            const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
+            const usedForPuzzleRound = bucketRounds.length < initialRoundsPerRank;
 
             if (dodgeQueueRounds.length < sampleSize) {
               dodgeQueueRounds.push(verified.dodgeQueue);
@@ -341,7 +349,14 @@ export async function getVerifiedRankedMatchChallenges({
       }
     }
 
-    for (const source of seededOrder(sources, `${date}:analysis-sources`)) {
+    for (const source of interleaveRankedSources(sourcesByBucket, `${date}:analysis-sources`)) {
+      const bucketRounds = guessRoundsByBucket.get(source.bucket) ?? [];
+      const bucketRoundLimit = nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank);
+
+      if (bucketRounds.length >= bucketRoundLimit) {
+        continue;
+      }
+
       if (
         isTimedOut() ||
         isAnalysisComplete(
@@ -401,6 +416,22 @@ export async function getVerifiedRankedMatchChallenges({
 
           addChampionWinrateSamples(match, championLookup, championWinrates);
           await collectMatchupSamples(match);
+
+          const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
+
+          if (verified) {
+            if (bucketRounds.length < bucketRoundLimit) {
+              bucketRounds.push(verified.guessElo);
+            }
+
+            if (dodgeQueueRounds.length < sampleSize) {
+              dodgeQueueRounds.push(verified.dodgeQueue);
+            }
+
+            if (bucketRounds.length >= bucketRoundLimit) {
+              break;
+            }
+          }
         } catch {
           continue;
         }
@@ -420,9 +451,14 @@ export async function getVerifiedRankedMatchChallenges({
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
       RANK_BUCKETS.every((bucket) => distribution[bucket] === roundsPerRank);
+    const hasPlayableGuessRounds =
+      guessEloRounds.length >= RANK_BUCKETS.length &&
+      RANK_BUCKETS.every((bucket) => distribution[bucket] >= MIN_PLAYABLE_ROUNDS_PER_RANK);
     const guessEloMessage = hasBalancedGuessRounds
       ? undefined
-      : `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`;
+      : hasPlayableGuessRounds
+        ? `Collected ${guessEloRounds.length}/${sampleSize} verified Guess the Elo rounds this request; target is ${roundsPerRank} per rank bucket and current distribution is ${formatRankDistribution(distribution)}.`
+        : `Could not collect a playable Guess the Elo set from Riot Match-V5. Needed at least ${MIN_PLAYABLE_ROUNDS_PER_RANK} per rank bucket; got ${formatRankDistribution(distribution)}.`;
     const dodgeQueueMessage =
       orderedDodgeQueueRounds.length > 0
         ? undefined
@@ -432,11 +468,11 @@ export async function getVerifiedRankedMatchChallenges({
         ? undefined
         : `Champion Matchup needs ${MIN_MATCHUP_SAMPLE_GAMES}+ Riot Match-V5 ranked games containing both champions in their selected lanes in the same match.`;
     const value: VerifiedMatchChallengeSet = {
-      guessEloRounds: hasBalancedGuessRounds ? guessEloRounds : [],
+      guessEloRounds: hasPlayableGuessRounds ? guessEloRounds : [],
       dodgeQueueRounds: orderedDodgeQueueRounds,
       championMatchupRounds,
       championWinrateSamples,
-      status: hasBalancedGuessRounds || orderedDodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : "unavailable",
+      status: hasPlayableGuessRounds || orderedDodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : "unavailable",
       message: guessEloMessage ?? dodgeQueueMessage ?? championMatchupMessage,
       ...(guessEloMessage ? { guessEloMessage } : {}),
       ...(dodgeQueueMessage ? { dodgeQueueMessage } : {}),
@@ -1130,6 +1166,32 @@ function groupSourcesByBucket(sources: RankedSource[]) {
   return grouped;
 }
 
+function interleaveRankedSources(sourcesByBucket: Map<RankBucket, RankedSource[]>, seed: string) {
+  const orderedByBucket = new Map(
+    RANK_BUCKETS.map((bucket) => [bucket, seededOrder(sourcesByBucket.get(bucket) ?? [], `${seed}:${bucket}`)])
+  );
+  const maxLength = Math.max(...RANK_BUCKETS.map((bucket) => orderedByBucket.get(bucket)?.length ?? 0));
+  const sources: RankedSource[] = [];
+
+  for (let index = 0; index < maxLength; index += 1) {
+    for (const bucket of RANK_BUCKETS) {
+      const source = orderedByBucket.get(bucket)?.[index];
+
+      if (source) {
+        sources.push(source);
+      }
+    }
+  }
+
+  return sources;
+}
+
+function nextBalancedRankBucketLimit(roundsByBucket: Map<RankBucket, GuessEloRound[]>, initialRoundsPerRank: number, roundsPerRank: number) {
+  const lowestBucketCount = Math.min(...RANK_BUCKETS.map((bucket) => roundsByBucket.get(bucket)?.length ?? 0));
+
+  return Math.min(roundsPerRank, Math.max(initialRoundsPerRank, lowestBucketCount) + 1);
+}
+
 function interleaveRankBuckets(roundsByBucket: Map<RankBucket, GuessEloRound[]>, roundsPerRank: number) {
   const rounds: GuessEloRound[] = [];
 
@@ -1255,32 +1317,56 @@ function isRankedClassicSummonersRiftMatch(match: RiotMatchDto) {
 }
 
 async function getRankedSources(platform: string, seed: string, sourceCountPerBucket: number): Promise<RankedSource[]> {
-  const sourcePlans = [
-    { bucket: "Iron/Bronze", tier: "BRONZE", division: "I" },
-    { bucket: "Silver/Gold", tier: "GOLD", division: "II" },
-    { bucket: "Emerald/Diamond", tier: "EMERALD", division: "II" }
+  const sourcePlans: Array<{
+    bucket: RankBucket;
+    queuePlans?: Array<{ tier: string; division: string }>;
+    apexLeaguePaths?: string[];
+  }> = [
+    { bucket: "Iron/Bronze", queuePlans: [{ tier: "BRONZE", division: "I" }] },
+    { bucket: "Silver/Gold", queuePlans: [{ tier: "GOLD", division: "II" }] },
+    {
+      bucket: "Platinum/Emerald",
+      queuePlans: [
+        { tier: "PLATINUM", division: "I" },
+        { tier: "EMERALD", division: "II" }
+      ]
+    },
+    {
+      bucket: "Diamond/Master",
+      queuePlans: [{ tier: "DIAMOND", division: "II" }],
+      apexLeaguePaths: ["/lol/league/v4/masterleagues/by-queue/RANKED_SOLO_5x5"]
+    },
+    {
+      bucket: "Grandmaster/Challenger",
+      apexLeaguePaths: [
+        "/lol/league/v4/grandmasterleagues/by-queue/RANKED_SOLO_5x5",
+        "/lol/league/v4/challengerleagues/by-queue/RANKED_SOLO_5x5"
+      ]
+    }
   ];
   const sources: RankedSource[] = [];
 
   for (const plan of sourcePlans) {
-    const entries = await getLeagueEntryPageCandidates(platform, plan.tier, plan.division);
+    const candidates: RankedEntryCandidate[] = [];
 
-    for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
-      const puuid = await resolveEntryPuuid(platform, entry);
+    for (const queuePlan of plan.queuePlans ?? []) {
+      candidates.push(...await getLeagueEntryPageCandidates(platform, queuePlan.tier, queuePlan.division));
+    }
+
+    for (const path of plan.apexLeaguePaths ?? []) {
+      candidates.push(...await getApexLeagueEntryCandidates(platform, path));
+    }
+
+    for (const candidate of seededOrder(candidates, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
+      const puuid = await resolveEntryPuuid(platform, candidate.entry);
 
       if (puuid) {
-        sources.push({ puuid, bucket: plan.bucket as RankBucket, tier: `${plan.tier} ${entry.rank ?? plan.division}` });
+        sources.push({
+          puuid,
+          bucket: plan.bucket,
+          tier: `${candidate.tier} ${candidate.entry.rank ?? candidate.division ?? ""}`.trim()
+        });
       }
-    }
-  }
-
-  const master = await riotFetch<RiotLeagueList>(platform, "/lol/league/v4/masterleagues/by-queue/RANKED_SOLO_5x5");
-
-  for (const entry of seededOrder(master.entries ?? [], `${seed}:Master+`).slice(0, sourceCountPerBucket)) {
-    const puuid = await resolveEntryPuuid(platform, entry);
-
-    if (puuid) {
-      sources.push({ puuid, bucket: "Master+", tier: `${master.tier ?? "MASTER"} ${entry.rank ?? ""}`.trim() });
     }
   }
 
@@ -1288,7 +1374,7 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
 }
 
 async function getLeagueEntryPageCandidates(platform: string, tier: string, division: string) {
-  const entries: RiotLeagueEntry[] = [];
+  const candidates: RankedEntryCandidate[] = [];
 
   for (let page = 1; page <= LEAGUE_ENTRY_PAGES_PER_BUCKET; page += 1) {
     const pageEntries = await riotFetch<RiotLeagueEntry[]>(
@@ -1296,7 +1382,7 @@ async function getLeagueEntryPageCandidates(platform: string, tier: string, divi
       `/lol/league/v4/entries/RANKED_SOLO_5x5/${tier}/${division}?page=${page}`
     );
 
-    entries.push(...pageEntries);
+    candidates.push(...pageEntries.map((entry) => ({ entry, tier: entry.tier ?? tier, division: entry.rank ?? division })));
 
     if (pageEntries.length === 0) {
       break;
@@ -1304,18 +1390,25 @@ async function getLeagueEntryPageCandidates(platform: string, tier: string, divi
   }
 
   const seen = new Set<string>();
-  const uniqueEntries: RiotLeagueEntry[] = [];
+  const uniqueCandidates: RankedEntryCandidate[] = [];
 
-  for (const entry of entries) {
-    const key = entry.puuid ?? entry.summonerId;
+  for (const candidate of candidates) {
+    const key = candidate.entry.puuid ?? candidate.entry.summonerId;
 
     if (key && !seen.has(key)) {
       seen.add(key);
-      uniqueEntries.push(entry);
+      uniqueCandidates.push(candidate);
     }
   }
 
-  return uniqueEntries;
+  return uniqueCandidates;
+}
+
+async function getApexLeagueEntryCandidates(platform: string, path: string) {
+  const list = await riotFetch<RiotLeagueList>(platform, path);
+  const tier = list.tier ?? path.match(/\/([^/]+)leagues\//)?.[1]?.toUpperCase() ?? "MASTER";
+
+  return (list.entries ?? []).map((entry) => ({ entry, tier }));
 }
 
 async function resolveEntryPuuid(platform: string, entry: RiotLeagueEntry) {
@@ -1387,7 +1480,7 @@ function toVerifiedRounds(
     date,
     lanes: blue,
     enemyLanes: red,
-    options: ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"],
+    options: [...RANK_BUCKETS],
     answerTier: source.bucket,
     signalNotes: [
       `Source player official ranked tier: ${source.tier}.`,

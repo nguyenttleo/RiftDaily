@@ -1160,7 +1160,7 @@ function InfiniteStreakBar({ round, current, best }: { round: number; current: n
   );
 }
 
-function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: string, username: string) {
+function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: string, username: string, avoidTripleKey?: (round: T) => string | undefined) {
   const [loadSeed] = useState(() => `${Date.now()}:${Math.random()}`);
   const storageKey = `rift-daily:last-first-round:${gameKey}:${normalize(username || "guest")}`;
   const orderedRounds = useMemo(() => {
@@ -1176,6 +1176,10 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
     });
     const lastFirstRoundId = typeof window === "undefined" ? "" : window.localStorage.getItem(storageKey);
 
+    if (avoidTripleKey) {
+      return orderRoundsAvoidingTripleKey(randomized, avoidTripleKey, lastFirstRoundId ?? "");
+    }
+
     if (lastFirstRoundId && randomized[0]?.id === lastFirstRoundId) {
       const swapIndex = randomized.findIndex((round) => round.id !== lastFirstRoundId);
 
@@ -1185,7 +1189,7 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
     }
 
     return randomized;
-  }, [loadSeed, rounds, storageKey]);
+  }, [avoidTripleKey, loadSeed, rounds, storageKey]);
 
   useEffect(() => {
     const firstRound = orderedRounds[0];
@@ -1196,6 +1200,33 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
   }, [orderedRounds, storageKey]);
 
   return orderedRounds;
+}
+
+function orderRoundsAvoidingTripleKey<T extends { id: string }>(rounds: T[], keyForRound: (round: T) => string | undefined, blockedFirstRoundId: string) {
+  const remaining = [...rounds];
+  const ordered: T[] = [];
+
+  while (remaining.length > 0) {
+    const previous = ordered[ordered.length - 1];
+    const beforePrevious = ordered[ordered.length - 2];
+    const repeatedKey = previous && beforePrevious && keyForRound(previous) === keyForRound(beforePrevious) ? keyForRound(previous) : "";
+    const hasAlternativeFirst = ordered.length === 0 && remaining.some((round) => round.id !== blockedFirstRoundId);
+    const hasAlternativeKey = Boolean(repeatedKey) && remaining.some((round) => keyForRound(round) !== repeatedKey);
+    const best = remaining
+      .map((round, index) => ({
+        index,
+        firstRepeatPenalty: hasAlternativeFirst && round.id === blockedFirstRoundId ? 1 : 0,
+        tripleRepeatPenalty: hasAlternativeKey && keyForRound(round) === repeatedKey ? 1 : 0
+      }))
+      .sort((a, b) => a.firstRepeatPenalty - b.firstRepeatPenalty || a.tripleRepeatPenalty - b.tripleRepeatPenalty || a.index - b.index)[0];
+    const [next] = remaining.splice(best?.index ?? 0, 1);
+
+    if (next) {
+      ordered.push(next);
+    }
+  }
+
+  return ordered;
 }
 
 function usePersonalModeStreak(gameKey: string, username: string) {
@@ -1484,7 +1515,7 @@ function createChampionMatchupRounds(base: ChampionMatchupChallenge): ChampionMa
 
 export function GuessEloGame({ challenge, username = "Guest" }: { challenge: GuessEloChallenge; username?: string }) {
   const generatedRounds = useMemo(() => createEloRounds(challenge), [challenge]);
-  const rounds = useRandomizedRounds(generatedRounds, "guess-elo", username);
+  const rounds = useRandomizedRounds(generatedRounds, "guess-elo", username, guessEloAnswerKey);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -1523,7 +1554,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
         </div>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
           {round.options.map((option) => (
             <button
               key={option}
@@ -1581,6 +1612,10 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
       )}
     </PuzzleFrame>
   );
+}
+
+function guessEloAnswerKey(round: GuessEloRound) {
+  return round.answerTier;
 }
 
 function getGuessEloSourceRankNote(notes: string[]) {
@@ -2326,8 +2361,9 @@ function createEloRounds(base: GuessEloChallenge): EloRound[] {
 function rankIcons(option: string) {
   if (option === "Iron/Bronze") return [rankIconUrl("iron"), rankIconUrl("bronze")];
   if (option === "Silver/Gold") return [rankIconUrl("silver"), rankIconUrl("gold")];
-  if (option === "Emerald/Diamond") return [rankIconUrl("emerald"), rankIconUrl("diamond")];
-  return [rankIconUrl("master"), rankIconUrl("challenger")];
+  if (option === "Platinum/Emerald") return [rankIconUrl("platinum"), rankIconUrl("emerald")];
+  if (option === "Diamond/Master") return [rankIconUrl("diamond"), rankIconUrl("master")];
+  return [rankIconUrl("grandmaster"), rankIconUrl("challenger")];
 }
 
 function rankIconUrl(rank: string) {
