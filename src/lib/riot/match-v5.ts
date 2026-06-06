@@ -18,11 +18,13 @@ const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
 const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_REQUEST = 100;
+const MATCH_IDS_PER_PLAY_SOURCE = 20;
 const LEAGUE_ENTRY_PAGES_PER_BUCKET = 3;
 const MAX_MATCH_HISTORY_PAGES_PER_SOURCE = 5;
 const MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE = 20000;
 const MAX_ANALYSIS_MATCH_FETCH_BUDGET = 40000;
 const MAX_SOURCES_PER_RANK_BUCKET = 48;
+const RIOT_REQUEST_TIMEOUT_MS = 4500;
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
@@ -193,13 +195,15 @@ export async function getVerifiedRankedMatchChallenges({
   dataDragonVersion,
   publicChampions,
   summonerSpells,
-  allowLiveMatchupCollection = false
+  allowLiveMatchupCollection = false,
+  timeBudgetMs = 26000
 }: {
   date: string;
   dataDragonVersion: string;
   publicChampions: PublicChampion[];
   summonerSpells: SummonerSpellRef[];
   allowLiveMatchupCollection?: boolean;
+  timeBudgetMs?: number;
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
     return {
@@ -214,6 +218,8 @@ export async function getVerifiedRankedMatchChallenges({
 
   const platform = normalizePlatform(env.riotRegion);
   const regional = regionalRouteForPlatform(platform);
+  const startedAt = Date.now();
+  const isTimedOut = () => Date.now() - startedAt > timeBudgetMs;
   const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(4, Math.min(32, env.riotMatchSampleSize)) : 16;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
@@ -272,24 +278,28 @@ export async function getVerifiedRankedMatchChallenges({
     };
 
     for (const bucket of RANK_BUCKETS) {
+      if (isTimedOut()) {
+        break;
+      }
+
       const bucketRounds = guessRoundsByBucket.get(bucket) ?? [];
       const bucketSources = sourcesByBucket.get(bucket) ?? [];
 
       for (const source of bucketSources) {
-        if (bucketRounds.length >= roundsPerRank) {
+        if (bucketRounds.length >= roundsPerRank || isTimedOut()) {
           break;
         }
 
         let matchIds: string[] = [];
 
         try {
-          matchIds = await getRankedMatchIdsForSource(regional, source.puuid, 1);
+          matchIds = await getRankedMatchIdsForSource(regional, source.puuid, 1, MATCH_IDS_PER_PLAY_SOURCE);
         } catch {
           continue;
         }
 
         for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
-          if (bucketRounds.length >= roundsPerRank) {
+          if (bucketRounds.length >= roundsPerRank || isTimedOut()) {
             break;
           }
 
@@ -333,6 +343,7 @@ export async function getVerifiedRankedMatchChallenges({
 
     for (const source of seededOrder(sources, `${date}:analysis-sources`)) {
       if (
+        isTimedOut() ||
         isAnalysisComplete(
           seenMatches.size,
           currentPatchMatchupMatchIds.size,
@@ -349,13 +360,19 @@ export async function getVerifiedRankedMatchChallenges({
       let matchIds: string[] = [];
 
       try {
-        matchIds = await getRankedMatchIdsForSource(regional, source.puuid, matchHistoryPagesPerSource);
+        matchIds = await getRankedMatchIdsForSource(
+          regional,
+          source.puuid,
+          matchHistoryPagesPerSource,
+          shouldCollectLiveMatchups ? MATCH_IDS_PER_REQUEST : MATCH_IDS_PER_PLAY_SOURCE
+        );
       } catch {
         continue;
       }
 
       for (const matchId of seededOrder(matchIds, `${date}:analysis:${source.bucket}:${source.puuid}`)) {
         if (
+          isTimedOut() ||
           isAnalysisComplete(
             seenMatches.size,
             currentPatchMatchupMatchIds.size,
@@ -1204,18 +1221,19 @@ function formatRankDistribution(distribution: Record<RankBucket, number>) {
   return RANK_BUCKETS.map((bucket) => `${bucket}: ${distribution[bucket]}`).join(", ");
 }
 
-async function getRankedMatchIdsForSource(regional: string, puuid: string, pages: number) {
+async function getRankedMatchIdsForSource(regional: string, puuid: string, pages: number, count = MATCH_IDS_PER_REQUEST) {
   const ids: string[] = [];
+  const boundedCount = Math.max(1, Math.min(MATCH_IDS_PER_REQUEST, count));
 
   for (let page = 0; page < pages; page += 1) {
     const pageIds = await riotFetch<string[]>(
       regional,
-      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=${page * MATCH_IDS_PER_REQUEST}&count=${MATCH_IDS_PER_REQUEST}`
+      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=${page * boundedCount}&count=${boundedCount}`
     );
 
     ids.push(...pageIds);
 
-    if (pageIds.length < MATCH_IDS_PER_REQUEST) {
+    if (pageIds.length < boundedCount) {
       break;
     }
   }
@@ -1584,18 +1602,26 @@ function createChampionLookup(publicChampions: PublicChampion[]) {
 
 async function riotFetch<T>(route: string, path: string): Promise<T> {
   const host = route.includes(".") ? route : `${route}.api.riotgames.com`;
-  const response = await fetch(`https://${host}${path}`, {
-    headers: {
-      "X-Riot-Token": env.riotApiKey
-    },
-    next: { revalidate: 60 * 60 * 2 }
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RIOT_REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error(`Riot API ${path} failed with ${response.status}`);
+  try {
+    const response = await fetch(`https://${host}${path}`, {
+      headers: {
+        "X-Riot-Token": env.riotApiKey
+      },
+      next: { revalidate: 60 * 60 * 2 },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Riot API ${path} failed with ${response.status}`);
+    }
+
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return (await response.json()) as T;
 }
 
 function normalizePlatform(value: string) {

@@ -61,7 +61,8 @@ export async function GET() {
         date: generated.date,
         dataDragonVersion: version,
         publicChampions,
-        summonerSpells
+        summonerSpells,
+        timeBudgetMs: 14000
       })
     ),
     champions: publicChampions,
