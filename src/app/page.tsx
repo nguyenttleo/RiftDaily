@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, ClipboardList, Crown, MessageSquare, Share2, Swords } from "lucide-react";
+import { ArrowRight, BarChart3, ClipboardList, Crown, Cpu, MessageSquare, Share2, Sparkle, Swords, Trophy } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -7,26 +7,11 @@ import { CreatorFooter } from "@/components/creator-footer";
 export default function Home() {
   return (
     <main className="min-h-screen bg-[#050914] text-[#f8fafc]">
-      <nav className="fixed left-0 right-0 top-0 z-30 border-b border-white/10 bg-[#050914]/82 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-5">
-          <Link href="/" className="font-display text-xl font-extrabold text-[#f5c542]">
-            Rift Daily
-          </Link>
-          <div className="hidden items-center gap-6 text-sm text-[#94a3b8] md:flex">
-            <Link href="/play">Play</Link>
-            <a href="#leaderboard">Leaderboard</a>
-            <a href="#tech">Tech</a>
-            <Link href="/suggest">Suggest</Link>
-          </div>
-          <Link href="/play" className="font-display rounded-md bg-[#f5c542] px-4 py-2 text-sm font-bold text-[#090b10]">
-            Play Daily
-          </Link>
-        </div>
-      </nav>
+      <RiftCommandBar />
 
       <section
         className="relative min-h-[92vh] overflow-hidden bg-cover bg-center"
-        style={{ backgroundImage: "url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/Ryze_0.jpg)" }}
+        style={{ backgroundImage: "url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/Teemo_0.jpg)" }}
       >
         <div className="absolute inset-0 bg-[#050914]/78" />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,9,20,.98),rgba(5,9,20,.72),rgba(5,9,20,.38))]" />
@@ -35,8 +20,8 @@ export default function Home() {
             <div className="font-display mb-4 inline-flex rounded-full border border-[#f5c542]/30 bg-[#f5c542]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-[#f5c542]">
               Daily League nonsense
             </div>
-            <h1 className="font-display max-w-4xl text-6xl font-extrabold leading-[0.95] tracking-tight md:text-8xl">
-              Humble your friends with suspiciously useful League homework.
+            <h1 className="font-display max-w-3xl text-4xl font-extrabold leading-[1.02] tracking-tight md:text-6xl">
+              Suspiciously useful League homework.
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-[#cbd5e1]">
               Pick the build, judge the lobby, guess the doomed loading screen, and collect enough evidence to tell the
@@ -139,6 +124,65 @@ function LandingStat({ value, label }: { value: string; label: string }) {
       <div className="font-display text-2xl font-bold text-[#f8fafc]">{value}</div>
       <div className="text-xs uppercase tracking-[0.08em]">{label}</div>
     </div>
+  );
+}
+
+function RiftCommandBar() {
+  return (
+    <header className="fixed left-0 right-0 top-0 z-30 border-b border-[#f5c542]/20 bg-[linear-gradient(180deg,rgba(10,15,28,.94),rgba(5,8,16,.86))] shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_18px_60px_rgba(0,0,0,.35),0_0_28px_rgba(246,199,74,.06)] backdrop-blur-xl after:absolute after:bottom-[-1px] after:left-0 after:right-0 after:h-px after:bg-[linear-gradient(90deg,transparent,rgba(246,199,74,.2),rgba(56,189,248,.26),rgba(246,199,74,.2),transparent)]">
+      <div className="mx-auto grid h-[4.75rem] w-[calc(100%_-_1.5rem)] max-w-[82.5rem] grid-cols-[1fr_auto] items-center gap-4 md:w-[calc(100%_-_3rem)] xl:grid-cols-[1fr_auto_1fr] xl:gap-7">
+        <Link href="/" className="group inline-flex min-w-0 items-center gap-3 text-white">
+          <span className="flex min-w-0 flex-col leading-none">
+            <span className="font-display bg-gradient-to-r from-[#fff6bf] via-[#f5c542] to-[#c89b3c] bg-clip-text text-base font-black uppercase tracking-[0.22em] text-transparent drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">
+              Rift Daily
+            </span>
+            <span className="mt-1.5 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-[#c7d8ff]/55">
+              Puzzle Arena
+            </span>
+          </span>
+        </Link>
+
+        <nav aria-label="Primary navigation" className="hidden items-center gap-1 rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.05),0_12px_32px_rgba(0,0,0,.22)] md:flex">
+          <span className="mx-1 h-2 w-2 rotate-45 border border-[#f5c542]/35" />
+          <LandingNavLink href="#leaderboard" label="Leaderboard" icon={<Trophy size={13} />} />
+          <LandingNavLink href="#tech" label="Tech" icon={<Cpu size={13} />} />
+          <LandingNavLink href="/suggest" label="Suggest" icon={<Sparkle size={13} />} />
+          <span className="mx-1 h-2 w-2 rotate-45 border border-[#f5c542]/35" />
+        </nav>
+
+        <div className="justify-self-end flex items-center gap-2 sm:gap-3">
+          <Link
+            href="/play"
+            className="font-display group/cta inline-flex min-h-11 items-center justify-center rounded-xl border border-[#ffe68c]/70 bg-[linear-gradient(180deg,#ffe27a_0%,#f6bd38_55%,#d99617_100%)] px-4 text-sm font-black text-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,.55),0_10px_28px_rgba(246,188,56,.28)] transition duration-200 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[inset_0_1px_0_rgba(255,255,255,.6),0_14px_36px_rgba(246,188,56,.36)] sm:px-5"
+          >
+            Play Daily
+            <ArrowRight size={16} className="ml-2 transition duration-200 group-hover/cta:translate-x-0.5" />
+          </Link>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function LandingNavLink({ href, label, icon, active = false }: { href: string; label: string; icon: ReactNode; active?: boolean }) {
+  const className = active
+    ? "font-display inline-flex items-center gap-2 rounded-full bg-[linear-gradient(180deg,#ffdf75,#f4bb35)] px-4 py-2.5 text-sm font-extrabold text-[#07101d] shadow-[inset_0_0_0_1px_rgba(255,238,164,.4),0_8px_22px_rgba(246,199,74,.2)]"
+    : "font-display inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-extrabold text-[#dce6ff]/65 transition duration-200 hover:-translate-y-0.5 hover:bg-white/[0.07] hover:text-white";
+
+  if (href.startsWith("/")) {
+    return (
+      <Link href={href} className={className}>
+        <span className="text-[0.7rem] opacity-80">{icon}</span>
+        {label}
+      </Link>
+    );
+  }
+
+  return (
+    <a href={href} className={className}>
+      <span className="text-[0.7rem] opacity-80">{icon}</span>
+      {label}
+    </a>
   );
 }
 

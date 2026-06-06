@@ -18,17 +18,33 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
+type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
   const [guesses, setGuesses] = useState<Array<{ items: string[]; boots: string }>>([]);
   const [modalOpen, setModalOpen] = useState(false);
-  const answerSet = new Set(challenge.answerItemIds);
+  const answerSet = useMemo(() => new Set(challenge.answerItemIds), [challenge.answerItemIds]);
   const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, challenge.answerBootsId));
   const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
   const ready = selectedItems.length === 5 && Boolean(selectedBoots);
   const baselineDelta = challenge.winrateModel.projected - challenge.winrateModel.baseline;
+  const randomizedPossibleItems = useMemo(() => seededShuffle(challenge.possibleItems, `${challenge.id}:possible-items`), [challenge.id, challenge.possibleItems]);
+  const randomizedPossibleBoots = useMemo(() => seededShuffle(challenge.possibleBoots, `${challenge.id}:possible-boots`), [challenge.id, challenge.possibleBoots]);
+  const lockedBuildResults = useMemo(() => {
+    const results = new Map<string, ItemGuessResult>();
+
+    for (const guess of guesses) {
+      for (const itemId of guess.items) {
+        results.set(itemId, answerSet.has(itemId) ? "correct" : "wrong");
+      }
+
+      results.set(guess.boots, guess.boots === challenge.answerBootsId ? "correct" : "wrong");
+    }
+
+    return results;
+  }, [answerSet, challenge.answerBootsId, guesses]);
 
   function toggleItem(id: string) {
     if (finished) {
@@ -161,8 +177,8 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
                   active={active}
                   selectedItems={selectedItems}
                   selectedBoots={selectedBoots}
-                  possibleItems={challenge.possibleItems}
-                  possibleBoots={challenge.possibleBoots}
+                  possibleItems={randomizedPossibleItems}
+                  possibleBoots={randomizedPossibleBoots}
                   answerSet={answerSet}
                   answerBootsId={challenge.answerBootsId}
                   onRemoveItem={removeItem}
@@ -179,11 +195,12 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
                 <span className="text-xs text-[color:var(--muted)]">{challenge.possibleItems.length} role-matched options</span>
               </div>
               <div className="grid content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-4 2xl:grid-cols-6">
-                {challenge.possibleItems.map((item) => (
+                {randomizedPossibleItems.map((item) => (
                   <ItemChoiceCard
                     key={item.id}
                     item={item}
                     selected={selectedItems.includes(item.id)}
+                    result={lockedBuildResults.get(item.id)}
                     disabled={finished || (!selectedItems.includes(item.id) && selectedItems.length >= 5)}
                     onClick={() => toggleItem(item.id)}
                   />
@@ -193,8 +210,15 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
             <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
               <div className="mb-2 text-sm uppercase text-[#c89b3c]">Boots</div>
               <div className="grid content-start gap-2 px-1 pb-4 pt-2">
-                {challenge.possibleBoots.map((item) => (
-                  <BootChoiceCard key={item.id} item={item} selected={selectedBoots === item.id} disabled={finished} onClick={() => chooseBoots(item.id)} />
+                {randomizedPossibleBoots.map((item) => (
+                  <BootChoiceCard
+                    key={item.id}
+                    item={item}
+                    selected={selectedBoots === item.id}
+                    result={lockedBuildResults.get(item.id)}
+                    disabled={finished}
+                    onClick={() => chooseBoots(item.id)}
+                  />
                 ))}
               </div>
             </div>
@@ -377,6 +401,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.missingComponentId;
   const selected = round.allComponents.find((item) => item.id === answer);
+  const randomizedComponents = useMemo(() => seededShuffle(round.allComponents, `${round.id}:components`), [round.id, round.allComponents]);
 
   function submitRecipe() {
     if (!answer || submitted) {
@@ -425,7 +450,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                 {submitted ? (correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`) : "Choose the missing component from the shop grid."}
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="secondary" onClick={() => { setAnswer(""); setSubmitted(false); }}>
+                <Button type="button" variant="secondary" disabled={!answer || submitted} onClick={() => { setAnswer(""); setSubmitted(false); }}>
                   Clear
                 </Button>
                 <Button type="button" onClick={submitRecipe} disabled={!answer || submitted}>
@@ -456,26 +481,51 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
               <div className="text-xs text-[color:var(--muted)]">{round.allComponents.length} components</div>
             </div>
             <div className="grid content-start gap-3 px-2 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
-              {round.allComponents.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setAnswer(item.id);
-                    setSubmitted(false);
-                  }}
-                  className={cn(
-                    "relative grid min-h-28 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)]",
-                    answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"
-                  )}
-                  title={`${item.name} - ${item.goldTotal}g`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={item.imageUrl} alt="" className="h-14 w-14 object-contain" />
-                  <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{item.name}</span>
-                  <span className="text-[11px] text-[#c89b3c]">{item.goldTotal}g</span>
-                </button>
-              ))}
+              {randomizedComponents.map((item) => {
+                const result: ItemGuessResult | undefined = submitted
+                  ? item.id === round.missingComponentId
+                    ? "correct"
+                    : item.id === answer
+                      ? "wrong"
+                      : undefined
+                  : undefined;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={submitted}
+                    onClick={() => {
+                      if (!submitted) {
+                        setAnswer(item.id);
+                      }
+                    }}
+                    className={cn(
+                      "relative grid min-h-28 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+                      result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+                      result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
+                      !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
+                      submitted && !result && "opacity-55"
+                    )}
+                    title={`${item.name} - ${item.goldTotal}g`}
+                  >
+                    {result === "correct" && (
+                      <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
+                        <CheckCircle2 size={13} />
+                      </span>
+                    )}
+                    {result === "wrong" && (
+                      <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+                        <XCircle size={13} />
+                      </span>
+                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={item.imageUrl} alt="" className="h-14 w-14 object-contain" />
+                    <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{item.name}</span>
+                    <span className={cn("text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -527,21 +577,47 @@ function BuildSlot({
   );
 }
 
-function ItemChoiceCard({ item, selected, disabled, onClick }: { item: GameItem; selected: boolean; disabled: boolean; onClick: () => void }) {
+function ItemChoiceCard({
+  item,
+  selected,
+  result,
+  disabled,
+  onClick
+}: {
+  item: GameItem;
+  selected: boolean;
+  result?: ItemGuessResult;
+  disabled: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "relative grid min-h-16 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed disabled:opacity-35",
-        selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"
+        "relative grid min-h-16 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+        result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+        result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
+        !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
+        selected && "ring-2 ring-[#c89b3c]/35",
+        disabled && !result && "opacity-35"
       )}
       title={item.name}
     >
       {selected && (
         <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
           <CheckCircle2 size={13} />
+        </span>
+      )}
+      {!selected && result === "correct" && (
+        <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
+          <CheckCircle2 size={13} />
+        </span>
+      )}
+      {!selected && result === "wrong" && (
+        <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+          <XCircle size={13} />
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -551,21 +627,47 @@ function ItemChoiceCard({ item, selected, disabled, onClick }: { item: GameItem;
   );
 }
 
-function BootChoiceCard({ item, selected, disabled, onClick }: { item: GameItem; selected: boolean; disabled?: boolean; onClick: () => void }) {
+function BootChoiceCard({
+  item,
+  selected,
+  result,
+  disabled,
+  onClick
+}: {
+  item: GameItem;
+  selected: boolean;
+  result?: ItemGuessResult;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "relative grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed disabled:opacity-35",
-        selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"
+        "relative grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+        result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+        result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
+        !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
+        selected && "ring-2 ring-[#c89b3c]/35",
+        disabled && !result && "opacity-35"
       )}
       title={item.name}
     >
       {selected && (
         <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
           <CheckCircle2 size={11} />
+        </span>
+      )}
+      {!selected && result === "correct" && (
+        <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-green-400 text-[#071018]">
+          <CheckCircle2 size={11} />
+        </span>
+      )}
+      {!selected && result === "wrong" && (
+        <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+          <XCircle size={11} />
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1455,4 +1557,13 @@ function hashString(value: string) {
   }
 
   return hash;
+}
+
+function seededShuffle<T extends { id: string }>(items: T[], seed: string) {
+  return [...items].sort((a, b) => {
+    const aHash = hashString(`${seed}:${a.id}`);
+    const bHash = hashString(`${seed}:${b.id}`);
+
+    return aHash - bHash || a.id.localeCompare(b.id);
+  });
 }

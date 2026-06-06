@@ -111,10 +111,10 @@ export function AppShell() {
   return (
     <main className="grid min-h-screen bg-[#050607] lg:grid-cols-[minmax(0,1fr)_20rem]">
       <section className="grid min-h-screen grid-rows-[auto_minmax(0,1fr)] gap-3 p-3 sm:p-4">
-        <nav className="flex min-h-12 flex-wrap items-center gap-2 rounded-md border border-[color:var(--line)] bg-[#080a0d]/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,.04)]">
+        <nav className="flex min-h-14 flex-nowrap items-center gap-2 overflow-x-auto rounded-md border border-[color:var(--line)] bg-[#080a0d]/95 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.04)] fine-scrollbar">
           <Link
             href="/"
-            className="inline-flex min-h-9 items-center gap-2 rounded-sm border border-[#2b2f38] bg-[#111722] px-3 text-sm font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
+            className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-sm border border-[#2b2f38] bg-[#111722] px-3.5 text-sm font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
           >
             <Home size={16} />
             Home
@@ -128,7 +128,7 @@ export function AppShell() {
           <Button
             type="button"
             variant="ghost"
-            className="ml-auto"
+            className="ml-auto min-h-10 shrink-0 px-3.5"
             onClick={() => {
               void loadDaily();
               void loadLeaderboard();
@@ -192,7 +192,7 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex min-h-9 items-center gap-2 rounded-sm border px-3 text-sm font-semibold transition",
+        "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-sm border px-3.5 text-sm font-semibold transition",
         active
           ? "border-[#c89b3c] bg-[#c89b3c] text-[#071018]"
           : "border-[#2b2f38] bg-[#111722] text-[#8c95a3] hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
