@@ -2,7 +2,7 @@
 
 Rift Daily is a League-inspired infinite challenge hub for item builds, item recipes, verified Match-V5 loading-screen reads, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
 
-The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Supabase enables persisted auth, suggestions, stats, and leaderboards in production.
+The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Build mode shows a Match-V5 ranked-sample champion winrate when a verified sample exists. Supabase enables persisted auth, suggestions, stats, and leaderboards in production.
 
 ## Stack
 

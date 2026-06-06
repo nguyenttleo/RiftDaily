@@ -1,5 +1,7 @@
 import type {
+  BuildWinrateStats,
   DodgeQueueChallenge,
+  DodgeQueueRound,
   ExpandedDailyChallenges,
   GameItem,
   GuessEloChallenge,
@@ -7,8 +9,7 @@ import type {
   ItemBuildChallenge,
   ItemRecipeChallenge,
   PublicChampion,
-  SkillshotDodgeChallenge,
-  DodgeQueueRound
+  SkillshotDodgeChallenge
 } from "@/types";
 
 import { getUtcDateKey, seededIndex } from "./daily";
@@ -21,6 +22,7 @@ export async function generateExpandedDailyChallenges(
   verifiedMatches?: {
     guessEloRounds: GuessEloRound[];
     dodgeQueueRounds: DodgeQueueRound[];
+    championWinrateSamples?: Record<string, BuildWinrateStats>;
     message?: string;
   },
   date = new Date()
@@ -28,7 +30,14 @@ export async function generateExpandedDailyChallenges(
   const dateKey = getUtcDateKey(date);
 
   return {
-    itemBuild: generateItemBuildChallenge(dateKey, `${salt}:${dateKey}:item-build`, publicChampions, gameItems, version),
+    itemBuild: generateItemBuildChallenge(
+      dateKey,
+      `${salt}:${dateKey}:item-build`,
+      publicChampions,
+      gameItems,
+      version,
+      verifiedMatches?.championWinrateSamples ?? {}
+    ),
     itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`, gameItems),
     guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.message),
     dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.message),
@@ -36,8 +45,17 @@ export async function generateExpandedDailyChallenges(
   };
 }
 
-function generateItemBuildChallenge(date: string, seed: string, publicChampions: PublicChampion[], itemCatalog: GameItem[], version: string): ItemBuildChallenge {
-  const champion = publicChampions[seededIndex(seed, publicChampions.length)];
+function generateItemBuildChallenge(
+  date: string,
+  seed: string,
+  publicChampions: PublicChampion[],
+  itemCatalog: GameItem[],
+  version: string,
+  winrateSamples: Record<string, BuildWinrateStats>
+): ItemBuildChallenge {
+  const sampledChampions = publicChampions.filter((champion) => winrateSamples[champion.id]?.games > 0);
+  const championPool = sampledChampions.length > 0 ? sampledChampions : publicChampions;
+  const champion = championPool[seededIndex(seed, championPool.length)];
   const enemyTeam = pickUnique(publicChampions, `${seed}:enemy`, 5, [champion.id]);
   const candidateItems = itemCatalog
     .filter((item) => item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
@@ -77,6 +95,8 @@ function generateItemBuildChallenge(date: string, seed: string, publicChampions:
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
     matchupNotes: buildMatchupNotes(champion, enemyTeam, answerBuild, answerBoots),
+    winrateStats: winrateSamples[champion.id],
+    winrateSamples,
     catalogModel: {
       source: `Riot Data Dragon ${version} champion/item metadata`,
       candidateCount: possibleItems.length,

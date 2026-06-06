@@ -1,5 +1,6 @@
 import { env, isRiotApiConfigured } from "@/lib/env";
 import type {
+  BuildWinrateStats,
   DodgeQueueRound,
   GuessEloRound,
   PublicChampion,
@@ -74,8 +75,16 @@ interface RankedSource {
 export interface VerifiedMatchChallengeSet {
   guessEloRounds: GuessEloRound[];
   dodgeQueueRounds: DodgeQueueRound[];
+  championWinrateSamples: Record<string, BuildWinrateStats>;
   status: "ready" | "unconfigured" | "unavailable";
   message?: string;
+}
+
+interface WinrateAccumulator {
+  championName: string;
+  wins: number;
+  games: number;
+  matchIds: Set<string>;
 }
 
 let cachedMatchSet: {
@@ -97,6 +106,7 @@ export async function getVerifiedRankedMatchChallenges({
     return {
       guessEloRounds: [],
       dodgeQueueRounds: [],
+      championWinrateSamples: {},
       status: "unconfigured",
       message: "RIOT_API_KEY is required for verified lane assignment and summoner spell data."
     };
@@ -121,6 +131,7 @@ export async function getVerifiedRankedMatchChallenges({
     const seenMatches = new Set<string>();
     const guessRoundsByBucket = createEmptyRankBucketMap();
     const dodgeQueueRounds: DodgeQueueRound[] = [];
+    const championWinrates = new Map<string, WinrateAccumulator>();
 
     for (const bucket of RANK_BUCKETS) {
       const bucketRounds = guessRoundsByBucket.get(bucket) ?? [];
@@ -161,6 +172,7 @@ export async function getVerifiedRankedMatchChallenges({
               continue;
             }
 
+            addChampionWinrateSamples(match, championLookup, championWinrates);
             bucketRounds.push(verified.guessElo);
 
             if (dodgeQueueRounds.length < sampleSize) {
@@ -175,15 +187,17 @@ export async function getVerifiedRankedMatchChallenges({
 
     const guessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
     const distribution = rankDistribution(guessEloRounds);
+    const championWinrateSamples = toChampionWinrateSamples(championWinrates);
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
       RANK_BUCKETS.every((bucket) => distribution[bucket] === roundsPerRank);
     const value: VerifiedMatchChallengeSet =
       hasBalancedGuessRounds && dodgeQueueRounds.length > 0
-        ? { guessEloRounds, dodgeQueueRounds, status: "ready" }
+        ? { guessEloRounds, dodgeQueueRounds, championWinrateSamples, status: "ready" }
         : {
             guessEloRounds: [],
             dodgeQueueRounds: [],
+            championWinrateSamples: {},
             status: "unavailable",
             message: `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`
           };
@@ -200,10 +214,56 @@ export async function getVerifiedRankedMatchChallenges({
     return {
       guessEloRounds: [],
       dodgeQueueRounds: [],
+      championWinrateSamples: {},
       status: "unavailable",
       message
     };
   }
+}
+
+function addChampionWinrateSamples(
+  match: RiotMatchDto,
+  championLookup: Map<number, PublicChampion>,
+  championWinrates: Map<string, WinrateAccumulator>
+) {
+  const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
+
+  for (const participant of match.info.participants) {
+    const champion = championLookup.get(participant.championId);
+
+    if (!champion) {
+      continue;
+    }
+
+    const current = championWinrates.get(champion.id) ?? {
+      championName: champion.name,
+      wins: 0,
+      games: 0,
+      matchIds: new Set<string>()
+    };
+
+    current.games += 1;
+    current.wins += winningTeams.get(participant.teamId) ? 1 : 0;
+    current.matchIds.add(match.metadata.matchId);
+    championWinrates.set(champion.id, current);
+  }
+}
+
+function toChampionWinrateSamples(championWinrates: Map<string, WinrateAccumulator>) {
+  return Object.fromEntries(
+    [...championWinrates.entries()].map(([championId, stats]) => [
+      championId,
+      {
+        championId,
+        championName: stats.championName,
+        wins: stats.wins,
+        games: stats.games,
+        winRate: Math.round((stats.wins / stats.games) * 1000) / 10,
+        sampleMatches: stats.matchIds.size,
+        source: "Riot Match-V5 ranked solo sample"
+      }
+    ])
+  );
 }
 
 function createEmptyRankBucketMap() {

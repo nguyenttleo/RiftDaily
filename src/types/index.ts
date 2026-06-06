@@ -67,6 +67,16 @@ export interface SummonerSpellRef {
   iconUrl: string;
 }
 
+export interface BuildWinrateStats {
+  championId: string;
+  championName: string;
+  wins: number;
+  games: number;
+  winRate: number;
+  sampleMatches: number;
+  source: string;
+}
+
 export interface OptionItem {
   id: string;
   label: string;
@@ -114,6 +124,8 @@ export interface ItemBuildChallenge {
   answerItemIds: string[];
   answerBootsId: string;
   matchupNotes: string[];
+  winrateStats?: BuildWinrateStats;
+  winrateSamples?: Record<string, BuildWinrateStats>;
   catalogModel: {
     source: string;
     candidateCount: number;

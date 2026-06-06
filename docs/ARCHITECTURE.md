@@ -17,9 +17,10 @@ flowchart TD
 1. `/api/challenges/daily` gets the latest Riot Data Dragon version.
 2. The challenge engine builds deterministic UTC daily puzzles from `CHALLENGE_SALT`.
 3. Item and recipe modes use live Riot Data Dragon champion/item/spell data hydrated server-side.
-4. Guess the Elo and Dodge/Queue use Riot League-V4 source players plus Match-V5 ranked solo matches. A round is accepted only when Match-V5 provides five lane positions per team and exactly one Smite jungler on each team.
-5. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
-6. Auth, stats, guesses, suggestions, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
+4. Build mode displays champion winrate stats only when they can be derived from verified Riot Match-V5 ranked solo sample outcomes.
+5. Guess the Elo and Dodge/Queue use Riot League-V4 source players plus Match-V5 ranked solo matches. A round is accepted only when Match-V5 provides five lane positions per team and exactly one Smite jungler on each team.
+6. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
+7. Auth, stats, guesses, suggestions, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
 
 ## Data Sources
 

@@ -163,6 +163,7 @@ export function ItemBuildGame({
                 <div className="font-display text-4xl font-bold">{round.champion.name}</div>
                 <div className="text-sm text-[color:var(--muted)]">{round.champion.roles.join(" / ")}</div>
               </div>
+              <BuildWinrateCard stats={round.winrateStats} />
               <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
                 <div className="text-xs uppercase text-[color:var(--muted)]">Verified Catalog</div>
                 <div className="mt-1 font-display text-3xl font-bold text-[#c89b3c]">{round.possibleItems.length}</div>
@@ -419,6 +420,31 @@ function isBuildGuessSolved(guess: { items: string[]; boots: string }, answerSet
   return guess.items.length === 5 && guess.items.every((id) => answerSet.has(id)) && guess.boots === answerBootsId;
 }
 
+function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"] }) {
+  if (!stats || stats.games === 0) {
+    return (
+      <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
+        <div className="text-xs uppercase text-[color:var(--muted)]">Match-V5 Winrate</div>
+        <div className="mt-1 font-display text-3xl font-bold text-[color:var(--muted)]">N/A</div>
+        <div className="text-xs text-[color:var(--muted)]">No verified ranked sample for this champion yet.</div>
+      </div>
+    );
+  }
+
+  const positive = stats.winRate >= 50;
+
+  return (
+    <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
+      <div className="text-xs uppercase text-[color:var(--muted)]">Match-V5 Winrate</div>
+      <div className={cn("mt-1 font-display text-3xl font-bold", positive ? "text-green-300" : "text-red-300")}>{stats.winRate.toFixed(1)}%</div>
+      <div className="text-xs text-[color:var(--muted)]">
+        {stats.wins}W / {stats.games}G from {stats.sampleMatches} verified ranked match{stats.sampleMatches === 1 ? "" : "es"}.
+      </div>
+      <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[#c89b3c]">{stats.source}</div>
+    </div>
+  );
+}
+
 function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
   if (champions.length < 6 || itemCatalog.length < 20) {
     return [base];
@@ -432,7 +458,9 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 
 function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number): ItemBuildChallenge {
   const seed = `${base.date}:item-build-infinite:${round}`;
-  const champion = champions[hashString(`${seed}:champion`) % champions.length];
+  const sampledChampions = champions.filter((champion) => base.winrateSamples?.[champion.id]?.games);
+  const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
+  const champion = championPool[hashString(`${seed}:champion`) % championPool.length];
   const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
   const candidateItems = itemCatalog
     .filter((item) => item.goldTotal >= 2200 && item.purchasable && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
@@ -463,6 +491,8 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
     answerItemId: answerBuild[0].id,
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
+    winrateStats: base.winrateSamples?.[champion.id],
+    winrateSamples: base.winrateSamples,
     matchupNotes: [
       `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
       "Answer is generated from Riot Data Dragon item tags, champion tags, item costs, and purchasability flags."
