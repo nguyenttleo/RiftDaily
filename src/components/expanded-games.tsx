@@ -1541,7 +1541,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(10.75rem,1fr))]">
           {round.options.map((option) => (
             <button
               key={option}
@@ -1549,7 +1549,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
               onClick={() => choose(option)}
               disabled={submitted}
               className={cn(
-                "grid min-h-16 grid-cols-[3rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition hover:border-[#c89b3c] disabled:cursor-default",
+                "grid min-h-16 min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition hover:border-[#c89b3c] disabled:cursor-default",
                 answer === option && option === round.answerTier && "border-green-400/70 bg-green-500/18 ring-1 ring-green-300/35",
                 answer === option && option !== round.answerTier && "border-red-400/70 bg-red-500/16 ring-1 ring-red-300/30",
                 answer !== option && submitted && option === round.answerTier && "border-green-400/70 bg-green-500/18",
@@ -1562,7 +1562,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
                   <img key={src} src={src} alt="" className="h-10 w-10 object-contain drop-shadow" />
                 ))}
               </span>
-              <span className="font-semibold">{option}</span>
+              <span className="min-w-0 text-sm font-semibold leading-tight">{option}</span>
             </button>
           ))}
         </div>
