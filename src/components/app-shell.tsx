@@ -47,10 +47,16 @@ export function AppShell() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [view, setView] = useState<View>("item-build");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dataRecoveryAttempts, setDataRecoveryAttempts] = useState(0);
   const [message, setMessage] = useState("");
 
-  const loadDaily = useCallback(async () => {
+  const loadDaily = useCallback(async (options: { recovery?: boolean } = {}) => {
     setMessage("");
+    if (!options.recovery) {
+      setDataRecoveryAttempts(0);
+    }
+    setRefreshing(true);
 
     try {
       const response = await fetch(`/api/challenges/daily?t=${Date.now()}`, { cache: "no-store" });
@@ -59,11 +65,17 @@ export function AppShell() {
         throw new Error("Daily load failed.");
       }
 
-      setDaily((await response.json()) as DailyChallengeResponse);
+      const nextDaily = (await response.json()) as DailyChallengeResponse;
+      setDaily(nextDaily);
+
+      if (!hasRecoverableDataGap(nextDaily)) {
+        setDataRecoveryAttempts(0);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Daily load failed.");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -89,6 +101,19 @@ export function AppShell() {
     void loadDaily();
     void loadLeaderboard();
   }, [loadDaily, loadLeaderboard]);
+
+  useEffect(() => {
+    if (!daily || !hasRecoverableDataGapForView(daily, view) || dataRecoveryAttempts >= 4 || refreshing) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setDataRecoveryAttempts((current) => current + 1);
+      void loadDaily({ recovery: true });
+    }, 3500 + dataRecoveryAttempts * 1500);
+
+    return () => window.clearTimeout(timeout);
+  }, [daily, dataRecoveryAttempts, loadDaily, refreshing, view]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
 
@@ -134,13 +159,15 @@ export function AppShell() {
             variant="ghost"
             className="ml-auto min-h-10 shrink-0 px-3.5"
             onClick={() => {
+              setDataRecoveryAttempts(0);
               void loadDaily();
               void loadLeaderboard();
             }}
             title="Refresh"
             icon={<RefreshCcw size={16} />}
+            disabled={refreshing}
           >
-            Refresh
+            {refreshing ? "Syncing" : "Refresh"}
           </Button>
         </nav>
 
@@ -163,17 +190,18 @@ export function AppShell() {
         </motion.div>
       </section>
 
-      <aside className="hidden h-screen border-l border-[color:var(--line)] bg-[#080a0d] p-4 lg:sticky lg:top-0 lg:grid lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:gap-4">
-        <div>
-          <h1 className="font-display text-3xl font-extrabold text-[color:var(--gold-bright)]">Rift Daily</h1>
+      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.16),transparent_28%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-4 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:grid lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:gap-4">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
+        <div className="relative">
+          <h1 className="font-display text-3xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>
           <p className="mt-1 text-sm text-[color:var(--muted)]">Daily League mechanics puzzle</p>
           <div className="mt-4 grid gap-1.5 text-xs text-[color:var(--muted)]">
             <span className="inline-flex items-center gap-2"><Clock3 size={14} /> Resets in {formatReset(resetCountdown)}</span>
             <span className="inline-flex items-center gap-2"><Zap size={14} /> Patch {daily.dataDragonVersion}</span>
           </div>
         </div>
-        <div className="grid min-h-0 content-start gap-3 overflow-hidden">
-          <TodayPuzzleCard label={view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)} />
+        <div className="relative flex min-h-0 flex-col gap-3 overflow-y-auto pr-1 pb-1 fine-scrollbar">
+          <TodayPuzzleCard label={view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)} dataState={dataStateForView(daily, view, refreshing, dataRecoveryAttempts)} />
           <DailyProgressCard stats={daily.stats} />
           <RankCard rank={daily.stats.rank} />
           <LeaderboardPreview entries={leaderboard} />
@@ -209,26 +237,48 @@ function TabButton({ active, onClick, icon, label }: { active: boolean; onClick:
   );
 }
 
-function HubCard({ title, children }: { title: string; children: ReactNode }) {
+type HubDataState = {
+  label: string;
+  detail: string;
+  tone: "ready" | "syncing" | "warming";
+};
+
+function HubCard({ title, children, accent = false }: { title: string; children: ReactNode; accent?: boolean }) {
   return (
-    <section className="rounded-md border border-white/10 bg-[#111722]/80 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.04)]">
+    <section
+      className={cn(
+        "relative shrink-0 overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(20,28,42,.96),rgba(8,12,20,.94))] p-3 shadow-[0_16px_38px_rgba(0,0,0,.34),inset_0_1px_0_rgba(255,255,255,.06)]",
+        accent ? "border-[#c89b3c]/36" : "border-white/10"
+      )}
+    >
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
+      {accent && <div className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-[#c89b3c]/12 blur-2xl" />}
       <div className="font-display text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">{title}</div>
       {children}
     </section>
   );
 }
 
-function TodayPuzzleCard({ label }: { label: string }) {
+function TodayPuzzleCard({ label, dataState }: { label: string; dataState: HubDataState }) {
+  const toneClass =
+    dataState.tone === "ready"
+      ? "bg-green-400/14 text-green-100 ring-green-300/20"
+      : dataState.tone === "syncing"
+        ? "bg-sky-400/14 text-sky-100 ring-sky-300/20"
+        : "bg-[#c89b3c]/14 text-[#f2d36b] ring-[#c89b3c]/20";
+  const progressWidth = dataState.tone === "ready" ? "w-full bg-green-400" : dataState.tone === "syncing" ? "w-2/3 bg-sky-300" : "w-1/3 bg-[#c89b3c]";
+
   return (
-    <HubCard title="Today's Puzzle">
+    <HubCard title="Today's Puzzle" accent>
       <div className="mt-2 text-lg font-semibold">{label}</div>
       <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--muted)]">
-        <span>Status</span>
-        <span className="rounded-full bg-[#c89b3c]/12 px-2 py-1 text-[#f2d36b]">Unsolved</span>
+        <span>{dataState.label}</span>
+        <span className={cn("rounded-full px-2 py-1 ring-1", toneClass)}>{dataState.tone === "ready" ? "Ready" : dataState.tone === "syncing" ? "Syncing" : "Warming"}</span>
       </div>
-      <div className="mt-2 h-1.5 rounded-full bg-white/8">
-        <div className="h-1.5 w-1/3 rounded-full bg-[#c89b3c]" />
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8">
+        <div className={cn("h-1.5 rounded-full transition-all", progressWidth)} />
       </div>
+      <p className="mt-2 text-[11px] leading-4 text-[color:var(--muted)]">{dataState.detail}</p>
     </HubCard>
   );
 }
@@ -323,6 +373,108 @@ function currentGameLabel(view: View) {
   };
 
   return labels[view];
+}
+
+function hasRecoverableDataGap(daily: DailyChallengeResponse) {
+  const build = daily.extraChallenges.itemBuild;
+
+  return (
+    build.possibleItems.length === 0 ||
+    build.possibleBoots.length === 0 ||
+    !build.winrateStats?.buildGames ||
+    Boolean(daily.extraChallenges.guessElo.unavailableReason) ||
+    (daily.extraChallenges.guessElo.rounds?.length ?? 0) === 0 ||
+    Boolean(daily.extraChallenges.dodgeQueue.unavailableReason) ||
+    (daily.extraChallenges.dodgeQueue.rounds?.length ?? 0) === 0 ||
+    Boolean(daily.extraChallenges.championMatchup.unavailableReason) ||
+    (daily.extraChallenges.championMatchup.rounds?.length ?? 0) === 0
+  );
+}
+
+function hasRecoverableDataGapForView(daily: DailyChallengeResponse, view: View) {
+  const extra = daily.extraChallenges;
+
+  if (view === "item-build") {
+    return extra.itemBuild.possibleItems.length === 0 || extra.itemBuild.possibleBoots.length === 0 || !extra.itemBuild.winrateStats?.buildGames;
+  }
+
+  if (view === "guess-elo") {
+    return Boolean(extra.guessElo.unavailableReason) || (extra.guessElo.rounds?.length ?? 0) === 0;
+  }
+
+  if (view === "dodge-queue") {
+    return Boolean(extra.dodgeQueue.unavailableReason) || (extra.dodgeQueue.rounds?.length ?? 0) === 0;
+  }
+
+  if (view === "champion-matchup") {
+    return Boolean(extra.championMatchup.unavailableReason) || (extra.championMatchup.rounds?.length ?? 0) === 0;
+  }
+
+  return false;
+}
+
+function dataStateForView(daily: DailyChallengeResponse, view: View, refreshing: boolean, recoveryAttempts: number): HubDataState {
+  if (refreshing) {
+    return {
+      label: "Live data",
+      detail: "Syncing Riot catalog, verified matches, and leaderboard state.",
+      tone: "syncing"
+    };
+  }
+
+  const extra = daily.extraChallenges;
+  const states: Partial<Record<View, HubDataState>> = {
+    "item-build": extra.itemBuild.winrateStats?.buildGames
+      ? {
+          label: "Live data",
+          detail: `${extra.itemBuild.winrateStats.buildGames} verified build samples loaded for this puzzle.`,
+          tone: "ready"
+        }
+      : {
+          label: "Live data",
+          detail: "Build board is playable; verified winrate samples are still warming.",
+          tone: "warming"
+        },
+    "guess-elo": extra.guessElo.rounds?.length
+      ? {
+          label: "Verified rounds",
+          detail: `${extra.guessElo.rounds.length} Match-V5 loading screens ready.`,
+          tone: "ready"
+        }
+      : {
+          label: "Verified rounds",
+          detail: `Collecting balanced ranked lobbies${recoveryAttempts ? `, retry ${recoveryAttempts}/4` : ""}.`,
+          tone: "warming"
+        },
+    "dodge-queue": extra.dodgeQueue.rounds?.length
+      ? {
+          label: "Verified lobbies",
+          detail: `${extra.dodgeQueue.rounds.length} Match-V5 champ-select calls ready.`,
+          tone: "ready"
+        }
+      : {
+          label: "Verified lobbies",
+          detail: `Collecting ranked lobbies with exact lane/spell data${recoveryAttempts ? `, retry ${recoveryAttempts}/4` : ""}.`,
+          tone: "warming"
+        },
+    "champion-matchup": extra.championMatchup.rounds?.length
+      ? {
+          label: "Matchup cache",
+          detail: `${extra.championMatchup.rounds.length} exact 20+ game champion-lane pairs ready.`,
+          tone: "ready"
+        }
+      : {
+          label: "Matchup cache",
+          detail: "Strict 20+ game champion-lane pairs are warming from current-patch Match-V5 data.",
+          tone: "warming"
+        }
+  };
+
+  return states[view] ?? {
+    label: "Status",
+    detail: "Ready for today's run.",
+    tone: "ready"
+  };
 }
 
 function formatReset(value: string) {

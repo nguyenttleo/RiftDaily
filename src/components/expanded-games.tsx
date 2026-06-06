@@ -2103,13 +2103,20 @@ function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title
 
 function VerifiedDataUnavailable({ reason }: { reason: string }) {
   return (
-    <div className="grid min-h-80 flex-1 place-items-center rounded-sm border border-[#3c3421] bg-[#0b111b] p-6 text-center">
+    <div className="grid min-h-80 flex-1 place-items-center rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_50%_0%,rgba(200,155,60,.12),transparent_34%),linear-gradient(180deg,#0f1724,#071018)] p-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_22px_70px_rgba(0,0,0,.32)]">
       <div className="max-w-lg">
-        <div className="font-display text-2xl font-bold text-[#c89b3c]">Verified Riot match data needed</div>
+        <div className="font-display text-2xl font-bold text-[#c89b3c]">Verified Riot data is warming</div>
         <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">{reason}</p>
         <p className="mt-3 text-xs leading-5 text-[color:var(--muted)]">
           These modes only display lane assignments from Match-V5 <span className="text-white">teamPosition</span> and summoner spells from Match-V5 spell IDs mapped through Data Dragon.
         </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-5 min-h-10 rounded-md border border-[#c89b3c]/45 bg-[#c89b3c] px-4 font-display text-sm font-bold text-[#071018] shadow-[0_12px_30px_rgba(200,155,60,.22)] transition hover:brightness-110"
+        >
+          Refresh live data
+        </button>
       </div>
     </div>
   );

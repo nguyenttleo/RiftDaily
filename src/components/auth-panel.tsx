@@ -81,7 +81,11 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="grid w-full gap-2 rounded-md border border-[color:var(--line)] bg-[#0b0e14]/92 p-3">
+    <form
+      onSubmit={submit}
+      className="relative grid w-full gap-2 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[linear-gradient(180deg,rgba(17,24,34,.96),rgba(7,10,15,.96))] p-3 shadow-[0_18px_46px_rgba(0,0,0,.36),inset_0_1px_0_rgba(255,255,255,.06)]"
+    >
+      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#c89b3c]/10 blur-2xl" />
       <div>
         <div className="font-display text-sm font-semibold text-[color:var(--gold-bright)]">Save your progress</div>
         <p className="mt-1 text-xs text-[color:var(--muted)]">Keep streaks, stats, and leaderboard scores.</p>

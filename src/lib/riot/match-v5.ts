@@ -20,12 +20,17 @@ const MIN_MATCHUP_SAMPLE_GAMES = 20;
 const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_REQUEST = 100;
 const MATCH_IDS_PER_PLAY_SOURCE = 20;
+const MATCH_IDS_PER_WARM_SOURCE_PASS = 25;
 const LEAGUE_ENTRY_PAGES_PER_BUCKET = 3;
 const MAX_MATCH_HISTORY_PAGES_PER_SOURCE = 5;
 const MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE = 20000;
 const MAX_ANALYSIS_MATCH_FETCH_BUDGET = 40000;
 const MAX_SOURCES_PER_RANK_BUCKET = 48;
 const RIOT_REQUEST_TIMEOUT_MS = 4500;
+const RIOT_MIN_REQUEST_INTERVAL_MS = 140;
+const RIOT_MAX_RETRY_AFTER_MS = 5000;
+
+let nextRiotRequestAt = 0;
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
@@ -230,7 +235,7 @@ export async function getVerifiedRankedMatchChallenges({
   const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(RANK_BUCKETS.length, Math.min(100, env.riotMatchSampleSize)) : 100;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
-  const initialRoundsPerRank = Math.min(roundsPerRank, 4);
+  const initialRoundsPerRank = Math.min(roundsPerRank, MIN_PLAYABLE_ROUNDS_PER_RANK);
   const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
   const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount)
     ? Math.max(sampleSize, Math.min(MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE, env.riotMatchupSampleMatchCount))
@@ -580,50 +585,53 @@ export async function warmChampionMatchupSampleCache({
 
   try {
     const sources = await getRankedSources(platform, `${date}:matchup-warm:${batchKey}`, boundedSourceCount);
+    const orderedSources = seededOrder(sources, `${date}:matchup-warm:sources:${batchKey}`);
 
-    for (const source of seededOrder(sources, `${date}:matchup-warm:sources:${batchKey}`)) {
-      if (Date.now() - startedAt > timeBudgetMs || currentPatchMatches >= requestedCurrentPatchMatches) {
-        break;
-      }
-
-      sourcesChecked += 1;
-      let matchIds: string[] = [];
-
-      try {
-        matchIds = await getRankedMatchIdsForSource(regional, source.puuid, boundedHistoryPages);
-      } catch {
-        continue;
-      }
-
-      for (const matchId of seededOrder(matchIds, `${date}:matchup-warm:matches:${batchKey}:${source.puuid}`)) {
+    for (let page = 0; page < boundedHistoryPages; page += 1) {
+      for (const source of orderedSources) {
         if (Date.now() - startedAt > timeBudgetMs || currentPatchMatches >= requestedCurrentPatchMatches) {
           break;
         }
 
-        if (seenMatches.has(matchId)) {
+        sourcesChecked += 1;
+        let matchIds: string[] = [];
+
+        try {
+          matchIds = await getRankedMatchIdsForSource(regional, source.puuid, 1, MATCH_IDS_PER_WARM_SOURCE_PASS, page);
+        } catch {
           continue;
         }
 
-        seenMatches.add(matchId);
-        matchIdsChecked += 1;
+        for (const matchId of seededOrder(matchIds, `${date}:matchup-warm:matches:${batchKey}:${source.puuid}:${page}`)) {
+          if (Date.now() - startedAt > timeBudgetMs || currentPatchMatches >= requestedCurrentPatchMatches) {
+            break;
+          }
 
-        try {
-          const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
-          riotMatchesFetched += 1;
-
-          if (!isRankedClassicSummonersRiftMatch(match)) {
+          if (seenMatches.has(matchId)) {
             continue;
           }
 
-          const records = addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples, currentPatchPrefix);
+          seenMatches.add(matchId);
+          matchIdsChecked += 1;
 
-          if (records.length > 0) {
-            currentPatchMatches += 1;
-            matchupSampleRecords.push(...records);
-            await flush();
+          try {
+            const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+            riotMatchesFetched += 1;
+
+            if (!isRankedClassicSummonersRiftMatch(match)) {
+              continue;
+            }
+
+            const records = addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples, currentPatchPrefix);
+
+            if (records.length > 0) {
+              currentPatchMatches += 1;
+              matchupSampleRecords.push(...records);
+              await flush();
+            }
+          } catch {
+            continue;
           }
-        } catch {
-          continue;
         }
       }
     }
@@ -1283,14 +1291,15 @@ function formatRankDistribution(distribution: Record<RankBucket, number>) {
   return RANK_BUCKETS.map((bucket) => `${bucket}: ${distribution[bucket]}`).join(", ");
 }
 
-async function getRankedMatchIdsForSource(regional: string, puuid: string, pages: number, count = MATCH_IDS_PER_REQUEST) {
+async function getRankedMatchIdsForSource(regional: string, puuid: string, pages: number, count = MATCH_IDS_PER_REQUEST, startPage = 0) {
   const ids: string[] = [];
   const boundedCount = Math.max(1, Math.min(MATCH_IDS_PER_REQUEST, count));
 
   for (let page = 0; page < pages; page += 1) {
+    const pageStart = (startPage + page) * boundedCount;
     const pageIds = await riotFetch<string[]>(
       regional,
-      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=${page * boundedCount}&count=${boundedCount}`
+      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=${pageStart}&count=${boundedCount}`
     );
 
     ids.push(...pageIds);
@@ -1695,10 +1704,14 @@ function createChampionLookup(publicChampions: PublicChampion[]) {
 
 async function riotFetch<T>(route: string, path: string): Promise<T> {
   const host = route.includes(".") ? route : `${route}.api.riotgames.com`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RIOT_REQUEST_TIMEOUT_MS);
 
-  try {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await waitForRiotRequestSlot();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), RIOT_REQUEST_TIMEOUT_MS);
+
+    try {
     const response = await fetch(`https://${host}${path}`, {
       headers: {
         "X-Riot-Token": env.riotApiKey
@@ -1706,6 +1719,16 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
       next: { revalidate: 60 * 60 * 2 },
       signal: controller.signal
     });
+
+      if (response.status === 429) {
+        const retryAfterMs = boundedRetryAfterMs(response, attempt);
+        nextRiotRequestAt = Math.max(nextRiotRequestAt, Date.now() + retryAfterMs);
+
+        if (attempt < 2 && retryAfterMs <= RIOT_MAX_RETRY_AFTER_MS) {
+          await sleep(retryAfterMs);
+          continue;
+        }
+      }
 
     if (!response.ok) {
       throw new Error(`Riot API ${path} failed with ${response.status}`);
@@ -1715,6 +1738,30 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
   } finally {
     clearTimeout(timeout);
   }
+  }
+
+  throw new Error(`Riot API ${path} failed after retries`);
+}
+
+async function waitForRiotRequestSlot() {
+  const waitMs = Math.max(0, nextRiotRequestAt - Date.now());
+
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+
+  nextRiotRequestAt = Math.max(nextRiotRequestAt, Date.now() + RIOT_MIN_REQUEST_INTERVAL_MS);
+}
+
+function boundedRetryAfterMs(response: Response, attempt: number) {
+  const retryAfterSeconds = Number(response.headers.get("retry-after"));
+  const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 700 * (attempt + 1) ** 2;
+
+  return Math.min(Math.max(retryAfterMs, RIOT_MIN_REQUEST_INTERVAL_MS), RIOT_MAX_RETRY_AFTER_MS);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function normalizePlatform(value: string) {
