@@ -3,9 +3,7 @@ export type ChallengeType =
   | "champion"
   | "item-build"
   | "item-recipe"
-  | "esports-draft"
   | "guess-elo"
-  | "connection"
   | "dodge-queue"
   | "skillshot-dodge";
 export type AbilitySlot = "P" | "Q" | "W" | "E" | "R";
@@ -66,6 +64,7 @@ export interface OptionItem {
   label: string;
   sublabel?: string;
   imageUrl?: string;
+  spells?: string[];
 }
 
 export interface PublicAbilityChallenge {
@@ -125,26 +124,6 @@ export interface ItemRecipeChallenge {
   allComponents: GameItem[];
 }
 
-export interface EsportsDraftChallenge {
-  id: string;
-  type: "esports-draft";
-  date: string;
-  source: string;
-  event: string;
-  patch: string;
-  blueTeam: string;
-  redTeam: string;
-  bluePicks: string[];
-  redPicks: string[];
-  blueBans: string[];
-  redBans: string[];
-  bluePickLanes?: string[];
-  redPickLanes?: string[];
-  answerLane?: string;
-  answerChampionName: string;
-  answerSide: "blue" | "red";
-}
-
 export interface GuessEloChallenge {
   id: string;
   type: "guess-elo";
@@ -165,27 +144,14 @@ export interface GuessEloChallenge {
   dataSource: string;
 }
 
-export interface ChampionConnectionCategory {
-  id: string;
-  label: string;
-  championIds: string[];
-  difficulty: "yellow" | "green" | "blue" | "purple";
-}
-
-export interface ChampionConnectionChallenge {
-  id: string;
-  type: "connection";
-  date: string;
-  champions: PublicChampion[];
-  categories: ChampionConnectionCategory[];
-}
-
 export interface DodgeQueueChallenge {
   id: string;
   type: "dodge-queue";
   date: string;
   allyTeam: PublicChampion[];
   enemyTeam: PublicChampion[];
+  allySpells: string[][];
+  enemySpells: string[][];
   allyBans: PublicChampion[];
   enemyBans: PublicChampion[];
   answer: "queue" | "dodge";
@@ -217,9 +183,7 @@ export interface SkillshotDodgeChallenge {
 export interface ExpandedDailyChallenges {
   itemBuild: ItemBuildChallenge;
   itemRecipe: ItemRecipeChallenge;
-  esportsDraft: EsportsDraftChallenge;
   guessElo: GuessEloChallenge;
-  connection: ChampionConnectionChallenge;
   dodgeQueue: DodgeQueueChallenge;
   skillshotDodge: SkillshotDodgeChallenge;
 }

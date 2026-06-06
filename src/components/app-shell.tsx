@@ -5,8 +5,7 @@ import {
   CircleSlash,
   Clock3,
   Crosshair,
-  Eye,
-  Link2,
+  Home,
   Loader2,
   PackageSearch,
   RefreshCcw,
@@ -15,14 +14,13 @@ import {
   UsersRound,
   Zap
 } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import {
-  ChampionConnectionGame,
   DodgeQueueGame,
-  EsportsDraftGame,
   GuessEloGame,
   ItemBuildGame,
   ItemRecipeGame
@@ -36,9 +34,7 @@ import type { DailyChallengeResponse, LeaderboardEntry } from "@/types";
 type View =
   | "item-build"
   | "item-recipe"
-  | "esports-draft"
   | "guess-elo"
-  | "connection"
   | "dodge-queue"
   | "trainer"
   | "leaderboard";
@@ -113,14 +109,19 @@ export function AppShell() {
   }
 
   return (
-    <main className="grid h-screen overflow-hidden bg-[#050607] lg:grid-cols-[minmax(0,1fr)_20rem]">
-      <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 p-3 sm:p-4">
+    <main className="grid min-h-screen bg-[#050607] lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <section className="grid min-h-screen grid-rows-[auto_minmax(0,1fr)] gap-3 p-3 sm:p-4">
         <nav className="flex min-h-12 flex-wrap items-center gap-2 rounded-md border border-[color:var(--line)] bg-[#080a0d]/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,.04)]">
+          <Link
+            href="/"
+            className="inline-flex min-h-9 items-center gap-2 rounded-sm border border-[#2b2f38] bg-[#111722] px-3 text-sm font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
+          >
+            <Home size={16} />
+            Home
+          </Link>
           <TabButton active={view === "item-build"} onClick={() => setView("item-build")} icon={<PackageSearch size={16} />} label="Build" />
           <TabButton active={view === "item-recipe"} onClick={() => setView("item-recipe")} icon={<Split size={16} />} label="Recipe" />
-          <TabButton active={view === "esports-draft"} onClick={() => setView("esports-draft")} icon={<Eye size={16} />} label="Draft" />
           <TabButton active={view === "guess-elo"} onClick={() => setView("guess-elo")} icon={<UsersRound size={16} />} label="Elo" />
-          <TabButton active={view === "connection"} onClick={() => setView("connection")} icon={<Link2 size={16} />} label="Connections" />
           <TabButton active={view === "dodge-queue"} onClick={() => setView("dodge-queue")} icon={<CircleSlash size={16} />} label="Lobby" />
           <TabButton active={view === "trainer"} onClick={() => setView("trainer")} icon={<Crosshair size={16} />} label="Trainer" />
           <TabButton active={view === "leaderboard"} onClick={() => setView("leaderboard")} icon={<Trophy size={16} />} label="Leaderboard" />
@@ -144,32 +145,20 @@ export function AppShell() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18 }}
-          className="min-h-0 overflow-hidden"
+          className={cn("min-h-0", view === "item-build" || view === "item-recipe" ? "overflow-visible" : "overflow-hidden")}
         >
 
         {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} />}
-        {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} />}
-        {view === "esports-draft" && (
-          <EsportsDraftGame
-            challenge={daily.extraChallenges.esportsDraft}
-            championOptions={daily.champions.map((champion) => ({
-              id: champion.id,
-              label: champion.name,
-              sublabel: champion.roles.join(" / "),
-              imageUrl: champion.squareUrl
-            }))}
-          />
-        )}
-        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} champions={daily.champions} />}
-        {view === "connection" && <ChampionConnectionGame challenge={daily.extraChallenges.connection} />}
-        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} />}
+        {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={daily.stats.username} />}
+        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} champions={daily.champions} username={daily.stats.username} />}
+        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} champions={daily.champions} username={daily.stats.username} />}
         {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} />}
 
         {view === "leaderboard" && <LeaderboardPanel entries={leaderboard} />}
         </motion.div>
       </section>
 
-      <aside className="hidden h-screen border-l border-[color:var(--line)] bg-[#080a0d] p-4 lg:grid lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:gap-4">
+      <aside className="hidden h-screen border-l border-[color:var(--line)] bg-[#080a0d] p-4 lg:sticky lg:top-0 lg:grid lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:gap-4">
         <div>
           <h1 className="font-display text-3xl font-extrabold text-[color:var(--gold-bright)]">Rift Daily</h1>
           <p className="mt-1 text-sm text-[color:var(--muted)]">Daily League mechanics puzzle</p>
@@ -329,9 +318,7 @@ function currentGameLabel(view: View) {
   const labels: Record<View, string> = {
     "item-build": "Item Build Puzzle",
     "item-recipe": "Item Recipe Puzzle",
-    "esports-draft": "Esports Draft Puzzle",
     "guess-elo": "Guess the Elo",
-    connection: "Champion Connections",
     "dodge-queue": "Dodge or Queue",
     trainer: "Rift Trainer",
     leaderboard: "Leaderboard"

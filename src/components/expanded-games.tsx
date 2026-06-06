@@ -1,17 +1,13 @@
 "use client";
 
-import { CheckCircle2, CircleSlash, Eye, Link2, PackageSearch, Split, UsersRound, X, XCircle } from "lucide-react";
+import { CheckCircle2, CircleSlash, PackageSearch, Split, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { SearchableSelect } from "@/components/searchable-select";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type {
-  ChampionConnectionCategory,
-  ChampionConnectionChallenge,
   DodgeQueueChallenge,
-  EsportsDraftChallenge,
   GameItem,
   GuessEloChallenge,
   ItemBuildChallenge,
@@ -20,22 +16,22 @@ import type {
   PublicChampion
 } from "@/types";
 
+const BUILD_MAX_GUESSES = 6;
+const INFINITE_ROUNDS = 48;
+
 export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [guesses, setGuesses] = useState<Array<{ items: string[]; boots: string }>>([]);
+  const [modalOpen, setModalOpen] = useState(false);
   const answerSet = new Set(challenge.answerItemIds);
-  const totalCorrect = selectedItems.filter((id) => answerSet.has(id)).length + (selectedBoots === challenge.answerBootsId ? 1 : 0);
+  const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, challenge.answerBootsId));
+  const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
   const ready = selectedItems.length === 5 && Boolean(selectedBoots);
   const baselineDelta = challenge.winrateModel.projected - challenge.winrateModel.baseline;
-  const correct =
-    submitted &&
-    ready &&
-    selectedItems.every((id) => answerSet.has(id)) &&
-    selectedBoots === challenge.answerBootsId;
 
   function toggleItem(id: string) {
-    if (submitted) {
+    if (finished) {
       return;
     }
 
@@ -53,222 +49,438 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
   }
 
   function chooseBoots(id: string) {
-    if (!submitted) {
-      setSelectedBoots((current) => (current === id ? "" : id));
+    if (!finished) {
+      setSelectedBoots(id);
     }
   }
 
   function reset() {
     setSelectedItems([]);
     setSelectedBoots("");
-    setSubmitted(false);
+    setGuesses([]);
+    setModalOpen(false);
   }
 
   function removeItem(id: string) {
-    if (!submitted) {
+    if (!finished) {
       setSelectedItems((current) => current.filter((item) => item !== id));
     }
   }
 
   function removeBoots() {
-    if (!submitted) {
+    if (!finished) {
       setSelectedBoots("");
     }
   }
 
-  return (
-    <PuzzleFrame icon={<PackageSearch size={18} />} title="Item Build Puzzle" kicker="Build Wordle: 5 items + boots">
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(18rem,34%)_minmax(0,1fr)]">
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
-          <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
-            <ChampionLine label="Enemy Team" champions={challenge.enemyTeam} compact />
-          </div>
-          <div className="relative min-h-0 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018]">
-            <div
-              className="absolute inset-0 bg-cover opacity-80"
-              style={{
-                backgroundImage: `url(${challenge.champion.splashUrl})`,
-                backgroundPosition: championSplashPosition(challenge.champion.name)
-              }}
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
-          </div>
-          <div className="grid gap-3 rounded-sm border border-white/10 bg-[#0b111b] p-4">
-            <div>
-              <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
-              <div className="font-display text-4xl font-bold">{challenge.champion.name}</div>
-              <div className="text-sm text-[color:var(--muted)]">{challenge.champion.roles.join(" / ")}</div>
-            </div>
-            <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-              <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Model</div>
-              <div className="mt-1 flex items-end gap-2">
-                <span className="font-display text-3xl font-bold text-[#c89b3c]">{challenge.winrateModel.projected.toFixed(1)}%</span>
-                <span className={cn("pb-1 text-sm font-bold", baselineDelta >= 0 ? "text-green-300" : "text-red-300")}>
-                  {baselineDelta >= 0 ? "+" : ""}{baselineDelta.toFixed(1)}% vs baseline
-                </span>
-              </div>
-              <div className="text-xs text-[color:var(--muted)]">Baseline {challenge.winrateModel.baseline}%</div>
-            </div>
-          </div>
-        </div>
+  function submitBuild() {
+    if (!ready || finished) {
+      return;
+    }
 
-        <div className="grid min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3">
+    const guess = { items: selectedItems, boots: selectedBoots };
+    const nextGuesses = [...guesses, guess];
+    const nextSolved = isBuildGuessSolved(guess, answerSet, challenge.answerBootsId);
+
+    setGuesses(nextGuesses);
+    setSelectedItems([]);
+    setSelectedBoots("");
+
+    if (nextSolved || nextGuesses.length >= BUILD_MAX_GUESSES) {
+      setModalOpen(true);
+    }
+  }
+
+  return (
+    <section className="min-h-[calc(100vh-6.5rem)] rounded-sm border border-[#3c3421] bg-[#071018] p-4 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+        <aside className="xl:sticky xl:top-4 xl:self-start">
+          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-4 shadow-[0_24px_70px_rgba(0,0,0,.28)]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[#c89b3c]">
+                <PackageSearch size={18} />
+              </span>
+              <h2 className="text-xl font-semibold">Item Build Puzzle</h2>
+            </div>
+            <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-3">
+              <ChampionLine label="Enemy Team" champions={challenge.enemyTeam} compact />
+            </div>
+            <div className="relative aspect-[16/11] min-h-64 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018]">
+              <div
+                className="absolute inset-0 bg-cover opacity-80"
+                style={{
+                  backgroundImage: `url(${challenge.champion.splashUrl})`,
+                  backgroundPosition: championSplashPosition(challenge.champion.name)
+                }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
+            </div>
+            <div className="grid gap-3">
+              <div>
+                <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
+                <div className="font-display text-4xl font-bold">{challenge.champion.name}</div>
+                <div className="text-sm text-[color:var(--muted)]">{challenge.champion.roles.join(" / ")}</div>
+              </div>
+              <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
+                <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Model</div>
+                <div className="mt-1 flex items-end gap-2">
+                  <span className="font-display text-3xl font-bold text-[#c89b3c]">{challenge.winrateModel.projected.toFixed(1)}%</span>
+                  <span className={cn("pb-1 text-sm font-bold", baselineDelta >= 0 ? "text-green-300" : "text-red-300")}>
+                    {baselineDelta >= 0 ? "+" : ""}{baselineDelta.toFixed(1)}% vs baseline
+                  </span>
+                </div>
+                <div className="text-xs text-[color:var(--muted)]">Baseline {challenge.winrateModel.baseline}%</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div className="grid gap-4">
           <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
             <h3 className="font-display text-2xl font-extrabold tracking-tight">
               Build {challenge.champion.name}&apos;s best 5-item setup into this enemy team.
             </h3>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">Choose five completed items and one pair of boots. Order does not matter.</p>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">Six tries. Five completed items and one pair of boots. Order does not matter.</p>
           </div>
-          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)]">
+          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)]">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm uppercase text-[#c89b3c]">Your Build Row</div>
-                <div className="text-xs text-[color:var(--muted)]">Click selected slots to remove mistakes before locking.</div>
+                <div className="text-sm uppercase text-[#c89b3c]">Build Board</div>
+                <div className="text-xs text-[color:var(--muted)]">Green slots are in the target build. Grey slots are not.</div>
               </div>
-              <div className="text-xs text-[color:var(--muted)]">{selectedItems.length}/5 items - {selectedBoots ? "boots locked" : "choose boots"}</div>
+              <div className="text-xs text-[color:var(--muted)]">Guess {Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}/{BUILD_MAX_GUESSES}</div>
             </div>
-            <div className="grid grid-cols-6 gap-2">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <BuildSlot
+            {Array.from({ length: BUILD_MAX_GUESSES }).map((_, index) => {
+              const guess = guesses[index];
+              const active = !guess && index === guesses.length && !finished;
+
+              return (
+                <BuildWordleRow
                   key={index}
-                  item={challenge.possibleItems.find((item) => item.id === selectedItems[index])}
-                  submitted={submitted}
-                  correct={submitted && answerSet.has(selectedItems[index])}
-                  label={selectedItems[index] ? "Item" : "+ Add Item"}
-                  onRemove={selectedItems[index] ? () => removeItem(selectedItems[index]) : undefined}
+                  guess={guess}
+                  active={active}
+                  selectedItems={selectedItems}
+                  selectedBoots={selectedBoots}
+                  possibleItems={challenge.possibleItems}
+                  possibleBoots={challenge.possibleBoots}
+                  answerSet={answerSet}
+                  answerBootsId={challenge.answerBootsId}
+                  onRemoveItem={removeItem}
+                  onRemoveBoots={removeBoots}
                 />
-              ))}
-              <BuildSlot
-                item={challenge.possibleBoots.find((item) => item.id === selectedBoots)}
-                submitted={submitted}
-                correct={submitted && selectedBoots === challenge.answerBootsId}
-                label={selectedBoots ? "Boots" : "+ Boots"}
-                onRemove={selectedBoots ? removeBoots : undefined}
-              />
-            </div>
+              );
+            })}
           </div>
 
-          <div className="grid min-h-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1fr)_13rem]">
-            <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] rounded-sm border border-white/10 bg-[#0b111b] p-3">
-              <div className="mb-2 flex items-center justify-between">
+          <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_14rem]">
+            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
                 <span className="text-xs text-[color:var(--muted)]">{challenge.possibleItems.length} role-matched options</span>
               </div>
-              <div className="grid min-h-0 content-start gap-2 overflow-y-auto px-1 pb-3 pt-1.5 fine-scrollbar sm:grid-cols-5 2xl:grid-cols-6">
+              <div className="grid content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-4 2xl:grid-cols-6">
                 {challenge.possibleItems.map((item) => (
                   <ItemChoiceCard
                     key={item.id}
                     item={item}
                     selected={selectedItems.includes(item.id)}
-                    disabled={!selectedItems.includes(item.id) && selectedItems.length >= 5}
+                    disabled={finished || (!selectedItems.includes(item.id) && selectedItems.length >= 5)}
                     onClick={() => toggleItem(item.id)}
                   />
                 ))}
               </div>
             </div>
-            <div className="flex min-h-0 flex-col rounded-sm border border-white/10 bg-[#0b111b] p-3">
+            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
               <div className="mb-2 text-sm uppercase text-[#c89b3c]">Boots</div>
-              <div className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto px-1 pb-4 pt-1.5 fine-scrollbar">
+              <div className="grid content-start gap-2 px-1 pb-4 pt-2">
                 {challenge.possibleBoots.map((item) => (
-                  <BootChoiceCard key={item.id} item={item} selected={selectedBoots === item.id} onClick={() => chooseBoots(item.id)} />
+                  <BootChoiceCard key={item.id} item={item} selected={selectedBoots === item.id} disabled={finished} onClick={() => chooseBoots(item.id)} />
                 ))}
               </div>
             </div>
           </div>
 
-          <div className="grid gap-2 rounded-sm border border-white/10 bg-[#0b111b] p-3 lg:grid-cols-[1fr_auto_auto_auto] lg:items-center">
+          <div className="grid gap-2 rounded-sm border border-white/10 bg-[#0b111b] p-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
             <div className="text-sm text-[color:var(--muted)]">
-              {submitted ? `${totalCorrect}/6 correct.` : `Selected: ${selectedItems.length}/5 items - ${selectedBoots ? "boots ready" : "choose boots"}`}
+              {finished ? (solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES}.` : "No guesses left.") : `Selected: ${selectedItems.length}/5 items - ${selectedBoots ? "boots ready" : "choose boots"}`}
             </div>
             <Button type="button" variant="secondary" onClick={reset}>
               Reset
             </Button>
             <Button
               type="button"
-              onClick={() => setSubmitted(true)}
-              disabled={!ready || submitted}
-              className={cn(ready && !submitted && "shadow-[0_0_20px_rgba(245,197,66,.18)]")}
+              onClick={submitBuild}
+              disabled={!ready || finished}
+              className={cn(ready && !finished && "shadow-[0_0_20px_rgba(245,197,66,.18)]")}
             >
-              Submit Build
+              Lock Guess
             </Button>
-            <ResultPill submitted={submitted} correct={correct} answer={`${challenge.answerItemIds.length + 1} correct slots`} />
           </div>
-          {submitted && (
-            <BuildResultPanel challenge={challenge} totalCorrect={totalCorrect} />
-          )}
         </div>
       </div>
-    </PuzzleFrame>
+      {modalOpen && (
+        <BuildWordleModal
+          challenge={challenge}
+          guesses={guesses}
+          solved={solved}
+          onClose={() => setModalOpen(false)}
+          onReset={reset}
+        />
+      )}
+    </section>
   );
 }
 
-export function ItemRecipeGame({ challenge }: { challenge: ItemRecipeChallenge }) {
-  const [answer, setAnswer] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const correct = submitted && answer === challenge.missingComponentId;
-  const selected = challenge.allComponents.find((item) => item.id === answer);
+function BuildWordleRow({
+  guess,
+  active,
+  selectedItems,
+  selectedBoots,
+  possibleItems,
+  possibleBoots,
+  answerSet,
+  answerBootsId,
+  onRemoveItem,
+  onRemoveBoots
+}: {
+  guess?: { items: string[]; boots: string };
+  active: boolean;
+  selectedItems: string[];
+  selectedBoots: string;
+  possibleItems: GameItem[];
+  possibleBoots: GameItem[];
+  answerSet: Set<string>;
+  answerBootsId: string;
+  onRemoveItem: (id: string) => void;
+  onRemoveBoots: () => void;
+}) {
+  const itemLookup = new Map([...possibleItems, ...possibleBoots].map((item) => [item.id, item]));
 
   return (
-    <PuzzleFrame icon={<Split size={18} />} title="Item Recipe Puzzle" kicker="Fill the missing component">
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[24rem_minmax(0,1fr)]">
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
-          <div className="grid justify-items-center gap-2">
-            <div className="text-sm uppercase text-[#c89b3c]">Result Item</div>
-            <ItemShopNode item={challenge.resultItem} size="large" />
-          </div>
-          <div className="grid min-h-0 content-center gap-4">
-            <div className="mx-auto h-10 w-px bg-[#3c3421]" />
-            <div className="grid grid-cols-3 items-start gap-3">
-              {challenge.knownComponents.map((item) => (
-                <ItemShopNode key={item.id} item={item} />
-              ))}
-              <MissingRecipeNode item={selected} submitted={submitted} correct={correct} />
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <div className="text-sm text-[color:var(--muted)]">
-              {submitted ? (correct ? "Correct component." : `Correct answer: ${getItemName(challenge.allComponents, challenge.missingComponentId)}`) : "Choose the missing component from the shop grid."}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" onClick={() => { setAnswer(""); setSubmitted(false); }}>
-                Clear
-              </Button>
-              <Button type="button" onClick={() => setSubmitted(true)} disabled={!answer || submitted}>
-                Lock Component
-              </Button>
-              <ResultPill submitted={submitted} correct={correct} answer={getItemName(challenge.allComponents, challenge.missingComponentId)} />
-            </div>
-          </div>
-        </div>
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4">
+    <div className="grid grid-cols-6 gap-2">
+      {Array.from({ length: 5 }).map((_, index) => {
+        const itemId = guess?.items[index] ?? (active ? selectedItems[index] : "");
+        const item = itemId ? itemLookup.get(itemId) : undefined;
+
+        return (
+          <BuildSlot
+            key={index}
+            item={item}
+            submitted={Boolean(guess)}
+            correct={Boolean(guess && itemId && answerSet.has(itemId))}
+            label={active ? "+ Item" : `Item ${index + 1}`}
+            onRemove={!guess && active && itemId ? () => onRemoveItem(itemId) : undefined}
+          />
+        );
+      })}
+      {(() => {
+        const bootsId = guess?.boots ?? (active ? selectedBoots : "");
+        const boots = bootsId ? itemLookup.get(bootsId) : undefined;
+
+        return (
+          <BuildSlot
+            item={boots}
+            submitted={Boolean(guess)}
+            correct={Boolean(guess && bootsId === answerBootsId)}
+            label={active ? "+ Boots" : "Boots"}
+            onRemove={!guess && active && bootsId ? onRemoveBoots : undefined}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+function BuildWordleModal({
+  challenge,
+  guesses,
+  solved,
+  onClose,
+  onReset
+}: {
+  challenge: ItemBuildChallenge;
+  guesses: Array<{ items: string[]; boots: string }>;
+  solved: boolean;
+  onClose: () => void;
+  onReset: () => void;
+}) {
+  const answerSet = new Set(challenge.answerItemIds);
+  const targetItems = challenge.answerItemIds
+    .map((id) => challenge.possibleItems.find((item) => item.id === id))
+    .filter(Boolean) as GameItem[];
+  const targetBoots = challenge.possibleBoots.find((item) => item.id === challenge.answerBootsId);
+  const targetBuild = targetBoots ? [...targetItems, targetBoots] : targetItems;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-md border border-[#c89b3c]/60 bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)]">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm uppercase text-[#c89b3c]">Component Shop</div>
-            <div className="text-xs text-[color:var(--muted)]">All purchasable League components that build into larger items.</div>
+            <div className="font-display text-3xl font-extrabold text-[#f5c542]">{solved ? "Build diff." : "Shopkeeper wins."}</div>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">
+              {solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES} guesses.` : `The six-item answer dodged all ${BUILD_MAX_GUESSES} guesses.`}
+            </p>
           </div>
-          <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1 fine-scrollbar sm:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10">
-            {challenge.allComponents.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setAnswer(item.id);
-                  setSubmitted(false);
-                }}
-                className={cn(
-                  "grid aspect-square place-items-center rounded-sm border bg-[#111722] p-1 transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)]",
-                  answer === item.id ? "border-[#c89b3c] ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"
-                )}
-                title={item.name}
-              >
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-sm border border-white/10 bg-white/5 text-[color:var(--muted)] transition hover:border-[#c89b3c] hover:text-white"
+            aria-label="Close result"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="mt-5 grid gap-1.5">
+          {guesses.map((guess, rowIndex) => (
+            <div key={`${guess.boots}:${rowIndex}`} className="grid grid-cols-6 gap-1.5">
+              {[...guess.items.map((id) => answerSet.has(id)), guess.boots === challenge.answerBootsId].map((correct, index) => (
+                <div key={index} className={cn("h-8 rounded-sm border", correct ? "border-green-300/60 bg-green-500/70" : "border-white/10 bg-[#2b313d]")} />
+              ))}
+            </div>
+          ))}
+        </div>
+        <div className="mt-5">
+          <div className="text-xs uppercase text-[#c89b3c]">Target Build</div>
+          <div className="mt-2 grid grid-cols-6 gap-2">
+            {targetBuild.map((item) => (
+              <div key={item.id} className="grid min-h-16 place-items-center rounded-sm border border-green-400/45 bg-green-500/12 p-1 text-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.imageUrl} alt="" className="h-9 w-9 object-contain" />
-                <span className="line-clamp-2 text-center text-[9px] leading-tight">{item.name}</span>
-              </button>
+                <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
+                <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
+              </div>
             ))}
           </div>
         </div>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+          <Button type="button" onClick={onReset}>
+            Replay
+          </Button>
+        </div>
       </div>
-    </PuzzleFrame>
+    </div>
+  );
+}
+
+function isBuildGuessSolved(guess: { items: string[]; boots: string }, answerSet: Set<string>, answerBootsId: string) {
+  return guess.items.length === 5 && guess.items.every((id) => answerSet.has(id)) && guess.boots === answerBootsId;
+}
+
+export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = "Guest" }: { challenge: ItemRecipeChallenge; items?: GameItem[]; username?: string }) {
+  const rounds = useMemo(() => createRecipeRounds(challenge, itemCatalog), [challenge, itemCatalog]);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [streak, recordStreak] = usePersonalModeStreak("item-recipe", username);
+  const round = rounds[roundIndex % rounds.length];
+  const correct = submitted && answer === round.missingComponentId;
+  const selected = round.allComponents.find((item) => item.id === answer);
+
+  function submitRecipe() {
+    if (!answer || submitted) {
+      return;
+    }
+
+    const solved = answer === round.missingComponentId;
+    setSubmitted(true);
+    recordStreak(solved);
+  }
+
+  function nextRecipe() {
+    setRoundIndex((current) => current + 1);
+    setAnswer("");
+    setSubmitted(false);
+  }
+
+  return (
+    <section className="min-h-[calc(100vh-6.5rem)] rounded-sm border border-[#3c3421] bg-[#071018] p-4 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+        <aside className="xl:sticky xl:top-4 xl:self-start">
+          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-4 shadow-[0_24px_70px_rgba(0,0,0,.28)]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[#c89b3c]">
+                <Split size={18} />
+              </span>
+              <h2 className="text-xl font-semibold">Item Recipe Puzzle</h2>
+            </div>
+            <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+            <div className="grid justify-items-center gap-2 rounded-sm border border-white/10 bg-[#050607]/75 p-3">
+              <div className="text-sm uppercase text-[#c89b3c]">Result Item</div>
+              <ItemShopNode item={round.resultItem} size="large" />
+            </div>
+            <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#111722] p-3">
+              <div className="text-xs uppercase text-[color:var(--muted)]">Shop Recipe</div>
+              <div className="mx-auto h-8 w-px bg-[#3c3421]" />
+              <div className="grid grid-cols-3 items-start gap-3">
+                {round.knownComponents.map((item) => (
+                  <ItemShopNode key={item.id} item={item} />
+                ))}
+                <MissingRecipeNode item={selected} submitted={submitted} correct={correct} />
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <div className="text-sm text-[color:var(--muted)]">
+                {submitted ? (correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`) : "Choose the missing component from the shop grid."}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={() => { setAnswer(""); setSubmitted(false); }}>
+                  Clear
+                </Button>
+                <Button type="button" onClick={submitRecipe} disabled={!answer || submitted}>
+                  Lock Component
+                </Button>
+                {submitted && (
+                  <Button type="button" variant="secondary" onClick={nextRecipe}>
+                    Next recipe
+                  </Button>
+                )}
+                <ResultPill submitted={submitted} correct={correct} answer={getItemName(round.allComponents, round.missingComponentId)} />
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div className="grid gap-4 pb-10">
+          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
+            <h3 className="font-display text-2xl font-extrabold tracking-tight">Find the missing recipe component.</h3>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">Only direct item components are shown. Pick the ingredient that completes the shop recipe.</p>
+          </div>
+          <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-4">
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <div className="text-sm uppercase text-[#c89b3c]">Component Shop</div>
+                <div className="text-xs text-[color:var(--muted)]">Components that build into other purchasable League items.</div>
+              </div>
+              <div className="text-xs text-[color:var(--muted)]">{round.allComponents.length} components</div>
+            </div>
+            <div className="grid content-start gap-3 px-2 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
+              {round.allComponents.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setAnswer(item.id);
+                    setSubmitted(false);
+                  }}
+                  className={cn(
+                    "relative grid min-h-28 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)]",
+                    answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"
+                  )}
+                  title={`${item.name} - ${item.goldTotal}g`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.imageUrl} alt="" className="h-14 w-14 object-contain" />
+                  <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{item.name}</span>
+                  <span className="text-[11px] text-[#c89b3c]">{item.goldTotal}g</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -339,13 +551,14 @@ function ItemChoiceCard({ item, selected, disabled, onClick }: { item: GameItem;
   );
 }
 
-function BootChoiceCard({ item, selected, onClick }: { item: GameItem; selected: boolean; onClick: () => void }) {
+function BootChoiceCard({ item, selected, disabled, onClick }: { item: GameItem; selected: boolean; disabled?: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        "relative grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)]",
+        "relative grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed disabled:opacity-35",
         selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"
       )}
       title={item.name}
@@ -362,45 +575,11 @@ function BootChoiceCard({ item, selected, onClick }: { item: GameItem; selected:
   );
 }
 
-function BuildResultPanel({ challenge, totalCorrect }: { challenge: ItemBuildChallenge; totalCorrect: number }) {
-  const targetItems = challenge.answerItemIds
-    .map((id) => challenge.possibleItems.find((item) => item.id === id))
-    .filter(Boolean) as GameItem[];
-  const targetBoots = challenge.possibleBoots.find((item) => item.id === challenge.answerBootsId);
-  const targetBuild = targetBoots ? [...targetItems, targetBoots] : targetItems;
-  const shareRow = [...challenge.answerItemIds.map(() => "correct"), challenge.answerBootsId].map((_, index) =>
-    index < totalCorrect ? "G" : "X"
-  );
-
-  return (
-    <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-display text-lg font-bold text-[#c89b3c]">Result: {totalCorrect}/6 correct</div>
-          <div className="text-xs text-[color:var(--muted)]">Target build from the matchup model</div>
-        </div>
-        <div className="rounded-sm border border-white/10 bg-[#050607] px-3 py-2 text-xs text-[color:var(--muted)]">
-          Rift Daily - Build Puzzle - {challenge.champion.name} - {shareRow.join("")}
-        </div>
-      </div>
-      <div className="grid grid-cols-6 gap-2">
-        {targetBuild.map((item) => (
-          <div key={item.id} className="grid min-h-16 place-items-center rounded-sm border border-green-400/45 bg-green-500/12 p-1 text-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
-            <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ItemShopNode({ item, size = "normal" }: { item: GameItem; size?: "normal" | "large" }) {
   return (
     <div className={cn("grid justify-items-center gap-1 rounded-sm border border-[#3c3421] bg-[#111722] p-2 text-center", size === "large" && "min-w-36 p-3")}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-14 w-14" : "h-10 w-10")} />
+      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-16 w-16" : "h-12 w-12")} />
       <span className="line-clamp-2 text-xs font-semibold leading-tight">{item.name}</span>
       <span className="text-[10px] text-[#c89b3c]">{item.goldTotal}g</span>
     </div>
@@ -418,13 +597,13 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
       {item ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain" />
+          <img src={item.imageUrl} alt="" className="h-12 w-12 object-contain" />
           <span className="line-clamp-2 text-xs font-semibold leading-tight">{item.name}</span>
           <span className="text-[10px] text-[#c89b3c]">{item.goldTotal}g</span>
         </>
       ) : (
         <>
-          <span className="grid h-10 w-10 place-items-center rounded-sm border border-[#3c3421] text-xl text-[#c89b3c]">?</span>
+          <span className="grid h-12 w-12 place-items-center rounded-sm border border-[#3c3421] text-xl text-[#c89b3c]">?</span>
           <span className="text-xs uppercase text-[color:var(--muted)]">Missing</span>
         </>
       )}
@@ -432,64 +611,148 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
   );
 }
 
-export function EsportsDraftGame({ challenge, championOptions }: { challenge: EsportsDraftChallenge; championOptions: OptionItem[] }) {
-  const [answer, setAnswer] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const selected = championOptions.find((option) => option.id === answer)?.label ?? "";
-  const correct = submitted && normalize(selected) === normalize(challenge.answerChampionName);
-  const blueDraftPicks = challenge.bluePicks.map((name) => championOptionByName(championOptions, name));
-  const redDraftPicks = [
-    ...challenge.redPicks.map((name) => championOptionByName(championOptions, name)),
-    {
-      id: "final-pick-placeholder",
-      label: "Final Pick",
-      sublabel: challenge.answerLane ?? "Top"
+function InfiniteStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
+  return (
+    <div className="grid grid-cols-3 gap-2 rounded-sm border border-[#26313f] bg-[#111722] p-2 text-center text-xs">
+      <div>
+        <div className="font-display text-lg font-bold text-[#f5c542]">{round}</div>
+        <div className="uppercase text-[color:var(--muted)]">Round</div>
+      </div>
+      <div>
+        <div className="font-display text-lg font-bold">{current}</div>
+        <div className="uppercase text-[color:var(--muted)]">Streak</div>
+      </div>
+      <div>
+        <div className="font-display text-lg font-bold">{best}</div>
+        <div className="uppercase text-[color:var(--muted)]">Best</div>
+      </div>
+    </div>
+  );
+}
+
+function usePersonalModeStreak(gameKey: string, username: string) {
+  const storageKey = `rift-daily:${gameKey}:${normalize(username || "guest")}`;
+  const [streak, setStreak] = useState({ current: 0, best: 0, played: 0 });
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(storageKey);
+
+    if (raw) {
+      try {
+        setStreak(JSON.parse(raw) as { current: number; best: number; played: number });
+      } catch {
+        setStreak({ current: 0, best: 0, played: 0 });
+      }
+    } else {
+      setStreak({ current: 0, best: 0, played: 0 });
     }
+  }, [storageKey]);
+
+  function record(correct: boolean) {
+    setStreak((current) => {
+      const nextCurrent = correct ? current.current + 1 : 0;
+      const next = {
+        current: nextCurrent,
+        best: Math.max(current.best, nextCurrent),
+        played: current.played + 1
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  return [streak, record] as const;
+}
+
+function createRecipeRounds(base: ItemRecipeChallenge, itemCatalog: GameItem[]) {
+  const craftable = itemCatalog.filter((item) =>
+    item.from.length >= 2 &&
+    item.from.every((id) => {
+      const component = findItem(itemCatalog, id);
+      return component && isRecipeComponentChoice(component, itemCatalog);
+    })
+  );
+
+  if (craftable.length === 0) {
+    return [{ ...base, allComponents: getRecipeComponentChoices(itemCatalog, [base.missingComponentId]) }];
+  }
+
+  return [
+    base,
+    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedRecipeRound(base, itemCatalog, craftable, index + 1))
   ];
+}
+
+function createGeneratedRecipeRound(base: ItemRecipeChallenge, itemCatalog: GameItem[], craftable: GameItem[], round: number): ItemRecipeChallenge {
+  const seed = `${base.date}:recipe-infinite:${round}`;
+  const resultItem = craftable[hashString(`${seed}:result`) % craftable.length];
+  const componentIds = resultItem.from;
+  const missingComponentId = componentIds[hashString(`${seed}:missing`) % componentIds.length];
+  const knownComponents = componentIds.filter((id) => id !== missingComponentId).map((id) => findItem(itemCatalog, id)).filter(Boolean) as GameItem[];
+  const missing = findItem(itemCatalog, missingComponentId) ?? knownComponents[0] ?? base.resultItem;
+  const allComponents = getRecipeComponentChoices(itemCatalog, [missing.id]);
+  const distractors = allComponents
+    .filter((item) => item.id !== missing.id && item.goldTotal <= Math.max(missing.goldTotal + 500, 900))
+    .sort((a, b) => (hashString(`${seed}:${a.id}`) % 1000) - (hashString(`${seed}:${b.id}`) % 1000))
+    .slice(0, 5);
+
+  return {
+    ...base,
+    id: `${base.date}:item-recipe:${round}`,
+    resultItem,
+    knownComponents,
+    missingComponentId: missing.id,
+    options: [missing, ...distractors].sort((a, b) => a.name.localeCompare(b.name)),
+    allComponents
+  };
+}
+
+function findItem(itemCatalog: GameItem[], id: string) {
+  return itemCatalog.find((item) => item.id === id);
+}
+
+function getRecipeComponentChoices(itemCatalog: GameItem[], includeIds: string[] = []) {
+  const include = new Set(includeIds);
+  const candidates = itemCatalog
+    .filter((item) => isRecipeComponentChoice(item, itemCatalog) || include.has(item.id))
+    .sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
+  const chosen: GameItem[] = [];
+
+  for (const item of candidates) {
+    const existingIndex = chosen.findIndex((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase());
+
+    if (existingIndex === -1) {
+      chosen.push(item);
+    } else if (include.has(item.id) && !include.has(chosen[existingIndex].id)) {
+      chosen[existingIndex] = item;
+    }
+  }
+
+  return chosen;
+}
+
+function isRecipeComponentChoice(item: GameItem, itemCatalog: GameItem[]) {
+  const usedByPurchasableItem = itemCatalog.some((parent) => parent.purchasable && parent.from.includes(item.id));
 
   return (
-    <PuzzleFrame icon={<Eye size={18} />} title="Esports Draft Puzzle" kicker={challenge.source}>
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-4">
-        <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-sm text-[color:var(--muted)]">{challenge.event}</div>
-              <div className="text-lg font-semibold">
-                {challenge.blueTeam} vs {challenge.redTeam}
-              </div>
-            </div>
-            <div className="rounded-sm border border-[#3c3421] px-2 py-1 text-xs text-[color:var(--muted)]">{challenge.patch}</div>
-          </div>
-        </div>
-        <DraftScreen
-          blueName={challenge.blueTeam}
-          redName={challenge.redTeam}
-          bluePicks={applyLaneLabels(blueDraftPicks, challenge.bluePickLanes)}
-          redPicks={applyLaneLabels(redDraftPicks, [...(challenge.redPickLanes ?? []), challenge.answerLane ?? "Top"])}
-          blueBans={challenge.blueBans.map((name) => championOptionByName(championOptions, name))}
-          redBans={challenge.redBans.map((name) => championOptionByName(championOptions, name))}
-          hiddenLabel="Final Pick"
-        />
-        <div className="grid gap-2 lg:grid-cols-[1fr_auto_auto] lg:items-end">
-          <SearchableSelect label="Final red pick" placeholder="Type a champion" value={answer} onChange={setAnswer} options={championOptions} />
-          <Button type="button" onClick={() => setSubmitted(true)} disabled={!answer}>
-            Submit
-          </Button>
-          <ResultPill submitted={submitted} correct={correct} answer={challenge.answerChampionName} />
-        </div>
-      </div>
-    </PuzzleFrame>
+    usedByPurchasableItem &&
+    item.purchasable &&
+    item.goldTotal > 0 &&
+    item.goldTotal <= 1800 &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket") &&
+    (item.name === "Boots" || !item.tags.includes("Boots"))
   );
 }
 
 type EloRound = Pick<GuessEloChallenge, "id" | "date" | "lanes" | "enemyLanes" | "options" | "answerTier" | "signalNotes" | "dataSource">;
 
-export function GuessEloGame({ challenge, champions }: { challenge: GuessEloChallenge; champions: PublicChampion[] }) {
+export function GuessEloGame({ challenge, champions, username = "Guest" }: { challenge: GuessEloChallenge; champions: PublicChampion[]; username?: string }) {
   const rounds = useMemo(() => createEloRounds(challenge, champions), [challenge, champions]);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [score, setScore] = useState(0);
+  const [streak, recordStreak] = usePersonalModeStreak("guess-elo", username);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerTier;
 
@@ -501,9 +764,7 @@ export function GuessEloGame({ challenge, champions }: { challenge: GuessEloChal
     setAnswer(option);
     setSubmitted(true);
 
-    if (option === round.answerTier) {
-      setScore((current) => current + 1);
-    }
+    recordStreak(option === round.answerTier);
   }
 
   function nextRound() {
@@ -513,12 +774,9 @@ export function GuessEloGame({ challenge, champions }: { challenge: GuessEloChal
   }
 
   return (
-    <PuzzleFrame icon={<UsersRound size={18} />} title="Guess the Elo" kicker={`${round.dataSource} - Infinite queue`}>
+    <PuzzleFrame icon={<UsersRound size={18} />} title="Guess the Elo">
       <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
-        <div className="flex items-center justify-between rounded-sm border border-[#3c3421] bg-[#111722] px-3 py-2 text-sm">
-          <span className="text-[#c89b3c]">Round {roundIndex + 1}</span>
-          <span className="text-[color:var(--muted)]">Score {score}/{roundIndex + (submitted ? 1 : 0)}</span>
-        </div>
+        <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <div className="grid min-h-0 grid-rows-2 gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-3">
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
@@ -596,95 +854,14 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
   );
 }
 
-export function ChampionConnectionGame({ challenge }: { challenge: ChampionConnectionChallenge }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [solved, setSolved] = useState<string[]>([]);
-  const [mistakes, setMistakes] = useState(0);
-  const [feedback, setFeedback] = useState("");
-  const solvedCategories = challenge.categories.filter((category) => solved.includes(category.id));
-  const remaining = challenge.champions.filter((champion) => !solvedCategories.some((category) => category.championIds.includes(champion.id)));
-
-  function toggle(id: string) {
-    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : current.length < 4 ? [...current, id] : current));
-  }
-
-  function submit() {
-    const match = challenge.categories.find(
-      (category) => !solved.includes(category.id) && category.championIds.every((id) => selected.includes(id))
-    );
-
-    if (match) {
-      setSolved((current) => [...current, match.id]);
-      setSelected([]);
-      setFeedback(`Solved: ${match.label}`);
-    } else {
-      const nearest = challenge.categories
-        .filter((category) => !solved.includes(category.id))
-        .map((category) => ({
-          category,
-          overlap: category.championIds.filter((id) => selected.includes(id)).length
-        }))
-        .sort((a, b) => b.overlap - a.overlap)[0];
-      const closeNames = selected
-        .filter((id) => nearest?.category.championIds.includes(id))
-        .map((id) => challenge.champions.find((champion) => champion.id === id)?.name)
-        .filter(Boolean)
-        .slice(0, 2)
-        .join(" + ");
-      setMistakes((current) => current + 1);
-      setFeedback(
-        nearest && nearest.overlap >= 2
-          ? `${nearest.overlap}/4 of a group. Hint: ${closeNames || "some of those picks"} belong together.`
-          : "No close group found. Hint: try grouping by region, class, resource, or signature mechanics."
-      );
-    }
-  }
-
-  return (
-    <PuzzleFrame icon={<Link2 size={18} />} title="Champion Connections" kicker="Group 16 champions into four sets">
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
-        <div className="grid grid-cols-4 gap-2">
-          {solvedCategories.map((category) => (
-            <div key={category.id} className={cn("rounded-sm border p-2 text-center text-sm", connectionClass(category.difficulty))}>
-              <div className="font-bold">{category.label}</div>
-              <div className="mt-1 truncate text-xs">{category.championIds.map((id) => challenge.champions.find((champion) => champion.id === id)?.name).join(", ")}</div>
-            </div>
-          ))}
-        </div>
-        <div className="grid min-h-0 grid-cols-4 grid-rows-4 gap-2">
-          {remaining.map((champion) => (
-            <button
-              key={champion.id}
-              type="button"
-              onClick={() => toggle(champion.id)}
-              className={cn(
-                "grid min-h-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-2 text-left transition hover:border-[#c89b3c]",
-                selected.includes(champion.id) && "border-[#c89b3c] ring-2 ring-[#c89b3c]/50"
-              )}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={champion.squareUrl} alt="" className="h-11 w-11 rounded-sm border border-[#3c3421] object-contain" />
-              <span className="min-w-0 truncate text-sm font-bold">{champion.name}</span>
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" onClick={submit} disabled={selected.length !== 4}>
-            Submit group
-          </Button>
-          <span className="text-sm text-[color:var(--muted)]">Mistakes: {mistakes}</span>
-          <span className="text-sm text-[color:var(--muted)]">Solved: {solved.length}/4</span>
-          {feedback && <span className="text-sm text-[#c89b3c]">{feedback}</span>}
-        </div>
-      </div>
-    </PuzzleFrame>
-  );
-}
-
-export function DodgeQueueGame({ challenge }: { challenge: DodgeQueueChallenge }) {
+export function DodgeQueueGame({ challenge, champions = [], username = "Guest" }: { challenge: DodgeQueueChallenge; champions?: PublicChampion[]; username?: string }) {
+  const rounds = useMemo(() => createDodgeQueueRounds(challenge, champions), [challenge, champions]);
+  const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const correct = submitted && answer === challenge.answer;
+  const [streak, recordStreak] = usePersonalModeStreak("dodge-queue", username);
+  const round = rounds[roundIndex % rounds.length];
+  const correct = submitted && answer === round.answer;
 
   function lockCall(call: "dodge" | "queue") {
     if (submitted) {
@@ -693,18 +870,26 @@ export function DodgeQueueGame({ challenge }: { challenge: DodgeQueueChallenge }
 
     setAnswer(call);
     setSubmitted(true);
+    recordStreak(call === round.answer);
+  }
+
+  function nextLobby() {
+    setRoundIndex((current) => current + 1);
+    setAnswer("");
+    setSubmitted(false);
   }
 
   return (
-    <PuzzleFrame icon={<CircleSlash size={18} />} title="Dodge or Queue" kicker="Champ-select risk call">
-      <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_auto] gap-4">
+    <PuzzleFrame icon={<CircleSlash size={18} />} title="Dodge or Queue">
+      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
+        <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
-          bluePicks={applyLaneLabels(challenge.allyTeam.map(championToOption), laneLabels)}
-          redPicks={applyLaneLabels(challenge.enemyTeam.map(championToOption), laneLabels)}
-          blueBans={challenge.allyBans.map(championToOption)}
-          redBans={challenge.enemyBans.map(championToOption)}
+          bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => championToOption(champion, round.allySpells[index])), laneLabels)}
+          redPicks={applyLaneLabels(round.enemyTeam.map((champion, index) => championToOption(champion, round.enemySpells[index])), laneLabels)}
+          blueBans={round.allyBans.map((champion) => championToOption(champion))}
+          redBans={round.enemyBans.map((champion) => championToOption(champion))}
         />
         <div className="grid gap-2 sm:grid-cols-2">
           <button
@@ -735,15 +920,20 @@ export function DodgeQueueGame({ challenge }: { challenge: DodgeQueueChallenge }
           </button>
         </div>
         <div className="flex flex-wrap gap-2">
-          <ResultPill submitted={submitted} correct={correct} answer={challenge.answer === "queue" ? "Queue" : "Dodge"} />
+          <ResultPill submitted={submitted} correct={correct} answer={round.answer === "queue" ? "Queue" : "Dodge"} />
+          {submitted && (
+            <Button type="button" variant="secondary" onClick={nextLobby}>
+              Next lobby
+            </Button>
+          )}
         </div>
         {submitted && (
           <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <Bar label="Queue" value={challenge.community.queuePercent} />
-              <Bar label="Dodge" value={challenge.community.dodgePercent} />
+              <Bar label="Queue" value={round.community.queuePercent} />
+              <Bar label="Dodge" value={round.community.dodgePercent} />
             </div>
-            <p className="mt-2 text-sm text-[color:var(--muted)]">{challenge.explanation}</p>
+            <p className="mt-2 text-sm text-[color:var(--muted)]">{round.explanation}</p>
           </div>
         )}
       </div>
@@ -751,13 +941,117 @@ export function DodgeQueueGame({ challenge }: { challenge: DodgeQueueChallenge }
   );
 }
 
-function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker: string; children: ReactNode }) {
+function createDodgeQueueRounds(base: DodgeQueueChallenge, champions: PublicChampion[]) {
+  const hydratedBase = withDodgeQueueSpells(base);
+
+  if (champions.length < 10) {
+    return [hydratedBase];
+  }
+
+  return [
+    hydratedBase,
+    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedDodgeQueueRound(hydratedBase, champions, index + 1))
+  ];
+}
+
+function withDodgeQueueSpells(challenge: DodgeQueueChallenge): DodgeQueueChallenge {
+  if (challenge.allySpells?.length === 5 && challenge.enemySpells?.length === 5) {
+    return challenge;
+  }
+
+  return {
+    ...challenge,
+    allySpells: createUiLaneSpellLoadout(`${challenge.id}:ally`),
+    enemySpells: createUiLaneSpellLoadout(`${challenge.id}:enemy`)
+  };
+}
+
+function createGeneratedDodgeQueueRound(base: DodgeQueueChallenge, champions: PublicChampion[], round: number): DodgeQueueChallenge {
+  const seed = `${base.date}:dodge-queue-infinite:${round}`;
+  const allyTeam = pickUiLaneAwareTeam(champions, `${seed}:ally`, [], 7);
+  const enemyTeam = pickUiLaneAwareTeam(champions, `${seed}:enemy`, allyTeam.map((champion) => champion.id), 8);
+  const pickedChampionIds = [...allyTeam, ...enemyTeam].map((champion) => champion.id);
+  const allyBans = pickUiUnique(champions, `${seed}:ally-bans`, 5, pickedChampionIds);
+  const enemyBans = pickUiUnique(champions, `${seed}:enemy-bans`, 5, [...pickedChampionIds, ...allyBans.map((champion) => champion.id)]);
+  const allyRoleFit = eloLaneLabels.reduce((score, role, index) => score + laneFitForUi(role, allyTeam[index]), 0);
+  const enemyThreat = enemyTeam.reduce((score, champion) => score + (champion.roles.includes("Tank") ? 1 : 0) + (champion.roles.includes("Assassin") ? 1 : 0), 0);
+  const dodgeScore = 7 - allyRoleFit + enemyThreat;
+  const answer = dodgeScore >= 6 ? "dodge" : "queue";
+  const dodgePercent = Math.min(87, Math.max(19, 42 + dodgeScore * 6));
+
+  return {
+    ...base,
+    id: `${base.date}:dodge-queue:${round}`,
+    allyTeam,
+    enemyTeam,
+    allySpells: createUiLaneSpellLoadout(`${seed}:ally`),
+    enemySpells: createUiLaneSpellLoadout(`${seed}:enemy`),
+    allyBans,
+    enemyBans,
+    answer,
+    community: {
+      dodgePercent,
+      queuePercent: 100 - dodgePercent
+    },
+    explanation:
+      answer === "dodge"
+        ? "The lobby has enough role mismatch and enemy lockdown pressure that the model recommends dodging."
+        : "The comp has workable role coverage and enough playable lanes to queue it up."
+  };
+}
+
+function createUiLaneSpellLoadout(seed: string) {
+  return eloLaneLabels.map((role) => spellsForEloRole(role, `${seed}:${role}:spells`));
+}
+
+function pickUiLaneAwareTeam(champions: PublicChampion[], seed: string, excluded: string[], chaosThreshold: number) {
+  const excludedSet = new Set(excluded);
+
+  return eloLaneLabels.map((role) => {
+    const preferredPool = championsForEloLane(champions, role).filter((champion) => !excludedSet.has(champion.id));
+    const available = champions.filter((champion) => !excludedSet.has(champion.id));
+    const chaosRoll = hashString(`${seed}:${role}:chaos`) % 10;
+    const pool = chaosRoll >= chaosThreshold || preferredPool.length === 0 ? available : preferredPool;
+    const champion = pool[hashString(`${seed}:${role}:pick`) % pool.length] ?? available[0] ?? champions[0];
+    excludedSet.add(champion.id);
+    return champion;
+  });
+}
+
+function pickUiUnique(list: PublicChampion[], seed: string, count: number, excluded: string[]) {
+  const excludedSet = new Set(excluded);
+  const sorted = [...list].sort((a, b) => (hashString(`${seed}:${a.id}`) % 1000) - (hashString(`${seed}:${b.id}`) % 1000));
+  const picked: PublicChampion[] = [];
+
+  for (const item of sorted) {
+    if (!excludedSet.has(item.id)) {
+      picked.push(item);
+      excludedSet.add(item.id);
+    }
+
+    if (picked.length === count) {
+      break;
+    }
+  }
+
+  return picked;
+}
+
+function laneFitForUi(role: string, champion: PublicChampion): number {
+  if (role === "Jungle") return champion.roles.some((championRole) => ["Assassin", "Fighter", "Tank"].includes(championRole)) ? 1 : 0;
+  if (role === "Bot") return champion.roles.includes("Marksman") ? 1 : 0;
+  if (role === "Supp") return champion.roles.some((championRole) => ["Support", "Tank"].includes(championRole)) ? 1 : 0;
+  if (role === "Mid") return champion.roles.some((championRole) => ["Mage", "Assassin"].includes(championRole)) ? 1 : 0;
+  return champion.roles.some((championRole) => ["Fighter", "Tank"].includes(championRole)) ? 1 : 0;
+}
+
+function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
   return (
     <section className="flex h-full min-h-0 flex-col gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[#c89b3c]">{icon}</span>
         <h2 className="text-xl font-semibold">{title}</h2>
-        <span className="text-sm text-[color:var(--muted)]">{kicker}</span>
+        {kicker && <span className="text-sm text-[color:var(--muted)]">{kicker}</span>}
       </div>
       {children}
     </section>
@@ -880,6 +1174,14 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
       <div className="min-w-0">
         <div className="truncate text-lg font-bold leading-tight">{pick?.label ?? hiddenLabel}</div>
         <div className="truncate text-sm leading-tight text-[#c89b3c]">{pick?.sublabel ?? "Champion select"}</div>
+        {pick?.spells && (
+          <div className="mt-1 flex gap-1">
+            {pick.spells.map((spell) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={spell} src={summonerSpellIcon(spell)} alt={spell} title={spell} className="h-6 w-6 rounded-sm border border-[#3c3421]" />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -898,16 +1200,13 @@ function BanIcon({ pick }: { pick?: OptionItem }) {
   );
 }
 
-function championOptionByName(options: OptionItem[], name: string): OptionItem | undefined {
-  return options.find((option) => normalize(option.label) === normalize(name));
-}
-
-function championToOption(champion: PublicChampion): OptionItem {
+function championToOption(champion: PublicChampion, spells?: string[]): OptionItem {
   return {
     id: champion.id,
     label: champion.name,
     sublabel: champion.roles.join(" / "),
-    imageUrl: champion.squareUrl
+    imageUrl: champion.squareUrl,
+    spells
   };
 }
 
@@ -993,18 +1292,21 @@ function getItemName(itemsList: GameItem[], id: string) {
 }
 
 const eloLaneLabels = ["Top", "Jungle", "Mid", "Bot", "Supp"];
-const eloSpellPairs = [
+const eloNonJungleSpellPairs = [
   ["Flash", "Teleport"],
-  ["Flash", "Smite"],
   ["Flash", "Ignite"],
   ["Flash", "Heal"],
   ["Exhaust", "Ignite"],
-  ["Ghost", "Smite"],
   ["Barrier", "Flash"],
   ["Cleanse", "Flash"],
   ["Ignite", "Teleport"],
   ["Ghost", "Teleport"],
   ["Heal", "Barrier"]
+];
+const eloJungleSpellPairs = [
+  ["Flash", "Smite"],
+  ["Ghost", "Smite"],
+  ["Ignite", "Smite"]
 ];
 
 function createEloRounds(base: GuessEloChallenge, champions: PublicChampion[]): EloRound[] {
@@ -1031,9 +1333,9 @@ function createGeneratedEloRound(base: GuessEloChallenge, champions: PublicChamp
     options: base.options,
     answerTier,
     signalNotes: [
-      `Draft chaos score: ${chaosScore}`,
+      `Comp chaos score: ${chaosScore}`,
       chaosScore >= 4 ? "Off-role picks or strange summoner spells drag the lobby downward." : "Role fit and summoner discipline point higher.",
-      "Infinite mode uses Riot champion classes plus deterministic loading-screen heuristics."
+      "Summoner spells and role fit drive the read."
     ],
     dataSource: base.dataSource
   };
@@ -1045,9 +1347,14 @@ function createGeneratedEloTeam(seed: string, champions: PublicChampion[], side:
     const chaosRoll = hashString(`${seed}:${side}:${role}:chaos`) % 10;
     const pool = chaosRoll >= 7 ? champions : preferredPool;
     const champion = pool[hashString(`${seed}:${side}:${role}:champion`) % pool.length];
-    const spells = eloSpellPairs[hashString(`${seed}:${side}:${role}:spells`) % eloSpellPairs.length];
+    const spells = spellsForEloRole(role, `${seed}:${side}:${role}:spells`);
     return { role, champion, spells };
   });
+}
+
+function spellsForEloRole(role: string, seed: string) {
+  const pool = role === "Jungle" ? eloJungleSpellPairs : eloNonJungleSpellPairs;
+  return pool[hashString(seed) % pool.length];
 }
 
 function championsForEloLane(champions: PublicChampion[], role: string) {
@@ -1064,15 +1371,16 @@ function championsForEloLane(champions: PublicChampion[], role: string) {
 
 function scoreEloLanes(lanes: EloRound["lanes"]) {
   return lanes.reduce((total, lane, index) => {
+    const smiteMismatch = lane.role === "Jungle" ? (lane.spells.includes("Smite") ? 0 : 4) : (lane.spells.includes("Smite") ? 4 : 0);
     const expected =
       lane.role === "Jungle"
         ? lane.spells.includes("Smite")
         : lane.role === "Bot"
           ? lane.champion.roles.includes("Marksman")
           : lane.role === "Supp"
-            ? lane.champion.roles.includes("Support") || lane.champion.roles.includes("Tank")
+          ? lane.champion.roles.includes("Support") || lane.champion.roles.includes("Tank")
             : true;
-    return total + (expected ? 0 : 2) + (lane.spells.includes("Flash") ? 0 : 1) + (index % 5 === 0 && lane.spells.includes("Ignite") ? 1 : 0);
+    return total + smiteMismatch + (expected ? 0 : 2) + (lane.spells.includes("Flash") ? 0 : 1) + (index % 5 === 0 && lane.spells.includes("Ignite") ? 1 : 0);
   }, 0);
 }
 
@@ -1147,11 +1455,4 @@ function hashString(value: string) {
   }
 
   return hash;
-}
-
-function connectionClass(difficulty: ChampionConnectionCategory["difficulty"]) {
-  if (difficulty === "yellow") return "border-yellow-300/40 bg-yellow-500/18 text-yellow-50";
-  if (difficulty === "green") return "border-green-300/40 bg-green-500/18 text-green-50";
-  if (difficulty === "blue") return "border-sky-300/40 bg-sky-500/18 text-sky-50";
-  return "border-violet-300/40 bg-violet-500/18 text-violet-50";
 }

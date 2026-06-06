@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, ClipboardList, Crown, MessageSquare, Share2, Sparkles, Swords } from "lucide-react";
+import { ArrowRight, BarChart3, ClipboardList, Crown, MessageSquare, Share2, Swords } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -14,7 +14,6 @@ export default function Home() {
           </Link>
           <div className="hidden items-center gap-6 text-sm text-[#94a3b8] md:flex">
             <Link href="/play">Play</Link>
-            <a href="#modes">Modes</a>
             <a href="#leaderboard">Leaderboard</a>
             <a href="#tech">Tech</a>
             <Link href="/suggest">Suggest</Link>
@@ -40,15 +39,15 @@ export default function Home() {
               Humble your friends with suspiciously useful League homework.
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-[#cbd5e1]">
-              Pick the build, roast the draft, guess the doomed loading screen, and collect enough evidence to tell the
+              Pick the build, judge the lobby, guess the doomed loading screen, and collect enough evidence to tell the
               group chat they were wrong with confidence.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href="/play" className="font-display inline-flex min-h-12 items-center gap-2 rounded-md bg-[#f5c542] px-5 font-bold text-[#090b10]">
                 Defeat your friends <ArrowRight size={18} />
               </Link>
-              <a href="#modes" className="font-display inline-flex min-h-12 items-center rounded-md border border-white/15 bg-white/6 px-5 font-bold text-white">
-                View Modes
+              <a href="#leaderboard" className="font-display inline-flex min-h-12 items-center rounded-md border border-white/15 bg-white/6 px-5 font-bold text-white">
+                Scout the leaderboard
               </a>
             </div>
             <div className="mt-8 grid max-w-xl grid-cols-3 gap-3 text-sm text-[#94a3b8]">
@@ -82,24 +81,9 @@ export default function Home() {
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-5 py-20 md:grid-cols-3">
-        <InfoCard icon={<ClipboardList />} title="Open today" text="Everyone gets the same puzzle set, so the excuses start immediately." />
-        <InfoCard icon={<Swords />} title="Make the call" text="Choose builds, solve recipe trees, read cursed drafts, and dodge whatever is flying at Kennen." />
+        <InfoCard icon={<ClipboardList />} title="Queue the chaos" text="Everyone gets the same puzzle set, so the excuses start immediately." />
+        <InfoCard icon={<Swords />} title="Make the call" text="Choose builds, solve recipe trees, read cursed loading screens, and dodge whatever is flying at Kennen." />
         <InfoCard icon={<Share2 />} title="Send proof" text="Streaks, leaderboards, and shareable results make your victory annoying in the best way." />
-      </section>
-
-      <section id="modes" className="border-y border-white/10 bg-[#0a1020] py-20">
-        <div className="mx-auto max-w-7xl px-5">
-          <SectionIntro eyebrow="Game Modes" title="Built like a daily challenge hub" />
-          <div className="mt-8 grid gap-4 md:grid-cols-3">
-            {["Build Puzzle", "Item Recipe", "Esports Draft", "Guess the Elo", "Champion Connections", "Rift Trainer"].map((mode) => (
-              <div key={mode} className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-                <Sparkles className="mb-4 text-[#f5c542]" />
-                <div className="font-display text-xl font-bold">{mode}</div>
-                <div className="mt-2 text-sm text-[#94a3b8]">Available in today&apos;s dashboard.</div>
-              </div>
-            ))}
-          </div>
-        </div>
       </section>
 
       <section id="leaderboard" className="mx-auto grid max-w-7xl gap-8 px-5 py-20 lg:grid-cols-[1fr_28rem]">

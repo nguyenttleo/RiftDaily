@@ -17,7 +17,7 @@ const oxanium = Oxanium({
 
 export const metadata: Metadata = {
   title: "Rift Daily",
-  description: "Daily League-inspired draft, item, lobby, connection, and trainer challenges."
+  description: "Daily League-inspired item, recipe, Elo, lobby, and trainer challenges."
 };
 
 export default function RootLayout({

@@ -1,11 +1,11 @@
 # Rift Daily
 
-Rift Daily is a League-inspired daily challenge hub for item builds, item recipes, esports draft calls, loading-screen Elo reads, champion Connections, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
+Rift Daily is a League-inspired daily challenge hub for item builds, item recipes, loading-screen Elo reads, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
 
 The app is built to run in two modes:
 
 - Local demo mode with generated Riot/Data Dragon content and no required secrets.
-- Production mode on AWS Amplify with Supabase Postgres persistence, auth, suggestions, stats, leaderboards, Riot static data, and live Leaguepedia esports draft data.
+- Production mode on AWS Amplify with Supabase Postgres persistence, auth, suggestions, stats, leaderboards, and Riot static data.
 
 ## Stack
 
@@ -13,7 +13,6 @@ The app is built to run in two modes:
 - NextAuth credential sessions with HTTP-only cookies
 - Supabase Postgres through `pg`
 - Riot Data Dragon for live champion/item/spell assets
-- Leaguepedia Cargo for esports draft puzzles
 - CommunityDragon static assets for ranked emblems and trainer character art
 - AWS Amplify Hosting for the Next.js app and API routes
 

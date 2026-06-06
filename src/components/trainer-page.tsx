@@ -178,7 +178,7 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
       if (remaining <= 0 || hits >= challenge.player.health) {
         const score = Math.max(0, Math.round((elapsed / 1000) * 100 + dodges * 50 + near * 25 - hits * 300 + (hits === 0 ? 500 : 0)));
         setHud({ time: remaining, hits, dodges, near, score, state: remaining <= 0 ? "survived" : "down", lastAbilities: abilityLog });
-        draw(ctx, challenge, player, moveTarget, projectiles, true, kennenRef.current);
+        draw(ctx, challenge, player, projectiles, true, kennenRef.current);
         return;
       }
 
@@ -234,7 +234,7 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
 
       const score = Math.max(0, Math.round((elapsed / 1000) * 100 + dodges * 50 + near * 25 - hits * 300));
       setHud({ time: remaining, hits, dodges, near, score, state: "running", lastAbilities: abilityLog });
-      draw(ctx, challenge, player, moveTarget, projectiles, false, kennenRef.current);
+      draw(ctx, challenge, player, projectiles, false, kennenRef.current);
       animation = requestAnimationFrame(tick);
     }
 
@@ -248,7 +248,7 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4">
-      <TrainerHeader title={challenge.title} subtitle={`Kennen practice - Difficulty: ${challenge.difficulty}`} onRestart={() => setRunId((id) => id + 1)} />
+      <TrainerHeader title={challenge.title} onRestart={() => setRunId((id) => id + 1)} />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Hud label="Time" value={`${hud.time.toFixed(1)}s`} />
         <Hud label="Hits" value={`${hud.hits}/${challenge.player.health}`} />
@@ -263,7 +263,6 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
         <aside className="hidden min-h-0 rounded-sm border border-[#2b2f38] bg-[#0b111b] p-3 xl:grid xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:gap-3">
           <div>
             <div className="text-sm uppercase text-[#c89b3c]">Ability Pool</div>
-            <div className="mt-1 text-xs text-[color:var(--muted)]">League-unit missile widths and speeds. Casts keep traveling until they leave the arena.</div>
           </div>
           <div className="rounded-sm border border-[#26313f] bg-[#111722] p-2">
             <div className="text-xs uppercase text-[color:var(--muted)]">Recent casts</div>
@@ -290,12 +289,11 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
   );
 }
 
-function TrainerHeader({ title, subtitle, onRestart }: { title: string; subtitle: string; onRestart: () => void }) {
+function TrainerHeader({ title, onRestart }: { title: string; onRestart: () => void }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <h2 className="text-lg font-semibold">{title}</h2>
-        <div className="text-sm text-[color:var(--muted)]">{subtitle}</div>
       </div>
       <Button type="button" variant="secondary" onClick={onRestart} icon={<RotateCcw size={16} />}>
         Restart
@@ -348,7 +346,6 @@ function draw(
   context: CanvasRenderingContext2D,
   challenge: SkillshotDodgeChallenge,
   player: PlayerState,
-  moveTarget: { x: number; y: number },
   projectiles: Projectile[],
   ended: boolean,
   kennenImage: HTMLImageElement | null
@@ -400,18 +397,6 @@ function draw(
     context.lineTo(challenge.arena.width, y);
     context.stroke();
   }
-
-  context.save();
-  context.strokeStyle = "rgba(200,155,60,.7)";
-  context.lineWidth = 1.5;
-  context.beginPath();
-  context.arc(moveTarget.x, moveTarget.y, 9, 0, Math.PI * 2);
-  context.moveTo(moveTarget.x - 14, moveTarget.y);
-  context.lineTo(moveTarget.x + 14, moveTarget.y);
-  context.moveTo(moveTarget.x, moveTarget.y - 14);
-  context.lineTo(moveTarget.x, moveTarget.y + 14);
-  context.stroke();
-  context.restore();
 
   for (const projectile of projectiles) {
     drawProjectile(context, projectile);
