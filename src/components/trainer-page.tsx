@@ -1,13 +1,14 @@
 "use client";
 
 import { RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { SkillshotDodgeChallenge } from "@/types";
 
 interface TrainerPageProps {
   dodge: SkillshotDodgeChallenge;
+  username?: string;
 }
 
 interface Projectile {
@@ -46,15 +47,17 @@ interface PlayerState {
   y: number;
 }
 
-export function TrainerPage({ dodge }: TrainerPageProps) {
-  return <SkillshotDodgeTrainer challenge={dodge} />;
+export function TrainerPage({ dodge, username = "Guest" }: TrainerPageProps) {
+  return <SkillshotDodgeTrainer challenge={dodge} username={username} />;
 }
 
-function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallenge }) {
+function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDodgeChallenge; username: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const kennenRef = useRef<HTMLImageElement | null>(null);
   const [runId, setRunId] = useState(0);
-  const abilityRotation = useMemo(() => createDailyAbilityRotation(challenge.date), [challenge.date]);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [streak, recordStreak] = useTrainerModeStreak("skillshot-dodge", username);
+  const abilityRotation = useMemo(() => createDailyAbilityRotation(`${challenge.date}:${roundIndex}`), [challenge.date, roundIndex]);
   const [hud, setHud] = useState({
     time: challenge.durationSeconds,
     hits: 0,
@@ -64,6 +67,15 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
     state: "ready",
     lastAbilities: [] as string[]
   });
+
+  function restartRun() {
+    setRunId((id) => id + 1);
+  }
+
+  function nextRun() {
+    setRoundIndex((current) => current + 1);
+    setRunId((id) => id + 1);
+  }
 
   useEffect(() => {
     const image = new Image();
@@ -110,6 +122,7 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
     let hits = 0;
     let dodges = 0;
     let near = 0;
+    let reported = false;
 
     setHud({ time: challenge.durationSeconds, hits: 0, dodges: 0, near: 0, score: 0, state: "running", lastAbilities: [] });
 
@@ -176,6 +189,10 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
       const remaining = Math.max(0, challenge.durationSeconds - elapsed / 1000);
 
       if (remaining <= 0 || hits >= challenge.player.health) {
+        if (!reported) {
+          reported = true;
+          recordStreak(remaining <= 0);
+        }
         const score = Math.max(0, Math.round((elapsed / 1000) * 100 + dodges * 50 + near * 25 - hits * 300 + (hits === 0 ? 500 : 0)));
         setHud({ time: remaining, hits, dodges, near, score, state: remaining <= 0 ? "survived" : "down", lastAbilities: abilityLog });
         draw(ctx, challenge, player, projectiles, true, kennenRef.current);
@@ -244,11 +261,18 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
       activeCanvas.removeEventListener("mousedown", mouseDown);
       cancelAnimationFrame(animation);
     };
-  }, [abilityRotation, challenge, runId]);
+  }, [abilityRotation, challenge, recordStreak, runId]);
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4">
-      <TrainerHeader title={challenge.title} onRestart={() => setRunId((id) => id + 1)} />
+      <TrainerHeader
+        title={challenge.title}
+        round={roundIndex + 1}
+        streak={streak}
+        ended={hud.state === "survived" || hud.state === "down"}
+        onRestart={restartRun}
+        onNext={nextRun}
+      />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Hud label="Time" value={`${hud.time.toFixed(1)}s`} />
         <Hud label="Hits" value={`${hud.hits}/${challenge.player.health}`} />
@@ -289,17 +313,99 @@ function SkillshotDodgeTrainer({ challenge }: { challenge: SkillshotDodgeChallen
   );
 }
 
-function TrainerHeader({ title, onRestart }: { title: string; onRestart: () => void }) {
+function TrainerHeader({
+  title,
+  round,
+  streak,
+  ended,
+  onRestart,
+  onNext
+}: {
+  title: string;
+  round: number;
+  streak: TrainerModeStreak;
+  ended: boolean;
+  onRestart: () => void;
+  onNext: () => void;
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div>
+      <div className="grid gap-2">
         <h2 className="text-lg font-semibold">{title}</h2>
+        <TrainerStreakBar round={round} current={streak.current} best={streak.best} />
       </div>
-      <Button type="button" variant="secondary" onClick={onRestart} icon={<RotateCcw size={16} />}>
-        Restart
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {ended ? (
+          <Button type="button" onClick={onNext}>
+            Next run
+          </Button>
+        ) : null}
+        <Button type="button" variant="secondary" onClick={onRestart} icon={<RotateCcw size={16} />}>
+          Restart
+        </Button>
+      </div>
     </div>
   );
+}
+
+function TrainerStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs uppercase text-[color:var(--muted)]">
+      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Run {round}</span>
+      <span className="rounded-full border border-[#3c3421] bg-[#c89b3c]/10 px-2 py-1 text-[#c89b3c]">Streak {current}</span>
+      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">Best {best}</span>
+    </div>
+  );
+}
+
+interface TrainerModeStreak {
+  current: number;
+  best: number;
+  played: number;
+}
+
+function useTrainerModeStreak(mode: string, username: string) {
+  const storageKey = `rift-daily:mode-streak:${mode}:${username}`;
+  const [streak, setStreak] = useState<TrainerModeStreak>({ current: 0, best: 0, played: 0 });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return;
+    }
+
+    try {
+      setStreak(JSON.parse(raw) as TrainerModeStreak);
+    } catch {
+      window.localStorage.removeItem(storageKey);
+    }
+  }, [storageKey]);
+
+  const record = useCallback(
+    (success: boolean) => {
+      setStreak((current) => {
+        const nextCurrent = success ? current.current + 1 : 0;
+        const next = {
+          current: nextCurrent,
+          best: Math.max(current.best, nextCurrent),
+          played: current.played + 1
+        };
+
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(storageKey, JSON.stringify(next));
+        }
+
+        return next;
+      });
+    },
+    [storageKey]
+  );
+
+  return [streak, record] as const;
 }
 
 function Hud({ label, value }: { label: string; value: string }) {

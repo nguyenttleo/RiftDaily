@@ -7,7 +7,7 @@ import {
   getRecentAnswerIds,
   getUserStats
 } from "@/db/repositories";
-import { abilities, champions, items } from "@/game/data/champions";
+import { abilities, champions } from "@/game/data/champions";
 import {
   createAbilityChallenge,
   createChampionChallenge,
@@ -17,13 +17,19 @@ import {
 import { generateExpandedDailyChallenges } from "@/game/generators/expanded";
 import { authOptions } from "@/lib/auth/options";
 import { env, isDatabaseConfigured } from "@/lib/env";
-import { getLatestDataDragonVersion, getPublicChampions } from "@/lib/riot/data-dragon";
+import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
+import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
 import type { ChallengeType, DailyChallengeResponse } from "@/types";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   const version = await getLatestDataDragonVersion();
+  const [publicChampions, liveItems, summonerSpells] = await Promise.all([
+    getLivePublicChampions(version),
+    getLiveGameItems(version),
+    getLiveSummonerSpells(version)
+  ]);
   const generated = generateDailyChallengeSet(version, env.challengeSalt);
   const session = await getServerSession(authOptions);
 
@@ -46,9 +52,19 @@ export async function GET() {
       ability: abilityChallenge.publicChallenge,
       champion: championChallenge.publicChallenge
     },
-    extraChallenges: await generateExpandedDailyChallenges(version, env.challengeSalt),
-    champions: await getPublicChampions(),
-    items,
+    extraChallenges: await generateExpandedDailyChallenges(
+      version,
+      env.challengeSalt,
+      publicChampions,
+      liveItems,
+      await getVerifiedRankedMatchChallenges({
+        date: generated.date,
+        publicChampions,
+        summonerSpells
+      })
+    ),
+    champions: publicChampions,
+    items: liveItems,
     stats
   };
 

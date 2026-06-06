@@ -62,4 +62,4 @@ If `champions` has the full roster and suggestions insert from `/suggest`, Supab
 
 - Keep `DATABASE_URL` server-side only. Do not prefix it with `NEXT_PUBLIC_`.
 - The suggestion form posts to `/api/suggestions` and persists into the `suggestions` table when `DATABASE_URL` is configured.
-- Free-tier Supabase can pause after inactivity. If the deployed app suddenly falls back to demo-like behavior, check whether the project needs to be resumed.
+- Free-tier Supabase can pause after inactivity. If accounts, saved stats, or leaderboards stop updating, check whether the project needs to be resumed.

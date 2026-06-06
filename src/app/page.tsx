@@ -3,8 +3,18 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { CreatorFooter } from "@/components/creator-footer";
+import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions } from "@/lib/riot/data-dragon";
 
-export default function Home() {
+export default async function Home() {
+  const version = await getLatestDataDragonVersion();
+  const [publicChampions, liveItems] = await Promise.all([
+    getLivePublicChampions(version),
+    getLiveGameItems(version)
+  ]);
+  const previewItems = liveItems
+    .filter((item) => item.purchasable && item.goldTotal >= 2200 && !item.tags.includes("Trinket") && !item.tags.includes("Consumable"))
+    .slice(0, 6);
+
   return (
     <main className="min-h-screen bg-[#050914] text-[#f8fafc]">
       <RiftCommandBar />
@@ -36,30 +46,30 @@ export default function Home() {
               </a>
             </div>
             <div className="mt-8 grid max-w-xl grid-cols-3 gap-3 text-sm text-[#94a3b8]">
-              <LandingStat value="172" label="Champions" />
-              <LandingStat value="Daily" label="Seeds" />
-              <LandingStat value="AWS" label="Ready" />
+              <LandingStat value={String(publicChampions.length)} label="Champions" />
+              <LandingStat value={version} label="Patch" />
+              <LandingStat value={String(liveItems.length)} label="Items" />
             </div>
           </div>
 
           <div className="hidden rounded-lg border border-white/12 bg-[#0a1020]/92 p-4 shadow-2xl lg:grid">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <div className="font-display text-sm uppercase text-[#f5c542]">Today&apos;s Build Puzzle</div>
-                <div className="text-2xl font-bold">Garen vs ranged control</div>
+                <div className="font-display text-sm uppercase text-[#f5c542]">Verified Riot Catalog</div>
+                <div className="text-2xl font-bold">Live Data Dragon {version}</div>
               </div>
               <Share2 className="text-[#38bdf8]" />
             </div>
             <div className="grid grid-cols-6 gap-2">
-              {["3078", "6333", "6631", "3748", "3053", "3047"].map((id, index) => (
-                <div key={id} className={`grid min-h-20 place-items-center rounded-sm border p-2 ${index < 3 ? "border-green-400/50 bg-green-500/15" : "border-white/10 bg-white/5"}`}>
+              {previewItems.map((item) => (
+                <div key={item.id} className="grid min-h-20 place-items-center rounded-sm border border-white/10 bg-white/5 p-2" title={item.name}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={`https://ddragon.leagueoflegends.com/cdn/16.11.1/img/item/${id}.png`} alt="" className="h-10 w-10 object-contain" />
+                  <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain" />
                 </div>
               ))}
             </div>
             <div className="mt-4 rounded-md border border-white/10 bg-[#111827] p-3 text-sm text-[#cbd5e1]">
-              Rift Daily #42 - solved in 2 tries - streak 5
+              {publicChampions.length} champions and {liveItems.length} Summoner&apos;s Rift items loaded from Riot Data Dragon.
             </div>
           </div>
         </div>
@@ -77,14 +87,10 @@ export default function Home() {
           <p className="mt-4 max-w-2xl text-[#94a3b8]">The platform is structured for authenticated streaks, solve history, and leaderboard entries backed by PostgreSQL.</p>
         </div>
         <div className="rounded-lg border border-white/10 bg-[#111827] p-5">
-          <div className="font-display mb-4 flex items-center gap-2 text-[#f5c542]"><Crown size={18} /> Today&apos;s Top Solves</div>
-          {["ZedMain92", "BaronFlip", "LuxQEnjoyer"].map((name, index) => (
-            <div key={name} className="grid grid-cols-[2rem_1fr_auto] border-t border-white/8 py-3 text-sm">
-              <span className="font-display text-[#f5c542]">{index + 1}</span>
-              <span>{name}</span>
-              <span className="text-[#94a3b8]">{index + 1} try</span>
-            </div>
-          ))}
+          <div className="font-display mb-4 flex items-center gap-2 text-[#f5c542]"><Crown size={18} /> Verified Leaderboards</div>
+          <p className="border-t border-white/8 py-4 text-sm leading-6 text-[#94a3b8]">
+            Scores appear here only after authenticated Supabase users submit real attempts. No fabricated leaderboard rows are shown.
+          </p>
         </div>
       </section>
 
@@ -133,11 +139,8 @@ function RiftCommandBar() {
       <div className="mx-auto grid h-[4.75rem] w-[calc(100%_-_1.5rem)] max-w-[82.5rem] grid-cols-[1fr_auto] items-center gap-4 md:w-[calc(100%_-_3rem)] xl:grid-cols-[1fr_auto_1fr] xl:gap-7">
         <Link href="/" className="group inline-flex min-w-0 items-center gap-3 text-white">
           <span className="flex min-w-0 flex-col leading-none">
-            <span className="font-display bg-gradient-to-r from-[#fff6bf] via-[#f5c542] to-[#c89b3c] bg-clip-text text-base font-black uppercase tracking-[0.22em] text-transparent drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">
+            <span className="font-display bg-gradient-to-r from-[#fff8cb] via-[#f6c74a] to-[#b8872b] bg-clip-text text-xl font-black uppercase tracking-[0.035em] text-transparent drop-shadow-[0_0_20px_rgba(245,197,66,.22)] sm:text-2xl">
               Rift Daily
-            </span>
-            <span className="mt-1.5 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-[#c7d8ff]/55">
-              Puzzle Arena
             </span>
           </span>
         </Link>

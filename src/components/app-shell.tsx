@@ -148,11 +148,11 @@ export function AppShell() {
           className={cn("min-h-0", view === "item-build" || view === "item-recipe" ? "overflow-visible" : "overflow-hidden")}
         >
 
-        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} />}
+        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} champions={daily.champions} items={daily.items} username={daily.stats.username} />}
         {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={daily.stats.username} />}
-        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} champions={daily.champions} username={daily.stats.username} />}
-        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} champions={daily.champions} username={daily.stats.username} />}
-        {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} />}
+        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={daily.stats.username} />}
+        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={daily.stats.username} />}
+        {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} username={daily.stats.username} />}
 
         {view === "leaderboard" && <LeaderboardPanel entries={leaderboard} />}
         </motion.div>
@@ -265,13 +265,13 @@ function LeaderboardPreview({ entries }: { entries: LeaderboardEntry[] }) {
   return (
     <HubCard title="Today's Top Solves">
       <div className="mt-2 grid gap-2 text-sm">
-        {(preview.length > 0 ? preview : demoLeaderboard()).map((entry) => (
+        {preview.length > 0 ? preview.map((entry) => (
           <div key={`${entry.rank}-${entry.username}`} className="grid grid-cols-[1.5rem_1fr_auto] items-center gap-2">
             <span className="font-display text-[#c89b3c]">{entry.rank}</span>
             <span className="truncate">{entry.username}</span>
             <span className="text-xs text-[color:var(--muted)]">{entry.winRate}%</span>
           </div>
-        ))}
+        )) : <p className="text-xs leading-5 text-[color:var(--muted)]">No verified leaderboard entries yet.</p>}
       </div>
     </HubCard>
   );
@@ -304,14 +304,6 @@ function ProfileHub({
       )}
     </HubCard>
   );
-}
-
-function demoLeaderboard(): LeaderboardEntry[] {
-  return [
-    { rank: 1, username: "ZedMain92", currentStreak: 8, maxStreak: 12, gamesPlayed: 44, winRate: 98, fastestSolveMs: 12000, perfectSolves: 9 },
-    { rank: 2, username: "BaronFlip", currentStreak: 5, maxStreak: 10, gamesPlayed: 38, winRate: 94, fastestSolveMs: 18000, perfectSolves: 7 },
-    { rank: 3, username: "LuxQEnjoyer", currentStreak: 4, maxStreak: 9, gamesPlayed: 31, winRate: 91, fastestSolveMs: 23000, perfectSolves: 5 }
-  ];
 }
 
 function currentGameLabel(view: View) {

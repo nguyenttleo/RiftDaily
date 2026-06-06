@@ -48,6 +48,7 @@ export interface GameItem {
 
 export interface PublicChampion {
   id: string;
+  key?: number;
   name: string;
   title: string;
   roles: string[];
@@ -59,12 +60,19 @@ export interface PublicChampion {
   splashUrl: string;
 }
 
+export interface SummonerSpellRef {
+  id: number;
+  key: string;
+  name: string;
+  iconUrl: string;
+}
+
 export interface OptionItem {
   id: string;
   label: string;
   sublabel?: string;
   imageUrl?: string;
-  spells?: string[];
+  spells?: SummonerSpellRef[];
 }
 
 export interface PublicAbilityChallenge {
@@ -106,10 +114,10 @@ export interface ItemBuildChallenge {
   answerItemIds: string[];
   answerBootsId: string;
   matchupNotes: string[];
-  winrateModel: {
-    source: "Data Dragon item stats + matchup heuristic" | "External winrate API";
-    baseline: number;
-    projected: number;
+  catalogModel: {
+    source: string;
+    candidateCount: number;
+    targetItemCount: number;
   };
 }
 
@@ -124,42 +132,61 @@ export interface ItemRecipeChallenge {
   allComponents: GameItem[];
 }
 
-export interface GuessEloChallenge {
+export interface GuessEloRound {
   id: string;
-  type: "guess-elo";
   date: string;
   lanes: Array<{
     role: string;
     champion: PublicChampion;
-    spells: string[];
+    spells: SummonerSpellRef[];
   }>;
   enemyLanes: Array<{
     role: string;
     champion: PublicChampion;
-    spells: string[];
+    spells: SummonerSpellRef[];
   }>;
   options: string[];
   answerTier: string;
   signalNotes: string[];
   dataSource: string;
+  sourceMatch?: {
+    matchId: string;
+    gameVersion: string;
+    queueId: number;
+    platform: string;
+  };
+  unavailableReason?: string;
 }
 
-export interface DodgeQueueChallenge {
+export interface GuessEloChallenge extends GuessEloRound {
+  type: "guess-elo";
+  rounds?: GuessEloRound[];
+}
+
+export interface DodgeQueueRound {
   id: string;
-  type: "dodge-queue";
   date: string;
   allyTeam: PublicChampion[];
   enemyTeam: PublicChampion[];
-  allySpells: string[][];
-  enemySpells: string[][];
+  allySpells: SummonerSpellRef[][];
+  enemySpells: SummonerSpellRef[][];
   allyBans: PublicChampion[];
   enemyBans: PublicChampion[];
   answer: "queue" | "dodge";
-  community: {
-    queuePercent: number;
-    dodgePercent: number;
-  };
   explanation: string;
+  sourceMatch?: {
+    matchId: string;
+    gameVersion: string;
+    queueId: number;
+    platform: string;
+    allyTeamWon: boolean;
+  };
+  unavailableReason?: string;
+}
+
+export interface DodgeQueueChallenge extends DodgeQueueRound {
+  type: "dodge-queue";
+  rounds?: DodgeQueueRound[];
 }
 
 export interface SkillshotDodgeChallenge {

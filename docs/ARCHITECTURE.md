@@ -7,7 +7,7 @@ flowchart TD
   C --> D["Daily challenge engine"]
   C --> E["Supabase Postgres"]
   C --> F["Riot Data Dragon"]
-  C --> G["Optional Riot API"]
+  C --> G["Riot API Match-V5 / League-V4"]
   I["EventBridge Scheduler"] --> J["/api/cron/generate-daily"]
   J --> E
 ```
@@ -16,15 +16,18 @@ flowchart TD
 
 1. `/api/challenges/daily` gets the latest Riot Data Dragon version.
 2. The challenge engine builds deterministic UTC daily puzzles from `CHALLENGE_SALT`.
-3. Item, recipe, Elo, Dodge/Queue, and Trainer modes use the generated Riot champion/item catalog.
-4. Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
-5. Auth, stats, guesses, suggestions, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
+3. Item and recipe modes use live Riot Data Dragon champion/item/spell data hydrated server-side.
+4. Guess the Elo and Dodge/Queue use Riot League-V4 source players plus Match-V5 ranked solo matches. A round is accepted only when Match-V5 provides five lane positions per team and exactly one Smite jungler on each team.
+5. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
+6. Auth, stats, guesses, suggestions, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
 
 ## Data Sources
 
 - Riot Data Dragon: champion, item, spell, splash, square, and versioned static data.
+- Riot Match-V5: `teamPosition`, `summoner1Id`, `summoner2Id`, bans, team outcome, match ID, queue, and game version for ranked lobby rounds.
+- Riot League-V4: ranked source tier for Guess the Elo answer buckets.
 - CommunityDragon: ranked emblem and trainer character-render assets.
-- Local generated catalog: fallback champion metadata so local demo mode still works.
+- Bundled Riot-derived catalog: fallback metadata only if Data Dragon is temporarily unreachable.
 
 ## Supabase Tables
 
@@ -44,8 +47,8 @@ flowchart TD
 
 ## Deployment Model
 
-AWS Amplify runs the Next.js SSR app and API routes. Supabase remains the database. Riot data is fetched server-side. The app remains usable in demo mode if no database is configured, but production should set all variables in `.env.example`.
+AWS Amplify runs the Next.js SSR app and API routes. Supabase remains the database. Riot data is fetched server-side. Without `DATABASE_URL`, gameplay still loads Riot Data Dragon catalog puzzles, but accounts, saved stats, and leaderboards are disabled. Without `RIOT_API_KEY`, Match-V5 backed Elo/Lobby modes show a verified-data configuration notice instead of generated lane or spell data.
 
 ## Riot Compliance
 
-The public footer includes the fan-project Riot disclaimer. The app uses static data/assets and does not require player-specific private match data.
+The public footer includes the fan-project Riot disclaimer. Match-backed modes use public Riot API match and ranked endpoints server-side; PUUIDs and summoner identities are not displayed in the UI.

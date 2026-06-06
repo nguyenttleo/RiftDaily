@@ -54,18 +54,6 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
     }
   }
 
-  async function demoSignIn() {
-    setBusy(true);
-    setMessage("");
-    await signIn("credentials", {
-      email: "demo@riftdaily.local",
-      password: "demo1234",
-      redirect: false
-    });
-    setBusy(false);
-    onAuthChange();
-  }
-
   if (status === "loading") {
     return <div className="h-10 w-40 animate-pulse rounded-md bg-white/10" />;
   }
@@ -103,9 +91,6 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={() => setExpanded(true)} icon={<LogIn size={16} />}>
             Sign in
-          </Button>
-          <Button type="button" variant="secondary" onClick={demoSignIn} disabled={busy}>
-            Demo
           </Button>
         </div>
       )}
@@ -161,9 +146,6 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={busy} icon={mode === "register" ? <UserPlus size={16} /> : <LogIn size={16} />}>
           {mode === "register" ? "Create" : "Sign in"}
-        </Button>
-        <Button type="button" variant="secondary" onClick={demoSignIn} disabled={busy}>
-          Demo
         </Button>
         <Button type="button" variant="ghost" onClick={() => setExpanded(false)} disabled={busy}>
           Cancel

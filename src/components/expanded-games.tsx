@@ -8,30 +8,46 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type {
   DodgeQueueChallenge,
+  DodgeQueueRound,
   GameItem,
   GuessEloChallenge,
+  GuessEloRound,
   ItemBuildChallenge,
   ItemRecipeChallenge,
   OptionItem,
-  PublicChampion
+  PublicChampion,
+  SummonerSpellRef
 } from "@/types";
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
 type ItemGuessResult = "correct" | "wrong";
 
-export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) {
+export function ItemBuildGame({
+  challenge,
+  champions = [],
+  items = [],
+  username = "Guest"
+}: {
+  challenge: ItemBuildChallenge;
+  champions?: PublicChampion[];
+  items?: GameItem[];
+  username?: string;
+}) {
+  const rounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
+  const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
   const [guesses, setGuesses] = useState<Array<{ items: string[]; boots: string }>>([]);
   const [modalOpen, setModalOpen] = useState(false);
-  const answerSet = useMemo(() => new Set(challenge.answerItemIds), [challenge.answerItemIds]);
-  const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, challenge.answerBootsId));
+  const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
+  const round = rounds[roundIndex % rounds.length];
+  const answerSet = useMemo(() => new Set(round.answerItemIds), [round.answerItemIds]);
+  const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, round.answerBootsId));
   const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
   const ready = selectedItems.length === 5 && Boolean(selectedBoots);
-  const baselineDelta = challenge.winrateModel.projected - challenge.winrateModel.baseline;
-  const randomizedPossibleItems = useMemo(() => seededShuffle(challenge.possibleItems, `${challenge.id}:possible-items`), [challenge.id, challenge.possibleItems]);
-  const randomizedPossibleBoots = useMemo(() => seededShuffle(challenge.possibleBoots, `${challenge.id}:possible-boots`), [challenge.id, challenge.possibleBoots]);
+  const randomizedPossibleItems = useMemo(() => seededShuffle(round.possibleItems, `${round.id}:possible-items`), [round.id, round.possibleItems]);
+  const randomizedPossibleBoots = useMemo(() => seededShuffle(round.possibleBoots, `${round.id}:possible-boots`), [round.id, round.possibleBoots]);
   const lockedBuildResults = useMemo(() => {
     const results = new Map<string, ItemGuessResult>();
 
@@ -40,11 +56,11 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
         results.set(itemId, answerSet.has(itemId) ? "correct" : "wrong");
       }
 
-      results.set(guess.boots, guess.boots === challenge.answerBootsId ? "correct" : "wrong");
+      results.set(guess.boots, guess.boots === round.answerBootsId ? "correct" : "wrong");
     }
 
     return results;
-  }, [answerSet, challenge.answerBootsId, guesses]);
+  }, [answerSet, round.answerBootsId, guesses]);
 
   function toggleItem(id: string) {
     if (finished) {
@@ -77,6 +93,14 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
     setModalOpen(false);
   }
 
+  function nextBuild() {
+    setRoundIndex((current) => current + 1);
+    setSelectedItems([]);
+    setSelectedBoots("");
+    setGuesses([]);
+    setModalOpen(false);
+  }
+
   function removeItem(id: string) {
     if (!finished) {
       setSelectedItems((current) => current.filter((item) => item !== id));
@@ -96,13 +120,14 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
 
     const guess = { items: selectedItems, boots: selectedBoots };
     const nextGuesses = [...guesses, guess];
-    const nextSolved = isBuildGuessSolved(guess, answerSet, challenge.answerBootsId);
+    const nextSolved = isBuildGuessSolved(guess, answerSet, round.answerBootsId);
 
     setGuesses(nextGuesses);
     setSelectedItems([]);
     setSelectedBoots("");
 
     if (nextSolved || nextGuesses.length >= BUILD_MAX_GUESSES) {
+      recordStreak(nextSolved);
       setModalOpen(true);
     }
   }
@@ -118,15 +143,16 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
               </span>
               <h2 className="text-xl font-semibold">Item Build Puzzle</h2>
             </div>
+            <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
             <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-3">
-              <ChampionLine label="Enemy Team" champions={challenge.enemyTeam} compact />
+              <ChampionLine label="Enemy Team" champions={round.enemyTeam} compact />
             </div>
             <div className="relative aspect-[16/11] min-h-64 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018]">
               <div
                 className="absolute inset-0 bg-cover opacity-80"
                 style={{
-                  backgroundImage: `url(${challenge.champion.splashUrl})`,
-                  backgroundPosition: championSplashPosition(challenge.champion.name)
+                  backgroundImage: `url(${round.champion.splashUrl})`,
+                  backgroundPosition: championSplashPosition(round.champion.name)
                 }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
@@ -134,18 +160,13 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
             <div className="grid gap-3">
               <div>
                 <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
-                <div className="font-display text-4xl font-bold">{challenge.champion.name}</div>
-                <div className="text-sm text-[color:var(--muted)]">{challenge.champion.roles.join(" / ")}</div>
+                <div className="font-display text-4xl font-bold">{round.champion.name}</div>
+                <div className="text-sm text-[color:var(--muted)]">{round.champion.roles.join(" / ")}</div>
               </div>
               <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-                <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Model</div>
-                <div className="mt-1 flex items-end gap-2">
-                  <span className="font-display text-3xl font-bold text-[#c89b3c]">{challenge.winrateModel.projected.toFixed(1)}%</span>
-                  <span className={cn("pb-1 text-sm font-bold", baselineDelta >= 0 ? "text-green-300" : "text-red-300")}>
-                    {baselineDelta >= 0 ? "+" : ""}{baselineDelta.toFixed(1)}% vs baseline
-                  </span>
-                </div>
-                <div className="text-xs text-[color:var(--muted)]">Baseline {challenge.winrateModel.baseline}%</div>
+                <div className="text-xs uppercase text-[color:var(--muted)]">Verified Catalog</div>
+                <div className="mt-1 font-display text-3xl font-bold text-[#c89b3c]">{round.possibleItems.length}</div>
+                <div className="text-xs text-[color:var(--muted)]">Live item candidates from {round.catalogModel.source}.</div>
               </div>
             </div>
           </div>
@@ -154,9 +175,9 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
         <div className="grid gap-4">
           <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
             <h3 className="font-display text-2xl font-extrabold tracking-tight">
-              Build {challenge.champion.name}&apos;s best 5-item setup into this enemy team.
+              Build {round.champion.name}&apos;s verified 5-item tag setup into this enemy team.
             </h3>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">Six tries. Five completed items and one pair of boots. Order does not matter.</p>
+            <p className="mt-1 text-sm text-[color:var(--muted)]">Six tries. Five completed Riot Data Dragon items and one pair of boots. Order does not matter.</p>
           </div>
           <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)]">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -180,7 +201,7 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
                   possibleItems={randomizedPossibleItems}
                   possibleBoots={randomizedPossibleBoots}
                   answerSet={answerSet}
-                  answerBootsId={challenge.answerBootsId}
+                  answerBootsId={round.answerBootsId}
                   onRemoveItem={removeItem}
                   onRemoveBoots={removeBoots}
                 />
@@ -192,7 +213,7 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
             <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
-                <span className="text-xs text-[color:var(--muted)]">{challenge.possibleItems.length} role-matched options</span>
+                <span className="text-xs text-[color:var(--muted)]">{round.possibleItems.length} verified options</span>
               </div>
               <div className="grid content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-4 2xl:grid-cols-6">
                 {randomizedPossibleItems.map((item) => (
@@ -244,11 +265,12 @@ export function ItemBuildGame({ challenge }: { challenge: ItemBuildChallenge }) 
       </div>
       {modalOpen && (
         <BuildWordleModal
-          challenge={challenge}
+          round={round}
           guesses={guesses}
           solved={solved}
           onClose={() => setModalOpen(false)}
           onReset={reset}
+          onNext={nextBuild}
         />
       )}
     </section>
@@ -316,23 +338,25 @@ function BuildWordleRow({
 }
 
 function BuildWordleModal({
-  challenge,
+  round,
   guesses,
   solved,
   onClose,
-  onReset
+  onReset,
+  onNext
 }: {
-  challenge: ItemBuildChallenge;
+  round: ItemBuildChallenge;
   guesses: Array<{ items: string[]; boots: string }>;
   solved: boolean;
   onClose: () => void;
   onReset: () => void;
+  onNext: () => void;
 }) {
-  const answerSet = new Set(challenge.answerItemIds);
-  const targetItems = challenge.answerItemIds
-    .map((id) => challenge.possibleItems.find((item) => item.id === id))
+  const answerSet = new Set(round.answerItemIds);
+  const targetItems = round.answerItemIds
+    .map((id) => round.possibleItems.find((item) => item.id === id))
     .filter(Boolean) as GameItem[];
-  const targetBoots = challenge.possibleBoots.find((item) => item.id === challenge.answerBootsId);
+  const targetBoots = round.possibleBoots.find((item) => item.id === round.answerBootsId);
   const targetBuild = targetBoots ? [...targetItems, targetBoots] : targetItems;
 
   return (
@@ -357,7 +381,7 @@ function BuildWordleModal({
         <div className="mt-5 grid gap-1.5">
           {guesses.map((guess, rowIndex) => (
             <div key={`${guess.boots}:${rowIndex}`} className="grid grid-cols-6 gap-1.5">
-              {[...guess.items.map((id) => answerSet.has(id)), guess.boots === challenge.answerBootsId].map((correct, index) => (
+              {[...guess.items.map((id) => answerSet.has(id)), guess.boots === round.answerBootsId].map((correct, index) => (
                 <div key={index} className={cn("h-8 rounded-sm border", correct ? "border-green-300/60 bg-green-500/70" : "border-white/10 bg-[#2b313d]")} />
               ))}
             </div>
@@ -382,6 +406,9 @@ function BuildWordleModal({
           <Button type="button" onClick={onReset}>
             Replay
           </Button>
+          <Button type="button" onClick={onNext}>
+            Next build
+          </Button>
         </div>
       </div>
     </div>
@@ -390,6 +417,97 @@ function BuildWordleModal({
 
 function isBuildGuessSolved(guess: { items: string[]; boots: string }, answerSet: Set<string>, answerBootsId: string) {
   return guess.items.length === 5 && guess.items.every((id) => answerSet.has(id)) && guess.boots === answerBootsId;
+}
+
+function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
+  if (champions.length < 6 || itemCatalog.length < 20) {
+    return [base];
+  }
+
+  return [
+    base,
+    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedBuildRound(base, champions, itemCatalog, index + 1))
+  ];
+}
+
+function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number): ItemBuildChallenge {
+  const seed = `${base.date}:item-build-infinite:${round}`;
+  const champion = champions[hashString(`${seed}:champion`) % champions.length];
+  const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
+  const candidateItems = itemCatalog
+    .filter((item) => item.goldTotal >= 2200 && item.purchasable && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
+    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) }))
+    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
+  const bootCandidates = itemCatalog
+    .filter((item) => isBuildBootUpgrade(item))
+    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) }))
+    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
+
+  if (candidateItems.length < 5 || bootCandidates.length === 0) {
+    return base;
+  }
+
+  const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
+  const answerBoots = bootCandidates[0].item;
+  const possibleItems = candidateItems.slice(0, 36).map((candidate) => candidate.item);
+  const possibleBoots = bootCandidates.map((candidate) => candidate.item);
+
+  return {
+    ...base,
+    id: `${base.date}:item-build:${round}`,
+    champion,
+    enemyTeam,
+    candidates: candidateItems.slice(0, 4).map((candidate) => candidate.item),
+    possibleItems,
+    possibleBoots,
+    answerItemId: answerBuild[0].id,
+    answerItemIds: answerBuild.map((item) => item.id),
+    answerBootsId: answerBoots.id,
+    matchupNotes: [
+      `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
+      "Answer is generated from Riot Data Dragon item tags, champion tags, item costs, and purchasability flags."
+    ],
+    catalogModel: {
+      ...base.catalogModel,
+      candidateCount: possibleItems.length,
+      targetItemCount: answerBuild.length
+    }
+  };
+}
+
+function scoreBuildItemForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {
+  const enemyTanks = enemyTeam.filter((enemy) => enemy.roles.includes("Tank")).length;
+  const enemyAssassins = enemyTeam.filter((enemy) => enemy.roles.includes("Assassin")).length;
+  const wantsAp = champion.roles.includes("Mage");
+  const wantsAd = champion.roles.some((role) => ["Marksman", "Fighter", "Assassin"].includes(role));
+  let score = item.goldTotal / 1000;
+
+  if (wantsAp && item.tags.includes("SpellDamage")) score += 8;
+  if (wantsAd && item.tags.includes("Damage")) score += 8;
+  if (champion.roles.includes("Tank") && item.tags.some((tag) => ["Health", "Armor", "SpellBlock"].includes(tag))) score += 8;
+  if (enemyTanks >= 2 && item.tags.some((tag) => ["ArmorPenetration", "MagicPenetration", "AttackSpeed"].includes(tag))) score += 5;
+  if (enemyAssassins >= 2 && item.tags.some((tag) => ["Armor", "Health"].includes(tag))) score += 4;
+  if (item.tags.includes("Boots")) score -= 8;
+
+  return score;
+}
+
+function scoreBuildBootsForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {
+  const enemyPhysical = enemyTeam.filter((enemy) => enemy.roles.some((role) => ["Marksman", "Fighter", "Assassin"].includes(role))).length;
+  const enemyMagic = enemyTeam.filter((enemy) => enemy.roles.some((role) => ["Mage", "Support"].includes(role))).length;
+  let score = item.goldTotal / 100;
+
+  if (champion.roles.includes("Marksman") && item.tags.includes("AttackSpeed")) score += 20;
+  if (champion.roles.includes("Mage") && item.tags.some((tag) => ["MagicPenetration", "CooldownReduction"].includes(tag))) score += 18;
+  if (champion.roles.includes("Tank") && item.tags.includes("Armor")) score += 14;
+  if (enemyPhysical >= 3 && item.tags.includes("Armor")) score += 12;
+  if (enemyMagic >= 3 && item.tags.some((tag) => ["SpellBlock", "Tenacity"].includes(tag))) score += 12;
+
+  return score;
+}
+
+function isBuildBootUpgrade(item: GameItem) {
+  return item.purchasable && item.name !== "Boots" && item.tags.includes("Boots") && item.goldTotal >= 900;
 }
 
 export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = "Guest" }: { challenge: ItemRecipeChallenge; items?: GameItem[]; username?: string }) {
@@ -847,10 +965,10 @@ function isRecipeComponentChoice(item: GameItem, itemCatalog: GameItem[]) {
   );
 }
 
-type EloRound = Pick<GuessEloChallenge, "id" | "date" | "lanes" | "enemyLanes" | "options" | "answerTier" | "signalNotes" | "dataSource">;
+type EloRound = GuessEloRound;
 
-export function GuessEloGame({ challenge, champions, username = "Guest" }: { challenge: GuessEloChallenge; champions: PublicChampion[]; username?: string }) {
-  const rounds = useMemo(() => createEloRounds(challenge, champions), [challenge, champions]);
+export function GuessEloGame({ challenge, username = "Guest" }: { challenge: GuessEloChallenge; username?: string }) {
+  const rounds = useMemo(() => createEloRounds(challenge), [challenge]);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -877,6 +995,9 @@ export function GuessEloGame({ challenge, champions, username = "Guest" }: { cha
 
   return (
     <PuzzleFrame icon={<UsersRound size={18} />} title="Guess the Elo">
+      {round.unavailableReason ? (
+        <VerifiedDataUnavailable reason={round.unavailableReason} />
+      ) : (
       <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <div className="grid min-h-0 grid-rows-2 gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-3">
@@ -926,6 +1047,7 @@ export function GuessEloGame({ challenge, champions, username = "Guest" }: { cha
           </div>
         )}
       </div>
+      )}
     </PuzzleFrame>
   );
 }
@@ -946,7 +1068,7 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
             <div className="mt-1 flex gap-1">
               {lane.spells.map((spell) => (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={spell} src={summonerSpellIcon(spell)} alt={spell} title={spell} className="h-7 w-7 rounded-sm border border-[#3c3421]" />
+                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-7 w-7 rounded-sm border border-[#3c3421]" />
               ))}
             </div>
           </div>
@@ -956,8 +1078,8 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
   );
 }
 
-export function DodgeQueueGame({ challenge, champions = [], username = "Guest" }: { challenge: DodgeQueueChallenge; champions?: PublicChampion[]; username?: string }) {
-  const rounds = useMemo(() => createDodgeQueueRounds(challenge, champions), [challenge, champions]);
+export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: DodgeQueueChallenge; username?: string }) {
+  const rounds = useMemo(() => createDodgeQueueRounds(challenge), [challenge]);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -983,6 +1105,9 @@ export function DodgeQueueGame({ challenge, champions = [], username = "Guest" }
 
   return (
     <PuzzleFrame icon={<CircleSlash size={18} />} title="Dodge or Queue">
+      {round.unavailableReason ? (
+        <VerifiedDataUnavailable reason={round.unavailableReason} />
+      ) : (
       <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <DraftScreen
@@ -1031,93 +1156,18 @@ export function DodgeQueueGame({ challenge, champions = [], username = "Guest" }
         </div>
         {submitted && (
           <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <Bar label="Queue" value={round.community.queuePercent} />
-              <Bar label="Dodge" value={round.community.dodgePercent} />
-            </div>
+            <div className="text-xs uppercase text-[#c89b3c]">Verified match result</div>
             <p className="mt-2 text-sm text-[color:var(--muted)]">{round.explanation}</p>
           </div>
         )}
       </div>
+      )}
     </PuzzleFrame>
   );
 }
 
-function createDodgeQueueRounds(base: DodgeQueueChallenge, champions: PublicChampion[]) {
-  const hydratedBase = withDodgeQueueSpells(base);
-
-  if (champions.length < 10) {
-    return [hydratedBase];
-  }
-
-  return [
-    hydratedBase,
-    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedDodgeQueueRound(hydratedBase, champions, index + 1))
-  ];
-}
-
-function withDodgeQueueSpells(challenge: DodgeQueueChallenge): DodgeQueueChallenge {
-  if (challenge.allySpells?.length === 5 && challenge.enemySpells?.length === 5) {
-    return challenge;
-  }
-
-  return {
-    ...challenge,
-    allySpells: createUiLaneSpellLoadout(`${challenge.id}:ally`),
-    enemySpells: createUiLaneSpellLoadout(`${challenge.id}:enemy`)
-  };
-}
-
-function createGeneratedDodgeQueueRound(base: DodgeQueueChallenge, champions: PublicChampion[], round: number): DodgeQueueChallenge {
-  const seed = `${base.date}:dodge-queue-infinite:${round}`;
-  const allyTeam = pickUiLaneAwareTeam(champions, `${seed}:ally`, [], 7);
-  const enemyTeam = pickUiLaneAwareTeam(champions, `${seed}:enemy`, allyTeam.map((champion) => champion.id), 8);
-  const pickedChampionIds = [...allyTeam, ...enemyTeam].map((champion) => champion.id);
-  const allyBans = pickUiUnique(champions, `${seed}:ally-bans`, 5, pickedChampionIds);
-  const enemyBans = pickUiUnique(champions, `${seed}:enemy-bans`, 5, [...pickedChampionIds, ...allyBans.map((champion) => champion.id)]);
-  const allyRoleFit = eloLaneLabels.reduce((score, role, index) => score + laneFitForUi(role, allyTeam[index]), 0);
-  const enemyThreat = enemyTeam.reduce((score, champion) => score + (champion.roles.includes("Tank") ? 1 : 0) + (champion.roles.includes("Assassin") ? 1 : 0), 0);
-  const dodgeScore = 7 - allyRoleFit + enemyThreat;
-  const answer = dodgeScore >= 6 ? "dodge" : "queue";
-  const dodgePercent = Math.min(87, Math.max(19, 42 + dodgeScore * 6));
-
-  return {
-    ...base,
-    id: `${base.date}:dodge-queue:${round}`,
-    allyTeam,
-    enemyTeam,
-    allySpells: createUiLaneSpellLoadout(`${seed}:ally`),
-    enemySpells: createUiLaneSpellLoadout(`${seed}:enemy`),
-    allyBans,
-    enemyBans,
-    answer,
-    community: {
-      dodgePercent,
-      queuePercent: 100 - dodgePercent
-    },
-    explanation:
-      answer === "dodge"
-        ? "The lobby has enough role mismatch and enemy lockdown pressure that the model recommends dodging."
-        : "The comp has workable role coverage and enough playable lanes to queue it up."
-  };
-}
-
-function createUiLaneSpellLoadout(seed: string) {
-  return eloLaneLabels.map((role) => spellsForEloRole(role, `${seed}:${role}:spells`));
-}
-
-function pickUiLaneAwareTeam(champions: PublicChampion[], seed: string, excluded: string[], chaosThreshold: number) {
-  const excludedSet = new Set(excluded);
-
-  return eloLaneLabels.map((role) => {
-    const preferredPool = championsForEloLane(champions, role).filter((champion) => !excludedSet.has(champion.id));
-    const available = champions.filter((champion) => !excludedSet.has(champion.id));
-    const chaosRoll = hashString(`${seed}:${role}:chaos`) % 10;
-    const pool = chaosRoll >= chaosThreshold || preferredPool.length === 0 ? available : preferredPool;
-    const champion = pool[hashString(`${seed}:${role}:pick`) % pool.length] ?? available[0] ?? champions[0];
-    excludedSet.add(champion.id);
-    return champion;
-  });
+function createDodgeQueueRounds(base: DodgeQueueChallenge): DodgeQueueRound[] {
+  return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
 function pickUiUnique(list: PublicChampion[], seed: string, count: number, excluded: string[]) {
@@ -1139,14 +1189,6 @@ function pickUiUnique(list: PublicChampion[], seed: string, count: number, exclu
   return picked;
 }
 
-function laneFitForUi(role: string, champion: PublicChampion): number {
-  if (role === "Jungle") return champion.roles.some((championRole) => ["Assassin", "Fighter", "Tank"].includes(championRole)) ? 1 : 0;
-  if (role === "Bot") return champion.roles.includes("Marksman") ? 1 : 0;
-  if (role === "Supp") return champion.roles.some((championRole) => ["Support", "Tank"].includes(championRole)) ? 1 : 0;
-  if (role === "Mid") return champion.roles.some((championRole) => ["Mage", "Assassin"].includes(championRole)) ? 1 : 0;
-  return champion.roles.some((championRole) => ["Fighter", "Tank"].includes(championRole)) ? 1 : 0;
-}
-
 function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
   return (
     <section className="flex h-full min-h-0 flex-col gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
@@ -1157,6 +1199,20 @@ function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title
       </div>
       {children}
     </section>
+  );
+}
+
+function VerifiedDataUnavailable({ reason }: { reason: string }) {
+  return (
+    <div className="grid min-h-80 flex-1 place-items-center rounded-sm border border-[#3c3421] bg-[#0b111b] p-6 text-center">
+      <div className="max-w-lg">
+        <div className="font-display text-2xl font-bold text-[#c89b3c]">Verified Riot match data needed</div>
+        <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">{reason}</p>
+        <p className="mt-3 text-xs leading-5 text-[color:var(--muted)]">
+          These modes only display lane assignments from Match-V5 <span className="text-white">teamPosition</span> and summoner spells from Match-V5 spell IDs mapped through Data Dragon.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1280,7 +1336,7 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
           <div className="mt-1 flex gap-1">
             {pick.spells.map((spell) => (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={spell} src={summonerSpellIcon(spell)} alt={spell} title={spell} className="h-6 w-6 rounded-sm border border-[#3c3421]" />
+              <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421]" />
             ))}
           </div>
         )}
@@ -1302,7 +1358,7 @@ function BanIcon({ pick }: { pick?: OptionItem }) {
   );
 }
 
-function championToOption(champion: PublicChampion, spells?: string[]): OptionItem {
+function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[]): OptionItem {
   return {
     id: champion.id,
     label: champion.name,
@@ -1393,97 +1449,8 @@ function getItemName(itemsList: GameItem[], id: string) {
   return itemsList.find((item) => item.id === id)?.name ?? "Unknown item";
 }
 
-const eloLaneLabels = ["Top", "Jungle", "Mid", "Bot", "Supp"];
-const eloNonJungleSpellPairs = [
-  ["Flash", "Teleport"],
-  ["Flash", "Ignite"],
-  ["Flash", "Heal"],
-  ["Exhaust", "Ignite"],
-  ["Barrier", "Flash"],
-  ["Cleanse", "Flash"],
-  ["Ignite", "Teleport"],
-  ["Ghost", "Teleport"],
-  ["Heal", "Barrier"]
-];
-const eloJungleSpellPairs = [
-  ["Flash", "Smite"],
-  ["Ghost", "Smite"],
-  ["Ignite", "Smite"]
-];
-
-function createEloRounds(base: GuessEloChallenge, champions: PublicChampion[]): EloRound[] {
-  if (champions.length < 10) {
-    return [base];
-  }
-
-  const generated = Array.from({ length: 36 }, (_, index) => createGeneratedEloRound(base, champions, index + 1));
-  return [base, ...generated];
-}
-
-function createGeneratedEloRound(base: GuessEloChallenge, champions: PublicChampion[], round: number): EloRound {
-  const seed = `${base.date}:guess-elo-infinite:${round}`;
-  const lanes = createGeneratedEloTeam(seed, champions, "blue");
-  const enemyLanes = createGeneratedEloTeam(seed, champions, "red");
-  const chaosScore = scoreEloLanes([...lanes, ...enemyLanes]);
-  const answerTier = chaosScore >= 7 ? "Iron/Bronze" : chaosScore >= 4 ? "Silver/Gold" : chaosScore >= 2 ? "Emerald/Diamond" : "Master+";
-
-  return {
-    id: `${base.date}:guess-elo:${round}`,
-    date: base.date,
-    lanes,
-    enemyLanes,
-    options: base.options,
-    answerTier,
-    signalNotes: [
-      `Comp chaos score: ${chaosScore}`,
-      chaosScore >= 4 ? "Off-role picks or strange summoner spells drag the lobby downward." : "Role fit and summoner discipline point higher.",
-      "Summoner spells and role fit drive the read."
-    ],
-    dataSource: base.dataSource
-  };
-}
-
-function createGeneratedEloTeam(seed: string, champions: PublicChampion[], side: "blue" | "red") {
-  return eloLaneLabels.map((role) => {
-    const preferredPool = championsForEloLane(champions, role);
-    const chaosRoll = hashString(`${seed}:${side}:${role}:chaos`) % 10;
-    const pool = chaosRoll >= 7 ? champions : preferredPool;
-    const champion = pool[hashString(`${seed}:${side}:${role}:champion`) % pool.length];
-    const spells = spellsForEloRole(role, `${seed}:${side}:${role}:spells`);
-    return { role, champion, spells };
-  });
-}
-
-function spellsForEloRole(role: string, seed: string) {
-  const pool = role === "Jungle" ? eloJungleSpellPairs : eloNonJungleSpellPairs;
-  return pool[hashString(seed) % pool.length];
-}
-
-function championsForEloLane(champions: PublicChampion[], role: string) {
-  const pool = champions.filter((champion) => {
-    if (role === "Top") return champion.roles.some((championRole) => ["Fighter", "Tank"].includes(championRole));
-    if (role === "Jungle") return champion.roles.some((championRole) => ["Assassin", "Fighter", "Tank"].includes(championRole));
-    if (role === "Mid") return champion.roles.some((championRole) => ["Mage", "Assassin"].includes(championRole));
-    if (role === "Bot") return champion.roles.includes("Marksman");
-    return champion.roles.some((championRole) => ["Support", "Tank"].includes(championRole));
-  });
-
-  return pool.length > 0 ? pool : champions;
-}
-
-function scoreEloLanes(lanes: EloRound["lanes"]) {
-  return lanes.reduce((total, lane, index) => {
-    const smiteMismatch = lane.role === "Jungle" ? (lane.spells.includes("Smite") ? 0 : 4) : (lane.spells.includes("Smite") ? 4 : 0);
-    const expected =
-      lane.role === "Jungle"
-        ? lane.spells.includes("Smite")
-        : lane.role === "Bot"
-          ? lane.champion.roles.includes("Marksman")
-          : lane.role === "Supp"
-          ? lane.champion.roles.includes("Support") || lane.champion.roles.includes("Tank")
-            : true;
-    return total + smiteMismatch + (expected ? 0 : 2) + (lane.spells.includes("Flash") ? 0 : 1) + (index % 5 === 0 && lane.spells.includes("Ignite") ? 1 : 0);
-  }, 0);
+function createEloRounds(base: GuessEloChallenge): EloRound[] {
+  return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
 function rankIcons(option: string) {
@@ -1495,22 +1462,6 @@ function rankIcons(option: string) {
 
 function rankIconUrl(rank: string) {
   return `https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-${rank}.png`;
-}
-
-function summonerSpellIcon(spell: string) {
-  const fileBySpell: Record<string, string> = {
-    Flash: "SummonerFlash",
-    Teleport: "SummonerTeleport",
-    Smite: "SummonerSmite",
-    Ignite: "SummonerDot",
-    Heal: "SummonerHeal",
-    Exhaust: "SummonerExhaust",
-    Ghost: "SummonerHaste",
-    Barrier: "SummonerBarrier",
-    Cleanse: "SummonerBoost"
-  };
-
-  return `https://ddragon.leagueoflegends.com/cdn/16.11.1/img/spell/${fileBySpell[spell] ?? "SummonerFlash"}.png`;
 }
 
 function ResultPill({ submitted, correct, answer }: { submitted: boolean; correct: boolean; answer?: string }) {
@@ -1527,20 +1478,6 @@ function ResultPill({ submitted, correct, answer }: { submitted: boolean; correc
     >
       {correct ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
       {correct ? "Correct" : `Answer: ${answer ?? "try again"}`}
-    </div>
-  );
-}
-
-function Bar({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <div className="flex justify-between text-xs text-[color:var(--muted)]">
-        <span>{label}</span>
-        <span>{value}%</span>
-      </div>
-      <div className="mt-1 h-2 rounded bg-white/8">
-        <div className="h-2 rounded bg-[color:var(--gold)]" style={{ width: `${value}%` }} />
-      </div>
     </div>
   );
 }

@@ -1,64 +1,52 @@
-import { champions, getItemById, items } from "@/game/data/champions";
-import { toPublicChampion } from "@/lib/riot/data-dragon";
 import type {
   DodgeQueueChallenge,
   ExpandedDailyChallenges,
   GameItem,
   GuessEloChallenge,
+  GuessEloRound,
   ItemBuildChallenge,
   ItemRecipeChallenge,
   PublicChampion,
-  SkillshotDodgeChallenge
+  SkillshotDodgeChallenge,
+  DodgeQueueRound
 } from "@/types";
 
 import { getUtcDateKey, seededIndex } from "./daily";
 
-const laneRoles = ["Top", "Jungle", "Mid", "Bot", "Supp"];
-const nonJungleSpellPairs = [
-  ["Flash", "Teleport"],
-  ["Flash", "Ignite"],
-  ["Flash", "Heal"],
-  ["Exhaust", "Ignite"],
-  ["Barrier", "Flash"],
-  ["Cleanse", "Flash"],
-  ["Ignite", "Teleport"],
-  ["Ghost", "Teleport"],
-  ["Heal", "Barrier"]
-];
-const jungleSpellPairs = [
-  ["Flash", "Smite"],
-  ["Ghost", "Smite"],
-  ["Ignite", "Smite"]
-];
-
 export async function generateExpandedDailyChallenges(
   version: string,
   salt: string,
+  publicChampions: PublicChampion[],
+  gameItems: GameItem[],
+  verifiedMatches?: {
+    guessEloRounds: GuessEloRound[];
+    dodgeQueueRounds: DodgeQueueRound[];
+    message?: string;
+  },
   date = new Date()
 ): Promise<ExpandedDailyChallenges> {
   const dateKey = getUtcDateKey(date);
-  const publicChampions = champions.map((champion) => toPublicChampion(champion, version));
 
   return {
-    itemBuild: generateItemBuildChallenge(dateKey, `${salt}:${dateKey}:item-build`, publicChampions),
-    itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`),
-    guessElo: generateGuessEloChallenge(dateKey, `${salt}:${dateKey}:guess-elo`, publicChampions),
-    dodgeQueue: generateDodgeQueueChallenge(dateKey, `${salt}:${dateKey}:dodge-queue`, publicChampions),
+    itemBuild: generateItemBuildChallenge(dateKey, `${salt}:${dateKey}:item-build`, publicChampions, gameItems, version),
+    itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`, gameItems),
+    guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.message),
+    dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.message),
     skillshotDodge: generateSkillshotDodgeChallenge(dateKey)
   };
 }
 
-function generateItemBuildChallenge(date: string, seed: string, publicChampions: PublicChampion[]): ItemBuildChallenge {
+function generateItemBuildChallenge(date: string, seed: string, publicChampions: PublicChampion[], itemCatalog: GameItem[], version: string): ItemBuildChallenge {
   const champion = publicChampions[seededIndex(seed, publicChampions.length)];
   const enemyTeam = pickUnique(publicChampions, `${seed}:enemy`, 5, [champion.id]);
-  const candidateItems = items
+  const candidateItems = itemCatalog
     .filter((item) => item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
     .map((item) => ({
       item,
       score: scoreItemForMatchup(item, champion, enemyTeam)
     }))
     .sort((a, b) => b.score - a.score);
-  const bootCandidates = items
+  const bootCandidates = itemCatalog
     .filter((item) => isBootUpgrade(item))
     .map((item) => ({
       item,
@@ -67,7 +55,7 @@ function generateItemBuildChallenge(date: string, seed: string, publicChampions:
     .sort((a, b) => b.score - a.score);
   const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
   const answer = answerBuild[0];
-  const answerBoots = bootCandidates[0]?.item ?? items.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
+  const answerBoots = bootCandidates[0]?.item ?? itemCatalog.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
   const possibleItems = candidateItems
     .filter((candidate) => candidate.score >= 6)
     .slice(0, 32)
@@ -75,7 +63,6 @@ function generateItemBuildChallenge(date: string, seed: string, publicChampions:
   const possibleBoots = bootCandidates.map((candidate) => candidate.item);
   const candidates = [answer, ...candidateItems.slice(1).filter((candidate) => candidate.item.id !== answer.id).slice(0, 3).map((candidate) => candidate.item)]
     .sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000));
-  const projected = Math.min(64, Math.round((49 + candidateItems[0].score / 8) * 10) / 10);
 
   return {
     id: `${date}:item-build`,
@@ -90,33 +77,33 @@ function generateItemBuildChallenge(date: string, seed: string, publicChampions:
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
     matchupNotes: buildMatchupNotes(champion, enemyTeam, answerBuild, answerBoots),
-    winrateModel: {
-      source: "Data Dragon item stats + matchup heuristic",
-      baseline: 49,
-      projected
+    catalogModel: {
+      source: `Riot Data Dragon ${version} champion/item metadata`,
+      candidateCount: possibleItems.length,
+      targetItemCount: answerBuild.length
     }
   };
 }
 
-function generateItemRecipeChallenge(date: string, seed: string): ItemRecipeChallenge {
-  const craftable = items.filter((item) =>
+function generateItemRecipeChallenge(date: string, seed: string, itemCatalog: GameItem[]): ItemRecipeChallenge {
+  const craftable = itemCatalog.filter((item) =>
     item.from.length >= 2 &&
     item.from.every((id) => {
-      const component = getItemById(id);
-      return component && isRecipeComponent(component);
+      const component = getItemById(itemCatalog, id);
+      return component && isRecipeComponent(component, itemCatalog);
     })
   );
   const resultItem = craftable[seededIndex(seed, craftable.length)];
   const componentIds = resultItem.from;
   const missingComponentId = componentIds[seededIndex(`${seed}:missing`, componentIds.length)];
-  const knownComponents = componentIds.filter((id) => id !== missingComponentId).map((id) => getItemById(id)).filter(Boolean) as GameItem[];
-  const missing = getItemById(missingComponentId) ?? knownComponents[0];
-  const distractors = items
+  const knownComponents = componentIds.filter((id) => id !== missingComponentId).map((id) => getItemById(itemCatalog, id)).filter(Boolean) as GameItem[];
+  const missing = getItemById(itemCatalog, missingComponentId) ?? knownComponents[0];
+  const distractors = itemCatalog
     .filter((item) => item.id !== missing.id && item.goldTotal <= Math.max(missing.goldTotal + 500, 900))
     .slice(0, 80)
     .sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000))
     .slice(0, 5);
-  const allComponents = getRecipeComponents([missing.id]);
+  const allComponents = getRecipeComponents(itemCatalog, [missing.id]);
 
   return {
     id: `${date}:item-recipe`,
@@ -130,63 +117,47 @@ function generateItemRecipeChallenge(date: string, seed: string): ItemRecipeChal
   };
 }
 
-function generateGuessEloChallenge(date: string, seed: string, publicChampions: PublicChampion[]): GuessEloChallenge {
-  const options = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"];
-  const lanes = createGuessEloTeam(seed, publicChampions, "blue");
-  const enemyLanes = createGuessEloTeam(seed, publicChampions, "red");
-  const chaosScore = scoreGuessEloLanes([...lanes, ...enemyLanes]);
-  const answerTier = chaosScore >= 7 ? "Iron/Bronze" : chaosScore >= 4 ? "Silver/Gold" : chaosScore >= 2 ? "Emerald/Diamond" : "Master+";
+function generateGuessEloChallenge(date: string, rounds: GuessEloRound[], unavailableReason?: string): GuessEloChallenge {
+  const fallback: GuessEloRound = {
+    id: `${date}:guess-elo-unavailable`,
+    date,
+    lanes: [],
+    enemyLanes: [],
+    options: ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"],
+    answerTier: "",
+    signalNotes: [],
+    dataSource: "Riot Match-V5",
+    unavailableReason: unavailableReason ?? "Riot Match-V5 ranked data is not configured."
+  };
+  const first = rounds[0] ?? fallback;
 
   return {
-    id: `${date}:guess-elo`,
+    ...first,
     type: "guess-elo",
-    date,
-    lanes,
-    enemyLanes,
-    options,
-    answerTier,
-    signalNotes: [
-      `Comp chaos score: ${chaosScore}`,
-      chaosScore >= 4 ? "Multiple role or summoner-spell mismatches point lower." : "Cleaner role fit and spell discipline point higher.",
-      "Summoner spells and role fit drive the read."
-    ],
-    dataSource: "Loading-screen read"
+    rounds
   };
 }
 
-function generateDodgeQueueChallenge(date: string, seed: string, publicChampions: PublicChampion[]): DodgeQueueChallenge {
-  const allyTeam = pickLaneAwareTeam(publicChampions, `${seed}:ally`, [], 7);
-  const enemyTeam = pickLaneAwareTeam(publicChampions, `${seed}:enemy`, allyTeam.map((champion) => champion.id), 8);
-  const allySpells = createLaneSpellLoadout(`${seed}:ally`);
-  const enemySpells = createLaneSpellLoadout(`${seed}:enemy`);
-  const pickedChampionIds = [...allyTeam, ...enemyTeam].map((champion) => champion.id);
-  const allyBans = pickUnique(publicChampions, `${seed}:ally-bans`, 5, pickedChampionIds);
-  const enemyBans = pickUnique(publicChampions, `${seed}:enemy-bans`, 5, [...pickedChampionIds, ...allyBans.map((champion) => champion.id)]);
-  const allyRoleFit = laneRoles.reduce((score, role, index) => score + laneFit(role, allyTeam[index]), 0);
-  const enemyThreat = enemyTeam.reduce((score, champion) => score + (champion.roles.includes("Tank") ? 1 : 0) + (champion.roles.includes("Assassin") ? 1 : 0), 0);
-  const dodgeScore = 7 - allyRoleFit + enemyThreat;
-  const answer = dodgeScore >= 6 ? "dodge" : "queue";
-  const dodgePercent = Math.min(87, Math.max(19, 42 + dodgeScore * 6));
+function generateDodgeQueueChallenge(date: string, rounds: DodgeQueueRound[], unavailableReason?: string): DodgeQueueChallenge {
+  const fallback: DodgeQueueRound = {
+    id: `${date}:dodge-queue-unavailable`,
+    date,
+    allyTeam: [],
+    enemyTeam: [],
+    allySpells: [],
+    enemySpells: [],
+    allyBans: [],
+    enemyBans: [],
+    answer: "queue",
+    explanation: "",
+    unavailableReason: unavailableReason ?? "Riot Match-V5 ranked data is not configured."
+  };
+  const first = rounds[0] ?? fallback;
 
   return {
-    id: `${date}:dodge-queue`,
+    ...first,
     type: "dodge-queue",
-    date,
-    allyTeam,
-    enemyTeam,
-    allySpells,
-    enemySpells,
-    allyBans,
-    enemyBans,
-    answer,
-    community: {
-      dodgePercent,
-      queuePercent: 100 - dodgePercent
-    },
-    explanation:
-      answer === "dodge"
-        ? "The lobby has enough role mismatch and enemy lockdown pressure that the model recommends dodging."
-        : "The comp has workable role coverage and enough playable lanes to queue it up."
+    rounds
   };
 }
 
@@ -201,64 +172,6 @@ function generateSkillshotDodgeChallenge(date: string): SkillshotDodgeChallenge 
     arena: { width: 900, height: 520 },
     player: { moveSpeed: 280, radius: 14, health: 3 }
   };
-}
-
-function createGuessEloTeam(seed: string, publicChampions: PublicChampion[], side: "blue" | "red") {
-  return laneRoles.map((role) => {
-    const champion = publicChampions[seededIndex(`${seed}:${side}:${role}`, publicChampions.length)];
-    const spells = spellsForLane(role, `${seed}:${side}:${role}:spells`);
-    return { role, champion, spells };
-  });
-}
-
-function createLaneSpellLoadout(seed: string) {
-  return laneRoles.map((role) => spellsForLane(role, `${seed}:${role}:spells`));
-}
-
-function spellsForLane(role: string, seed: string) {
-  const pool = role === "Jungle" ? jungleSpellPairs : nonJungleSpellPairs;
-  return pool[seededIndex(seed, pool.length)];
-}
-
-function scoreGuessEloLanes(lanes: GuessEloChallenge["lanes"]) {
-  return lanes.reduce((total, lane, index) => {
-    const smiteMismatch = lane.role === "Jungle" ? (lane.spells.includes("Smite") ? 0 : 4) : (lane.spells.includes("Smite") ? 4 : 0);
-    const expected =
-      lane.role === "Jungle"
-        ? lane.spells.includes("Smite")
-        : lane.role === "Bot"
-          ? lane.champion.roles.includes("Marksman")
-          : lane.role === "Supp"
-          ? lane.champion.roles.includes("Support") || lane.champion.roles.includes("Tank")
-          : true;
-    return total + smiteMismatch + (expected ? 0 : 2) + (lane.spells.includes("Flash") ? 0 : 1) + (index % 5 === 0 && lane.spells.includes("Ignite") ? 1 : 0);
-  }, 0);
-}
-
-function pickLaneAwareTeam(publicChampions: PublicChampion[], seed: string, excluded: string[], chaosThreshold: number) {
-  const excludedSet = new Set(excluded);
-
-  return laneRoles.map((role) => {
-    const preferredPool = championsForGeneratedLane(publicChampions, role).filter((champion) => !excludedSet.has(champion.id));
-    const available = publicChampions.filter((champion) => !excludedSet.has(champion.id));
-    const chaosRoll = seededIndex(`${seed}:${role}:chaos`, 10);
-    const pool = chaosRoll >= chaosThreshold || preferredPool.length === 0 ? available : preferredPool;
-    const champion = pool[seededIndex(`${seed}:${role}:pick`, pool.length)] ?? available[0] ?? publicChampions[0];
-    excludedSet.add(champion.id);
-    return champion;
-  });
-}
-
-function championsForGeneratedLane(publicChampions: PublicChampion[], role: string) {
-  const pool = publicChampions.filter((champion) => {
-    if (role === "Top") return champion.roles.some((championRole) => ["Fighter", "Tank"].includes(championRole));
-    if (role === "Jungle") return champion.roles.some((championRole) => ["Assassin", "Fighter", "Tank"].includes(championRole));
-    if (role === "Mid") return champion.roles.some((championRole) => ["Mage", "Assassin", "Fighter"].includes(championRole));
-    if (role === "Bot") return champion.roles.includes("Marksman");
-    return champion.roles.some((championRole) => ["Support", "Tank", "Mage"].includes(championRole));
-  });
-
-  return pool.length > 0 ? pool : publicChampions;
 }
 
 function pickUnique<T extends { id: string }>(list: T[], seed: string, count: number, excluded: string[]) {
@@ -316,10 +229,14 @@ function isBootUpgrade(item: GameItem) {
   return item.purchasable && item.name !== "Boots" && item.tags.includes("Boots") && item.goldTotal >= 900;
 }
 
-function getRecipeComponents(includeIds: string[] = []) {
+function getItemById(itemCatalog: GameItem[], id: string) {
+  return itemCatalog.find((item) => item.id === id);
+}
+
+function getRecipeComponents(itemCatalog: GameItem[], includeIds: string[] = []) {
   const include = new Set(includeIds);
-  const candidates = items
-    .filter((item) => isRecipeComponent(item) || include.has(item.id))
+  const candidates = itemCatalog
+    .filter((item) => isRecipeComponent(item, itemCatalog) || include.has(item.id))
     .sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
   const chosen: GameItem[] = [];
 
@@ -336,8 +253,8 @@ function getRecipeComponents(includeIds: string[] = []) {
   return chosen;
 }
 
-function isRecipeComponent(item: GameItem) {
-  const usedByPurchasableItem = items.some((parent) => parent.purchasable && parent.from.includes(item.id));
+function isRecipeComponent(item: GameItem, itemCatalog: GameItem[]) {
+  const usedByPurchasableItem = itemCatalog.some((parent) => parent.purchasable && parent.from.includes(item.id));
 
   return (
     usedByPurchasableItem &&
@@ -358,12 +275,4 @@ function buildMatchupNotes(champion: PublicChampion, enemyTeam: PublicChampion[]
     `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
     `Enemy pressure: ${tanks} tank-class champion${tanks === 1 ? "" : "s"} and ${assassins} assassin-class champion${assassins === 1 ? "" : "s"}.`
   ];
-}
-
-function laneFit(role: string, champion: PublicChampion): number {
-  if (role === "Jungle") return champion.roles.includes("Fighter") || champion.roles.includes("Tank") || champion.roles.includes("Assassin") ? 1 : 0;
-  if (role === "Bot" || role === "ADC") return champion.roles.includes("Marksman") ? 1 : 0;
-  if (role === "Supp" || role === "Support") return champion.roles.includes("Support") || champion.roles.includes("Tank") ? 1 : 0;
-  if (role === "Mid") return champion.roles.includes("Mage") || champion.roles.includes("Assassin") ? 1 : 0;
-  return champion.roles.includes("Fighter") || champion.roles.includes("Tank") ? 1 : 0;
 }

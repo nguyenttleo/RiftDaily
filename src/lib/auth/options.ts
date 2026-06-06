@@ -30,14 +30,6 @@ export const authOptions: NextAuthOptions = {
         }
 
         if (!isDatabaseConfigured()) {
-          if (email === "demo@riftdaily.local" && password === "demo1234") {
-            return {
-              id: "demo-user",
-              name: "Demo Player",
-              email
-            };
-          }
-
           return null;
         }
 

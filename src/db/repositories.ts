@@ -101,7 +101,7 @@ export async function createSuggestion(input: CreateSuggestionInput): Promise<{ 
     `insert into suggestions (user_id, name, contact, type, message, page)
      values ($1, $2, $3, $4, $5, $6)`,
     [
-      input.userId && input.userId !== "demo-user" ? input.userId : null,
+      input.userId ?? null,
       input.name ?? null,
       input.contact ?? null,
       input.type,
@@ -191,7 +191,7 @@ export async function getRecentAnswerIds(challengeType: ChallengeType, limit = 1
 }
 
 export async function recordGuess(input: RecordGuessInput): Promise<void> {
-  if (!isDatabaseConfigured() || input.userId === "demo-user") {
+  if (!isDatabaseConfigured()) {
     return;
   }
 
@@ -238,18 +238,18 @@ export async function recordGuess(input: RecordGuessInput): Promise<void> {
 }
 
 export async function getUserStats(userId?: string | null, username = "Guest"): Promise<UserStats> {
-  if (!isDatabaseConfigured() || !userId || userId === "demo-user") {
+  if (!isDatabaseConfigured() || !userId) {
     return {
       username,
-      currentStreak: userId === "demo-user" ? 4 : 0,
-      maxStreak: userId === "demo-user" ? 9 : 0,
-      gamesPlayed: userId === "demo-user" ? 18 : 0,
-      wins: userId === "demo-user" ? 14 : 0,
-      winRate: userId === "demo-user" ? 78 : 0,
-      perfectSolves: userId === "demo-user" ? 5 : 0,
-      fastestSolveMs: userId === "demo-user" ? 42000 : null,
-      favoriteRole: userId === "demo-user" ? "Marksman" : "Unclaimed",
-      rank: userId === "demo-user" ? "Platinum" : "Unranked"
+      currentStreak: 0,
+      maxStreak: 0,
+      gamesPlayed: 0,
+      wins: 0,
+      winRate: 0,
+      perfectSolves: 0,
+      fastestSolveMs: null,
+      favoriteRole: "Unclaimed",
+      rank: "Unranked"
     };
   }
 
@@ -282,7 +282,7 @@ export async function getUserStats(userId?: string | null, username = "Guest"): 
 
 export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
   if (!isDatabaseConfigured()) {
-    return demoLeaderboard();
+    return [];
   }
 
   const result = await query<StatsRow & { username: string }>(
@@ -458,27 +458,6 @@ function favoriteRoleFromResults(roleLists: string[][]): string {
   }
 
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Unclaimed";
-}
-
-function demoLeaderboard(): LeaderboardEntry[] {
-  const names = ["AurelionMain", "BaronTimer", "MidDiffDaily", "BrushChecker", "HexflashHero"];
-
-  return names.map((username, index) => {
-    const currentStreak = Math.max(1, 12 - index * 2);
-    const winRate = 91 - index * 6;
-
-    return {
-      rank: index + 1,
-      username,
-      currentStreak,
-      maxStreak: currentStreak + 7,
-      gamesPlayed: 38 - index * 3,
-      winRate,
-      fastestSolveMs: 31000 + index * 9000,
-      perfectSolves: Math.max(1, 9 - index),
-      rankLabel: rankFromStats(currentStreak, winRate)
-    } as LeaderboardEntry;
-  });
 }
 
 export function roleForAnswer(answerId: string): string[] {

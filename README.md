@@ -1,11 +1,8 @@
 # Rift Daily
 
-Rift Daily is a League-inspired daily challenge hub for item builds, item recipes, loading-screen Elo reads, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
+Rift Daily is a League-inspired infinite challenge hub for item builds, item recipes, verified Match-V5 loading-screen reads, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
 
-The app is built to run in two modes:
-
-- Local demo mode with generated Riot/Data Dragon content and no required secrets.
-- Production mode on AWS Amplify with Supabase Postgres persistence, auth, suggestions, stats, leaderboards, and Riot static data.
+The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Supabase enables persisted auth, suggestions, stats, and leaderboards in production.
 
 ## Stack
 
@@ -13,6 +10,7 @@ The app is built to run in two modes:
 - NextAuth credential sessions with HTTP-only cookies
 - Supabase Postgres through `pg`
 - Riot Data Dragon for live champion/item/spell assets
+- Riot Match-V5 and League-V4 for verified ranked-match lane/spell rounds
 - CommunityDragon static assets for ranked emblems and trainer character art
 - AWS Amplify Hosting for the Next.js app and API routes
 
@@ -23,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. The app works without secrets in local demo mode. Use `demo@riftdaily.local` and `demo1234` to try the demo account flow.
+Open `http://localhost:3000`. Catalog gameplay loads verified Riot Data Dragon data without secrets. Guess the Elo and Dodge-or-Queue require `RIOT_API_KEY` because they only display real Match-V5 `teamPosition` and `summoner1Id`/`summoner2Id` data. Account creation, saved stats, and leaderboards require `DATABASE_URL`.
 
 ## Useful Scripts
 
@@ -35,7 +33,7 @@ npm run seed
 npm run sync:riot
 ```
 
-`npm run seed` inserts the demo user and baseline stats when `DATABASE_URL` is configured. `npm run sync:riot` refreshes the Supabase champion and ability catalog from Riot Data Dragon.
+`npm run seed` inserts the Riot-derived champion and ability catalog when `DATABASE_URL` is configured. `npm run sync:riot` refreshes the Supabase champion and ability rows from Riot Data Dragon.
 
 ## Production Setup
 
@@ -47,7 +45,8 @@ npm run sync:riot
 6. Add every variable from `.env.example` in Amplify.
 7. Deploy with the included `amplify.yml`.
 8. After the first deploy, set `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL` to the final Amplify domain and redeploy.
-9. Optionally create an AWS EventBridge Scheduler/API Destination job that calls `/api/cron/generate-daily` at midnight UTC.
+9. Add a valid Riot API key in `RIOT_API_KEY`; development keys expire, so production hosting should use a production Riot key.
+10. Optionally create an AWS EventBridge Scheduler/API Destination job that calls `/api/cron/generate-daily` at midnight UTC.
 
 Detailed walkthroughs are in:
 

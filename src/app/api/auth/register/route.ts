@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   if (!isDatabaseConfigured()) {
     return NextResponse.json(
       {
-        error: "Account creation needs DATABASE_URL. Use the demo account locally or connect Supabase."
+        error: "Account creation needs DATABASE_URL. Connect Supabase before enabling accounts."
       },
       { status: 503 }
     );

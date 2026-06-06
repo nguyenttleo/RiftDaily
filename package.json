@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "next typegen && tsc --noEmit",
-    "seed": "tsx scripts/seed-demo-data.ts",
+    "seed": "tsx scripts/seed-catalog.ts",
     "sync:riot": "tsx scripts/sync-riot-data.ts"
   },
   "dependencies": {

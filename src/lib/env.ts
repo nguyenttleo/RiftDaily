@@ -5,6 +5,7 @@ export const env = {
   challengeSalt: process.env.CHALLENGE_SALT ?? "rift-daily-local-salt",
   riotApiKey: process.env.RIOT_API_KEY ?? "",
   riotRegion: process.env.RIOT_REGION ?? "na1",
+  riotMatchSampleSize: Number(process.env.RIOT_MATCH_SAMPLE_SIZE ?? "16"),
   cronSecret: process.env.CRON_SECRET ?? ""
 };
 

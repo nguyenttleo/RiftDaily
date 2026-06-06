@@ -29,6 +29,7 @@ CHALLENGE_SALT
 CRON_SECRET
 RIOT_API_KEY
 RIOT_REGION
+RIOT_MATCH_SAMPLE_SIZE
 NEXT_PUBLIC_CREATOR_GITHUB_URL
 NEXT_PUBLIC_CREATOR_LINKEDIN_URL
 ```
@@ -41,8 +42,9 @@ Use these values:
 - `NEXTAUTH_SECRET`: long random secret.
 - `CHALLENGE_SALT`: long random secret used for deterministic daily seeds.
 - `CRON_SECRET`: long random secret for `/api/cron/generate-daily`.
-- `RIOT_API_KEY`: optional. Data Dragon does not require this, but keyed Riot API routes can use it.
+- `RIOT_API_KEY`: required for Guess the Elo and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments and summoner spells are real.
 - `RIOT_REGION`: `na1` unless you want a different Riot platform route.
+- `RIOT_MATCH_SAMPLE_SIZE`: number of verified ranked matches to prepare for infinite-style Elo/Lobby queues. `16` is a good free-tier default.
 
 Generate secrets locally:
 
@@ -95,7 +97,8 @@ After deploy:
 3. Submit a suggestion on `/suggest`, then confirm it appears in the `suggestions` table.
 4. Open `/api/challenges/daily` and confirm `persistence` is `"database"`.
 5. Open `/api/riot/status` and confirm Data Dragon status is returned.
-6. Register a real account and sign in.
+6. Open `/api/challenges/daily` and confirm `extraChallenges.guessElo.rounds` and `extraChallenges.dodgeQueue.rounds` contain Match-V5 backed rounds when `RIOT_API_KEY` is valid.
+7. Register a real account and sign in.
 
 ## 7. Security Notes
 
