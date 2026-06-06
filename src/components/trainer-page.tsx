@@ -129,23 +129,30 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
 
     setHud({ time: challenge.durationSeconds, hits: 0, dodges: 0, near: 0, score: 0, state: "running", lastAbilities: [] });
 
-    function setTargetFromEvent(event: MouseEvent) {
+    function setTargetFromPoint(clientX: number, clientY: number, event: Event) {
       event.preventDefault();
       const rect = activeCanvas.getBoundingClientRect();
       moveTarget = {
-        x: ((event.clientX - rect.left) / rect.width) * challenge.arena.width,
-        y: ((event.clientY - rect.top) / rect.height) * challenge.arena.height
+        x: ((clientX - rect.left) / rect.width) * challenge.arena.width,
+        y: ((clientY - rect.top) / rect.height) * challenge.arena.height
       };
     }
 
-    function mouseDown(event: MouseEvent) {
-      if (event.button === 2) {
-        setTargetFromEvent(event);
-      }
+    function setTargetFromMouse(event: MouseEvent) {
+      setTargetFromPoint(event.clientX, event.clientY, event);
     }
 
-    activeCanvas.addEventListener("contextmenu", setTargetFromEvent);
-    activeCanvas.addEventListener("mousedown", mouseDown);
+    function pointerDown(event: PointerEvent) {
+      if (event.pointerType === "mouse" && event.button !== 2) {
+        return;
+      }
+
+      activeCanvas.setPointerCapture?.(event.pointerId);
+      setTargetFromPoint(event.clientX, event.clientY, event);
+    }
+
+    activeCanvas.addEventListener("contextmenu", setTargetFromMouse);
+    activeCanvas.addEventListener("pointerdown", pointerDown);
 
     function spawn(now: number) {
       const ability = abilityRotation[spawnIndex % abilityRotation.length];
@@ -260,14 +267,14 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
 
     animation = requestAnimationFrame(tick);
     return () => {
-      activeCanvas.removeEventListener("contextmenu", setTargetFromEvent);
-      activeCanvas.removeEventListener("mousedown", mouseDown);
+      activeCanvas.removeEventListener("contextmenu", setTargetFromMouse);
+      activeCanvas.removeEventListener("pointerdown", pointerDown);
       cancelAnimationFrame(animation);
     };
   }, [abilityRotation, challenge, recordStreak, runId]);
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4">
+    <div className="grid min-h-[calc(100dvh-5rem)] gap-3 rounded-lg border border-[#3c3421] bg-[#071018] p-3 sm:p-4 lg:h-full lg:min-h-0 lg:grid-rows-[auto_auto_minmax(0,1fr)] lg:rounded-sm">
       <TrainerHeader
         title={challenge.title}
         round={roundIndex + 1}
@@ -283,35 +290,17 @@ function SkillshotDodgeTrainer({ challenge, username }: { challenge: SkillshotDo
         <Hud label="Near miss" value={String(hud.near)} />
         <Hud label="Score" value={String(hud.score)} />
       </div>
-      <div className="grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1fr)_14rem]">
-        <div className="min-h-0 overflow-hidden rounded-sm border border-[#3c3421] bg-[#050607]">
-          <canvas ref={canvasRef} width={challenge.arena.width} height={challenge.arena.height} className="h-full w-full" />
+      <div className="grid gap-3 lg:min-h-0 xl:grid-cols-[minmax(0,1fr)_14rem]">
+        <div className="aspect-[16/10] min-h-72 overflow-hidden rounded-sm border border-[#3c3421] bg-[#050607] sm:min-h-[26rem] lg:min-h-0">
+          <canvas ref={canvasRef} width={challenge.arena.width} height={challenge.arena.height} className="h-full w-full touch-none" />
         </div>
-        <aside className="hidden min-h-0 rounded-sm border border-[#2b2f38] bg-[#0b111b] p-3 xl:grid xl:grid-rows-[auto_auto_minmax(0,1fr)] xl:gap-3">
-          <div>
-            <div className="text-sm uppercase text-[#c89b3c]">Ability Pool</div>
-          </div>
-          <div className="rounded-sm border border-[#26313f] bg-[#111722] p-2">
-            <div className="text-xs uppercase text-[color:var(--muted)]">Recent casts</div>
-            <div className="mt-1 grid gap-1 text-xs">
-              {hud.lastAbilities.length > 0 ? hud.lastAbilities.map((ability) => <span key={ability}>{ability}</span>) : <span>Entering lane...</span>}
-            </div>
-          </div>
-          <div className="grid content-start gap-2 overflow-hidden">
-            {abilityRotation.slice(0, 9).map((ability) => (
-              <div key={ability.id} className="grid grid-cols-[2rem_1fr] items-center gap-2 rounded-sm border border-[#26313f] bg-[#111722] p-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={ability.iconUrl} alt="" className="h-8 w-8 rounded-sm border border-[#3c3421] object-contain" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold">{ability.champion} {ability.slot}</div>
-                  <div className="truncate text-xs text-[color:var(--muted)]">{ability.name} - {ability.speed} speed</div>
-                </div>
-              </div>
-            ))}
+        <aside className="hidden min-h-0 rounded-sm border border-[#2b2f38] bg-[#0b111b] p-3 xl:block">
+          <div className="text-sm uppercase text-[#c89b3c]">Recent Casts</div>
+          <div className="mt-3 grid gap-2 text-xs">
+            {hud.lastAbilities.length > 0 ? hud.lastAbilities.map((ability) => <span key={ability} className="rounded-sm border border-white/10 bg-white/5 px-2 py-1.5">{ability}</span>) : <span className="text-[color:var(--muted)]">Entering lane...</span>}
           </div>
         </aside>
       </div>
-      <div className="text-sm text-[color:var(--muted)]">Right-click inside the arena to move Kennen. Press R or Restart for another run.</div>
     </div>
   );
 }
@@ -365,11 +354,12 @@ interface TrainerModeStreak {
   current: number;
   best: number;
   played: number;
+  wins: number;
 }
 
 function useTrainerModeStreak(mode: string, username: string) {
   const storageKey = `rift-daily:mode-streak:${mode}:${username}`;
-  const [streak, setStreak] = useState<TrainerModeStreak>({ current: 0, best: 0, played: 0 });
+  const [streak, setStreak] = useState<TrainerModeStreak>({ current: 0, best: 0, played: 0, wins: 0 });
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -382,7 +372,13 @@ function useTrainerModeStreak(mode: string, username: string) {
     }
 
     try {
-      setStreak(JSON.parse(raw) as TrainerModeStreak);
+      const parsed = JSON.parse(raw) as Partial<TrainerModeStreak>;
+      setStreak({
+        current: parsed.current ?? 0,
+        best: parsed.best ?? 0,
+        played: parsed.played ?? 0,
+        wins: parsed.wins ?? 0
+      });
     } catch {
       window.localStorage.removeItem(storageKey);
     }
@@ -395,11 +391,13 @@ function useTrainerModeStreak(mode: string, username: string) {
         const next = {
           current: nextCurrent,
           best: Math.max(current.best, nextCurrent),
-          played: current.played + 1
+          played: current.played + 1,
+          wins: current.wins + (success ? 1 : 0)
         };
 
         if (typeof window !== "undefined") {
           window.localStorage.setItem(storageKey, JSON.stringify(next));
+          window.dispatchEvent(new Event("rift-daily:streak-updated"));
         }
 
         return next;
@@ -811,11 +809,6 @@ function drawKennen(
   context.lineWidth = 2;
   context.beginPath();
   context.arc(player.x, player.y, avatarRadius, 0, Math.PI * 2);
-  context.stroke();
-  context.setLineDash([4, 5]);
-  context.strokeStyle = "rgba(94,234,212,.7)";
-  context.beginPath();
-  context.arc(player.x, player.y, radius, 0, Math.PI * 2);
   context.stroke();
   context.restore();
 }

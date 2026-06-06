@@ -48,7 +48,7 @@ export function SuggestionForm() {
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-4 rounded-lg border border-white/10 bg-[#111827] p-5">
+    <form onSubmit={submit} className="grid gap-4 rounded-lg border border-white/10 bg-[#111827] p-4 sm:p-5">
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-2 text-sm text-[#94a3b8]">
           Name
@@ -92,8 +92,8 @@ export function SuggestionForm() {
           className="min-h-36 resize-y rounded-md border border-white/10 bg-[#050914] p-3 text-[#f8fafc] placeholder:text-[#64748b]"
         />
       </label>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={status === "sending"} icon={<Send size={16} />}>
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center">
+        <Button type="submit" disabled={status === "sending"} icon={<Send size={16} />} className="w-full sm:w-auto">
           {status === "sending" ? "Sending" : "Submit suggestion"}
         </Button>
         {detail && (

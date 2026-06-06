@@ -20,12 +20,12 @@ export default async function Home() {
       <RiftCommandBar />
 
       <section
-        className="relative min-h-[92vh] overflow-hidden bg-cover bg-center"
+        className="relative min-h-[88dvh] overflow-hidden bg-cover bg-center"
         style={{ backgroundImage: "url(https://ddragon.leagueoflegends.com/cdn/img/champion/splash/Teemo_0.jpg)" }}
       >
         <div className="absolute inset-0 bg-[#050914]/78" />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,9,20,.98),rgba(5,9,20,.72),rgba(5,9,20,.38))]" />
-        <div className="relative mx-auto grid min-h-[92vh] max-w-7xl grid-cols-1 items-center gap-10 px-5 pt-24 lg:grid-cols-[1fr_34rem]">
+        <div className="relative mx-auto grid min-h-[88dvh] max-w-7xl grid-cols-1 items-center gap-10 px-5 pb-12 pt-24 lg:grid-cols-[1fr_34rem]">
           <div>
             <div className="font-display mb-4 inline-flex rounded-full border border-[#f5c542]/30 bg-[#f5c542]/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-[#f5c542]">
               Daily League nonsense
@@ -37,11 +37,11 @@ export default async function Home() {
               Pick the build, judge the lobby, guess the doomed loading screen, and collect enough evidence to tell the
               group chat they were wrong with confidence.
             </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/play" className="font-display inline-flex min-h-12 items-center gap-2 rounded-md bg-[#f5c542] px-5 font-bold text-[#090b10]">
+            <div className="mt-8 grid gap-3 sm:flex sm:flex-wrap">
+              <Link href="/play" className="font-display inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-[#f5c542] px-5 font-bold text-[#090b10]">
                 Defeat your friends <ArrowRight size={18} />
               </Link>
-              <a href="#leaderboard" className="font-display inline-flex min-h-12 items-center rounded-md border border-white/15 bg-white/6 px-5 font-bold text-white">
+              <a href="#leaderboard" className="font-display inline-flex min-h-12 items-center justify-center rounded-md border border-white/15 bg-white/6 px-5 font-bold text-white">
                 Scout the leaderboard
               </a>
             </div>
@@ -75,13 +75,13 @@ export default async function Home() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-5 py-20 md:grid-cols-3">
+      <section className="mx-auto grid max-w-7xl gap-5 px-5 py-14 md:grid-cols-3 md:py-20">
         <InfoCard icon={<ClipboardList />} title="Queue the chaos" text="Everyone gets the same puzzle set, so the excuses start immediately." />
         <InfoCard icon={<Swords />} title="Make the call" text="Choose builds, solve recipe trees, read cursed loading screens, and dodge whatever is flying at Kennen." />
         <InfoCard icon={<Share2 />} title="Send proof" text="Streaks, leaderboards, and shareable results make your victory annoying in the best way." />
       </section>
 
-      <section id="leaderboard" className="mx-auto grid max-w-7xl gap-8 px-5 py-20 lg:grid-cols-[1fr_28rem]">
+      <section id="leaderboard" className="mx-auto grid max-w-7xl gap-8 px-5 py-14 lg:grid-cols-[1fr_28rem] lg:py-20">
         <div>
           <SectionIntro eyebrow="Competition" title="Daily runs need rivals" />
           <p className="mt-4 max-w-2xl text-[#94a3b8]">The platform is structured for authenticated streaks, solve history, and leaderboard entries backed by PostgreSQL.</p>
@@ -94,7 +94,7 @@ export default async function Home() {
         </div>
       </section>
 
-      <section id="tech" className="border-y border-white/10 bg-[#0a1020] py-20">
+      <section id="tech" className="border-y border-white/10 bg-[#0a1020] py-14 md:py-20">
         <div className="mx-auto max-w-7xl px-5">
           <SectionIntro eyebrow="Architecture" title="A full-stack daily puzzle engine" />
           <div className="mt-8 grid gap-4 md:grid-cols-4">
@@ -108,10 +108,10 @@ export default async function Home() {
         </div>
       </section>
 
-      <section id="suggest" className="mx-auto max-w-7xl px-5 py-20">
-        <div className="rounded-xl border border-white/10 bg-[#111827] p-8">
+      <section id="suggest" className="mx-auto max-w-7xl px-5 py-14 md:py-20">
+        <div className="rounded-xl border border-white/10 bg-[#111827] p-5 sm:p-8">
           <MessageSquare className="mb-4 text-[#f5c542]" />
-          <h2 className="font-display text-4xl font-bold">Help shape Rift Daily</h2>
+          <h2 className="font-display text-3xl font-bold sm:text-4xl">Help shape Rift Daily</h2>
           <p className="mt-3 max-w-2xl text-[#94a3b8]">Suggest puzzle corrections, new game modes, balance feedback, or UI ideas. The form is wired for Supabase/PostgreSQL persistence when deployment env vars are configured.</p>
           <Link href="/suggest" className="font-display mt-6 inline-flex rounded-md bg-[#f5c542] px-5 py-3 font-bold text-[#090b10]">
             Submit a suggestion
@@ -136,7 +136,7 @@ function LandingStat({ value, label }: { value: string; label: string }) {
 function RiftCommandBar() {
   return (
     <header className="fixed left-0 right-0 top-0 z-30 border-b border-[#f5c542]/20 bg-[linear-gradient(180deg,rgba(10,15,28,.94),rgba(5,8,16,.86))] shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_18px_60px_rgba(0,0,0,.35),0_0_28px_rgba(246,199,74,.06)] backdrop-blur-xl after:absolute after:bottom-[-1px] after:left-0 after:right-0 after:h-px after:bg-[linear-gradient(90deg,transparent,rgba(246,199,74,.2),rgba(56,189,248,.26),rgba(246,199,74,.2),transparent)]">
-      <div className="mx-auto grid h-[4.75rem] w-[calc(100%_-_1.5rem)] max-w-[82.5rem] grid-cols-[1fr_auto] items-center gap-4 md:w-[calc(100%_-_3rem)] xl:grid-cols-[1fr_auto_1fr] xl:gap-7">
+      <div className="mx-auto grid h-[4.25rem] w-[calc(100%_-_1rem)] max-w-[82.5rem] grid-cols-[1fr_auto] items-center gap-3 md:h-[4.75rem] md:w-[calc(100%_-_3rem)] xl:grid-cols-[1fr_auto_1fr] xl:gap-7">
         <Link href="/" className="group inline-flex min-w-0 items-center gap-3 text-white">
           <span className="flex min-w-0 flex-col leading-none">
             <span className="font-display bg-gradient-to-r from-[#fff8cb] via-[#f6c74a] to-[#b8872b] bg-clip-text text-xl font-black uppercase tracking-[0.035em] text-transparent drop-shadow-[0_0_20px_rgba(245,197,66,.22)] sm:text-2xl">
@@ -156,7 +156,7 @@ function RiftCommandBar() {
         <div className="justify-self-end flex items-center gap-2 sm:gap-3">
           <Link
             href="/play"
-            className="font-display group/cta inline-flex min-h-11 items-center justify-center rounded-xl border border-[#ffe68c]/70 bg-[linear-gradient(180deg,#ffe27a_0%,#f6bd38_55%,#d99617_100%)] px-4 text-sm font-black text-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,.55),0_10px_28px_rgba(246,188,56,.28)] transition duration-200 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[inset_0_1px_0_rgba(255,255,255,.6),0_14px_36px_rgba(246,188,56,.36)] sm:px-5"
+            className="font-display group/cta inline-flex min-h-10 items-center justify-center rounded-xl border border-[#ffe68c]/70 bg-[linear-gradient(180deg,#ffe27a_0%,#f6bd38_55%,#d99617_100%)] px-3 text-sm font-black text-[#10131a] shadow-[inset_0_1px_0_rgba(255,255,255,.55),0_10px_28px_rgba(246,188,56,.28)] transition duration-200 hover:-translate-y-0.5 hover:brightness-105 hover:shadow-[inset_0_1px_0_rgba(255,255,255,.6),0_14px_36px_rgba(246,188,56,.36)] sm:min-h-11 sm:px-5"
           >
             Play Daily
             <ArrowRight size={16} className="ml-2 transition duration-200 group-hover/cta:translate-x-0.5" />

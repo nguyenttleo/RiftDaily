@@ -87,13 +87,12 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
     >
       <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#c89b3c]/10 blur-2xl" />
       <div>
-        <div className="font-display text-sm font-semibold text-[color:var(--gold-bright)]">Save your progress</div>
-        <p className="mt-1 text-xs text-[color:var(--muted)]">Keep streaks, stats, and leaderboard scores.</p>
+        <div className="font-display text-sm font-semibold text-[color:var(--gold-bright)]">Save progress</div>
       </div>
 
       {!expanded && (
         <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => setExpanded(true)} icon={<LogIn size={16} />}>
+          <Button type="button" onClick={() => setExpanded(true)} icon={<LogIn size={16} />} className="w-full sm:w-auto">
             Sign in
           </Button>
         </div>
@@ -148,7 +147,7 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
       {message && <p className="text-sm text-red-200">{message}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={busy} icon={mode === "register" ? <UserPlus size={16} /> : <LogIn size={16} />}>
+        <Button type="submit" disabled={busy} icon={mode === "register" ? <UserPlus size={16} /> : <LogIn size={16} />} className="w-full sm:w-auto">
           {mode === "register" ? "Create" : "Sign in"}
         </Button>
         <Button type="button" variant="ghost" onClick={() => setExpanded(false)} disabled={busy}>

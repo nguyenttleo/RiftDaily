@@ -20,6 +20,7 @@
 
 html {
   color-scheme: dark;
+  scroll-padding-top: 5rem;
 }
 
 body {
@@ -28,6 +29,8 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-body), Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+  text-size-adjust: 100%;
 }
 
 h1,
@@ -41,6 +44,12 @@ button,
 input,
 select {
   font: inherit;
+}
+
+img,
+svg,
+canvas {
+  max-width: 100%;
 }
 
 button:focus-visible,

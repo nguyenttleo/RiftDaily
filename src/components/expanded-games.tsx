@@ -40,7 +40,7 @@ export function ItemBuildGame({
   username?: string;
 }) {
   const generatedRounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
-  const rounds = useRandomizedRounds(generatedRounds, "item-build", username);
+  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, buildRoundPriority);
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
@@ -141,10 +141,10 @@ export function ItemBuildGame({
   }
 
   return (
-    <section className="min-h-[calc(100vh-6.5rem)] rounded-sm border border-[#3c3421] bg-[#071018] p-4 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-20 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+      <div className="grid items-start gap-3 sm:gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
         <aside className="xl:sticky xl:top-4 xl:self-start">
-          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-4 shadow-[0_24px_70px_rgba(0,0,0,.28)]">
+          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[#c89b3c]">
                 <PackageSearch size={18} />
@@ -155,7 +155,7 @@ export function ItemBuildGame({
             <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-3">
               <ChampionLine label="Enemy Team" champions={round.enemyTeam} compact />
             </div>
-            <div className="relative aspect-[16/11] min-h-64 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018]">
+            <div className="relative aspect-[21/9] min-h-36 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:aspect-[16/10] sm:min-h-56 xl:aspect-[16/11] xl:min-h-64">
               <div
                 className="absolute inset-0 bg-cover opacity-80"
                 style={{
@@ -168,31 +168,24 @@ export function ItemBuildGame({
             <div className="grid gap-3">
               <div>
                 <div className="text-sm uppercase text-[#c89b3c]">Your Champion</div>
-                <div className="font-display text-4xl font-bold">{round.champion.name}</div>
+                <div className="font-display text-3xl font-bold sm:text-4xl">{round.champion.name}</div>
                 <div className="text-sm text-[color:var(--muted)]">{round.champion.roles.join(" / ")}</div>
               </div>
               <BuildWinrateCard stats={round.winrateStats} />
-              <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-                <div className="text-xs uppercase text-[color:var(--muted)]">Verified Catalog</div>
-                <div className="mt-1 font-display text-3xl font-bold text-[#c89b3c]">{possibleItems.length}</div>
-                <div className="text-xs text-[color:var(--muted)]">Live item candidates from {round.catalogModel.source}.</div>
-              </div>
             </div>
           </div>
         </aside>
 
         <div className="grid gap-4">
-          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
-            <h3 className="font-display text-2xl font-extrabold tracking-tight">
-              Build {round.champion.name}&apos;s verified 5-item tag setup into this enemy team.
+          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 sm:p-4">
+            <h3 className="font-display text-xl font-extrabold tracking-tight sm:text-2xl">
+              Pick {round.champion.name}&apos;s best build into this enemy team.
             </h3>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">Six tries. Five completed Riot Data Dragon items and one pair of boots. Order does not matter.</p>
           </div>
-          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)]">
+          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)] sm:p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm uppercase text-[#c89b3c]">Build Board</div>
-                <div className="text-xs text-[color:var(--muted)]">Green slots are in the target build. Grey slots are not.</div>
               </div>
               <div className="text-xs text-[color:var(--muted)]">Guess {Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}/{BUILD_MAX_GUESSES}</div>
             </div>
@@ -219,12 +212,12 @@ export function ItemBuildGame({
           </div>
 
           <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_14rem]">
-            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
+            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
-                <span className="text-xs text-[color:var(--muted)]">{possibleItems.length} verified options</span>
+                <span className="text-xs text-[color:var(--muted)]">{possibleItems.length}</span>
               </div>
-              <div className="grid content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-4 2xl:grid-cols-6">
+              <div className="grid grid-cols-2 content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
                 {randomizedPossibleItems.map((item) => (
                   <ItemChoiceCard
                     key={item.id}
@@ -237,9 +230,9 @@ export function ItemBuildGame({
                 ))}
               </div>
             </div>
-            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
+            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
               <div className="mb-2 text-sm uppercase text-[#c89b3c]">Boots</div>
-              <div className="grid content-start gap-2 px-1 pb-4 pt-2">
+              <div className="grid grid-cols-2 content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-3 xl:grid-cols-1">
                 {randomizedPossibleBoots.map((item) => (
                   <BootChoiceCard
                     key={item.id}
@@ -254,7 +247,7 @@ export function ItemBuildGame({
             </div>
           </div>
 
-          <div className="grid gap-2 rounded-sm border border-white/10 bg-[#0b111b] p-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
+          <div className="sticky bottom-2 z-20 grid gap-2 rounded-lg border border-white/10 bg-[#0b111b]/96 p-2 shadow-[0_18px_50px_rgba(0,0,0,.35)] backdrop-blur lg:static lg:grid-cols-[1fr_auto_auto] lg:items-center lg:rounded-sm lg:p-3 lg:shadow-none">
             <div className="text-sm text-[color:var(--muted)]">
               {finished ? (solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES}.` : "No guesses left.") : `Selected: ${selectedItems.length}/5 items - ${selectedBoots ? "boots ready" : "choose boots"}`}
             </div>
@@ -312,7 +305,7 @@ function BuildWordleRow({
   const itemLookup = new Map([...possibleItems, ...possibleBoots].map((item) => [item.id, item]));
 
   return (
-    <div className="grid grid-cols-6 gap-2">
+    <div className="grid grid-cols-6 gap-1 sm:gap-2">
       {Array.from({ length: 5 }).map((_, index) => {
         const itemId = guess?.items[index] ?? (active ? selectedItems[index] : "");
         const item = itemId ? itemLookup.get(itemId) : undefined;
@@ -371,8 +364,8 @@ function BuildWordleModal({
   const targetBuild = targetBoots ? [...targetItems, targetBoots] : targetItems;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-xl border border-[#c89b3c]/60 bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)]">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-3 backdrop-blur-sm sm:p-4">
+      <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto rounded-xl border border-[#c89b3c]/60 bg-[#071018] p-4 shadow-[0_24px_90px_rgba(0,0,0,.65)] fine-scrollbar sm:max-h-[calc(100dvh-2rem)] sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="font-display text-3xl font-extrabold text-[#f5c542]">{solved ? "Build diff." : "Shopkeeper wins."}</div>
@@ -391,7 +384,7 @@ function BuildWordleModal({
         </div>
         <div className="mt-5 grid gap-1.5">
           {guesses.map((guess, rowIndex) => (
-            <div key={`${guess.boots}:${rowIndex}`} className="grid grid-cols-6 gap-1.5">
+            <div key={`${guess.boots}:${rowIndex}`} className="grid grid-cols-6 gap-1 sm:gap-1.5">
               {[...guess.items.map((id) => answerSet.has(id)), guess.boots === round.answerBootsId].map((correct, index) => (
                 <div key={index} className={cn("h-8 rounded-md border", correct ? "border-green-300/60 bg-green-500/70" : "border-white/10 bg-[#2b313d]")} />
               ))}
@@ -400,7 +393,7 @@ function BuildWordleModal({
         </div>
         <div className="mt-5">
           <div className="text-xs uppercase text-[#c89b3c]">Target Build</div>
-          <div className="mt-2 grid grid-cols-6 gap-2">
+          <div className="mt-2 grid grid-cols-6 gap-1 sm:gap-2">
             {targetBuild.map((item) => (
               <div key={item.id} className="grid min-h-16 place-items-center rounded-md border border-green-400/45 bg-green-500/12 p-1 text-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -468,7 +461,6 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
         </div>
       )}
       {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item samples at or above baseline.</div>}
-      <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[#c89b3c]">{stats.source}</div>
     </div>
   );
 }
@@ -577,6 +569,17 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
   }
 
   return rounds;
+}
+
+function buildRoundPriority(round: ItemBuildChallenge) {
+  const stats = round.winrateStats;
+
+  if (!stats?.buildGames || typeof stats.buildWinRate !== "number") {
+    return 0;
+  }
+
+  const matchedItemBonus = stats.buildMatchedItemCount ?? 0;
+  return 1000 + stats.buildGames * 10 + matchedItemBonus;
 }
 
 function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge {
@@ -835,10 +838,10 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   }
 
   return (
-    <section className="min-h-[calc(100vh-6.5rem)] rounded-sm border border-[#3c3421] bg-[#071018] p-4 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
-      <div className="grid items-start gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-20 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+      <div className="grid items-start gap-3 sm:gap-5 xl:grid-cols-[minmax(19rem,32%)_minmax(0,1fr)]">
         <aside className="xl:sticky xl:top-4 xl:self-start">
-          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-4 shadow-[0_24px_70px_rgba(0,0,0,.28)]">
+          <div className="grid w-full gap-3 rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[#c89b3c]">
                 <Split size={18} />
@@ -861,9 +864,11 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
               </div>
             </div>
             <div className="grid gap-2">
-              <div className="text-sm text-[color:var(--muted)]">
-                {submitted ? (correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`) : "Choose the missing component from the shop grid."}
-              </div>
+              {submitted && (
+                <div className="text-sm text-[color:var(--muted)]">
+                  {correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`}
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="secondary" disabled={!answer || submitted} onClick={() => { setAnswer(""); setSubmitted(false); }}>
                   Clear
@@ -883,19 +888,17 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
         </aside>
 
         <div className="grid gap-4 pb-10">
-          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-4">
-            <h3 className="font-display text-2xl font-extrabold tracking-tight">Find the missing recipe component.</h3>
-            <p className="mt-1 text-sm text-[color:var(--muted)]">Only direct item components are shown. Pick the ingredient that completes the shop recipe.</p>
+          <div className="rounded-sm border border-[#3c3421] bg-[#0b111b] p-3 sm:p-4">
+            <h3 className="font-display text-xl font-extrabold tracking-tight sm:text-2xl">Find the missing component.</h3>
           </div>
-          <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-4">
+          <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-4">
             <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <div className="text-sm uppercase text-[#c89b3c]">Component Shop</div>
-                <div className="text-xs text-[color:var(--muted)]">Components that build into other purchasable League items.</div>
               </div>
-              <div className="text-xs text-[color:var(--muted)]">{componentChoices.length} components</div>
+              <div className="text-xs text-[color:var(--muted)]">{componentChoices.length}</div>
             </div>
-            <div className="grid content-start gap-3 px-2 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
+            <div className="grid grid-cols-2 content-start gap-2 px-1 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
               {randomizedComponents.map((item) => {
                 const result: ItemGuessResult | undefined = submitted
                   ? item.id === round.missingComponentId
@@ -916,7 +919,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                       }
                     }}
                     className={cn(
-                      "relative grid min-h-28 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed",
+                      "relative grid min-h-24 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28",
                       result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
                       result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
                       !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
@@ -935,7 +938,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                       </span>
                     )}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={item.imageUrl} alt="" className="h-14 w-14 object-contain" />
+                    <img src={item.imageUrl} alt="" className="h-12 w-12 object-contain sm:h-14 sm:w-14" />
                     <span className="line-clamp-2 text-center text-xs font-semibold leading-tight">{item.name}</span>
                     <span className={cn("text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
                   </button>
@@ -968,7 +971,7 @@ function BuildSlot({
       onClick={onRemove}
       disabled={!onRemove}
       className={cn(
-        "group relative grid min-h-20 place-items-center rounded-sm border bg-[#111722] p-2 text-center transition disabled:cursor-default",
+        "group relative grid min-h-16 place-items-center rounded-sm border bg-[#111722] p-1 text-center transition disabled:cursor-default sm:min-h-20 sm:p-2",
         item && !submitted && "border-[#c89b3c] bg-[#c89b3c]/10 shadow-[inset_0_0_0_1px_rgba(245,197,66,.18)]",
         !item && "border-dashed border-[#394150]",
         submitted && (correct ? "border-green-400/70 bg-green-500/18" : "border-[#394150] bg-[#151b26] grayscale")
@@ -977,8 +980,8 @@ function BuildSlot({
       {item ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.imageUrl} alt="" className="h-9 w-9 object-contain" />
-          <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
+          <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-9 sm:w-9" />
+          <span className="line-clamp-2 text-[8px] font-semibold leading-tight sm:text-[10px]">{item.name}</span>
           {!submitted && (
             <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#c89b3c]/40 bg-[#050607]/90 text-[#f5c542] opacity-0 transition group-hover:opacity-100">
               <X size={12} />
@@ -986,7 +989,7 @@ function BuildSlot({
           )}
         </>
       ) : (
-        <span className="text-xs uppercase text-[color:var(--muted)]">{label}</span>
+        <span className="text-[9px] uppercase text-[color:var(--muted)] sm:text-xs">{label}</span>
       )}
     </button>
   );
@@ -1130,16 +1133,16 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
 
 function InfiniteStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
   return (
-    <div className="grid grid-cols-3 gap-2 rounded-sm border border-[#26313f] bg-[#111722] p-2 text-center text-xs">
-      <div>
+    <div className="flex flex-wrap gap-2 text-center text-xs">
+      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
         <div className="font-display text-lg font-bold text-[#f5c542]">{round}</div>
         <div className="uppercase text-[color:var(--muted)]">Round</div>
       </div>
-      <div>
+      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
         <div className="font-display text-lg font-bold">{current}</div>
         <div className="uppercase text-[color:var(--muted)]">Streak</div>
       </div>
-      <div>
+      <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
         <div className="font-display text-lg font-bold">{best}</div>
         <div className="uppercase text-[color:var(--muted)]">Best</div>
       </div>
@@ -1147,7 +1150,13 @@ function InfiniteStreakBar({ round, current, best }: { round: number; current: n
   );
 }
 
-function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: string, username: string, avoidTripleKey?: (round: T) => string | undefined) {
+function useRandomizedRounds<T extends { id: string }>(
+  rounds: T[],
+  gameKey: string,
+  username: string,
+  avoidTripleKey?: (round: T) => string | undefined,
+  priorityForRound?: (round: T) => number
+) {
   const [loadSeed] = useState(() => `${Date.now()}:${Math.random()}`);
   const storageKey = `rift-daily:last-first-round:${gameKey}:${normalize(username || "guest")}`;
   const orderedRounds = useMemo(() => {
@@ -1161,6 +1170,11 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
 
       return aHash - bHash || a.id.localeCompare(b.id);
     });
+
+    if (priorityForRound) {
+      randomized.sort((a, b) => priorityForRound(b) - priorityForRound(a));
+    }
+
     const lastFirstRoundId = typeof window === "undefined" ? "" : window.localStorage.getItem(storageKey);
 
     if (avoidTripleKey) {
@@ -1168,7 +1182,11 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
     }
 
     if (lastFirstRoundId && randomized[0]?.id === lastFirstRoundId) {
-      const swapIndex = randomized.findIndex((round) => round.id !== lastFirstRoundId);
+      const currentPriority = priorityForRound ? priorityForRound(randomized[0]) : 0;
+      const samePrioritySwapIndex = randomized.findIndex(
+        (round) => round.id !== lastFirstRoundId && (!priorityForRound || priorityForRound(round) === currentPriority)
+      );
+      const swapIndex = samePrioritySwapIndex > 0 ? samePrioritySwapIndex : randomized.findIndex((round) => round.id !== lastFirstRoundId);
 
       if (swapIndex > 0) {
         [randomized[0], randomized[swapIndex]] = [randomized[swapIndex], randomized[0]];
@@ -1176,7 +1194,7 @@ function useRandomizedRounds<T extends { id: string }>(rounds: T[], gameKey: str
     }
 
     return randomized;
-  }, [avoidTripleKey, loadSeed, rounds, storageKey]);
+  }, [avoidTripleKey, loadSeed, priorityForRound, rounds, storageKey]);
 
   useEffect(() => {
     const firstRound = orderedRounds[0];
@@ -1218,19 +1236,20 @@ function orderRoundsAvoidingTripleKey<T extends { id: string }>(rounds: T[], key
 
 function usePersonalModeStreak(gameKey: string, username: string) {
   const storageKey = `rift-daily:${gameKey}:${normalize(username || "guest")}`;
-  const [streak, setStreak] = useState({ current: 0, best: 0, played: 0 });
+  const [streak, setStreak] = useState({ current: 0, best: 0, played: 0, wins: 0 });
 
   useEffect(() => {
     const raw = window.localStorage.getItem(storageKey);
 
     if (raw) {
       try {
-        setStreak(JSON.parse(raw) as { current: number; best: number; played: number });
+        const parsed = JSON.parse(raw) as { current: number; best: number; played: number; wins?: number };
+        setStreak({ ...parsed, wins: parsed.wins ?? 0 });
       } catch {
-        setStreak({ current: 0, best: 0, played: 0 });
+        setStreak({ current: 0, best: 0, played: 0, wins: 0 });
       }
     } else {
-      setStreak({ current: 0, best: 0, played: 0 });
+      setStreak({ current: 0, best: 0, played: 0, wins: 0 });
     }
   }, [storageKey]);
 
@@ -1240,9 +1259,11 @@ function usePersonalModeStreak(gameKey: string, username: string) {
       const next = {
         current: nextCurrent,
         best: Math.max(current.best, nextCurrent),
-        played: current.played + 1
+        played: current.played + 1,
+        wins: current.wins + (correct ? 1 : 0)
       };
       window.localStorage.setItem(storageKey, JSON.stringify(next));
+      window.dispatchEvent(new Event("rift-daily:streak-updated"));
       return next;
     });
   }
@@ -1365,12 +1386,12 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
+        <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
           <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-          <div className="grid min-h-[30rem] gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-3 lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
+          <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 lg:min-h-[30rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
             <MatchupChampionCard side="left" pick={round.left} revealed={submitted} selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
             <div className="grid place-items-center">
-              <div className="grid h-20 w-20 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-2xl font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)]">
+              <div className="grid h-14 w-14 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-lg font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)] lg:h-20 lg:w-20 lg:text-2xl">
                 VS
               </div>
             </div>
@@ -1448,7 +1469,7 @@ function MatchupChampionCard({
     <article className={cn("relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
       <div className="absolute inset-0 bg-cover bg-center opacity-72" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.20),transparent_34%),linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
-      <div className="relative flex h-full min-h-[30rem] flex-col justify-between p-5">
+      <div className="relative flex h-full min-h-[24rem] flex-col justify-between p-4 sm:min-h-[28rem] lg:min-h-[30rem] lg:p-5">
         <div className={cn("flex items-center gap-2", side === "right" && "justify-end text-right")}>
           <span className="rounded-sm border border-[#c89b3c]/45 bg-[#050607]/82 px-3 py-1 font-display text-xs font-bold uppercase tracking-[0.12em] text-[#f1d58a]">
             {pick.role}
@@ -1459,7 +1480,7 @@ function MatchupChampionCard({
         </div>
         <div className={cn("grid gap-4", side === "right" && "justify-items-end text-right")}>
           <div>
-            <div className="font-display text-5xl font-black leading-none tracking-tight text-white drop-shadow">{pick.champion.name}</div>
+            <div className="font-display text-4xl font-black leading-none tracking-tight text-white drop-shadow sm:text-5xl">{pick.champion.name}</div>
             <div className="mt-2 text-sm uppercase tracking-[0.12em] text-[#c89b3c]">{pick.champion.title}</div>
           </div>
           <div className={cn("grid max-w-xs gap-2 rounded-sm border border-white/10 bg-[#050607]/78 p-4 backdrop-blur", !revealed && "border-[#c89b3c]/35")}>
@@ -1535,9 +1556,9 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
+      <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-        <div className="grid min-h-0 grid-rows-2 gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-3">
+        <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-3 lg:min-h-0 lg:grid-rows-2">
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
         </div>
@@ -1640,13 +1661,13 @@ function VerifiedAnswerModal({
   useBodyScrollLock();
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-3 backdrop-blur-sm sm:p-4">
       <div
         className={cn(
-          "grid w-full gap-4 overscroll-contain rounded-xl border bg-[#071018] p-5 shadow-[0_24px_90px_rgba(0,0,0,.65)] transition-[max-width]",
+          "grid w-full gap-4 overscroll-contain rounded-xl border bg-[#071018] p-4 shadow-[0_24px_90px_rgba(0,0,0,.65)] transition-[max-width] sm:p-5",
           expanded
-            ? "max-h-[calc(100vh-2rem)] max-w-[min(92rem,calc(100vw-2rem))] overflow-y-auto border-[#c89b3c]/70 fine-scrollbar"
-            : "max-h-[calc(100vh-2rem)] max-w-xl overflow-y-auto border-[#c89b3c]/60 fine-scrollbar"
+            ? "max-h-[calc(100dvh-1.5rem)] max-w-[min(92rem,calc(100vw-1.5rem))] overflow-y-auto border-[#c89b3c]/70 fine-scrollbar sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(92rem,calc(100vw-2rem))]"
+            : "max-h-[calc(100dvh-1.5rem)] max-w-xl overflow-y-auto border-[#c89b3c]/60 fine-scrollbar sm:max-h-[calc(100dvh-2rem)]"
         )}
       >
         <div className="flex items-start justify-between gap-3">
@@ -1672,12 +1693,6 @@ function VerifiedAnswerModal({
           <ResultStat label="Current Streak" value={String(streak.current)} detail={`Best ${streak.best}`} tone={correct ? "good" : "muted"} />
         </div>
 
-        {note && (
-          <div className="rounded-lg border border-[#2b2f38] bg-[#111722] p-3 text-sm text-[color:var(--muted)]">
-            {note}
-          </div>
-        )}
-
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Close
@@ -1693,7 +1708,12 @@ function VerifiedAnswerModal({
         </div>
 
         {expanded && (
-          <div className="min-h-0 pr-1">
+          <div className="grid min-h-0 gap-3 pr-1">
+            {note && (
+              <div className="rounded-lg border border-[#2b2f38] bg-[#111722] p-3 text-sm text-[color:var(--muted)]">
+                {note}
+              </div>
+            )}
             <MatchProofCard sourceMatch={sourceMatch} />
           </div>
         )}
@@ -1801,9 +1821,6 @@ function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMa
           Match details unavailable in this payload, but the exact Riot Match-V5 ID is shown above.
         </div>
       )}
-      <div className="mt-2 text-[11px] leading-snug text-[color:var(--muted)]">
-        Data comes from Riot Match-V5. No OP.GG-only match token required.
-      </div>
     </div>
   );
 }
@@ -1918,15 +1935,15 @@ function compactNumber(value: number) {
 
 function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] }) {
   return (
-    <div className="grid min-h-0 grid-cols-[4.5rem_repeat(5,minmax(0,1fr))] gap-2">
-      <div className="font-display grid place-items-center rounded-sm border border-[#26313f] bg-[#0b111b] text-center text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">
+    <div className="grid gap-2 sm:grid-cols-[4.5rem_repeat(5,minmax(0,1fr))] sm:min-h-0">
+      <div className="font-display grid min-h-10 place-items-center rounded-sm border border-[#26313f] bg-[#0b111b] text-center text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c] sm:min-h-0">
         {side}
       </div>
       {lanes.map((lane) => (
-        <div key={`${side}:${lane.role}`} className="relative min-h-0 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722]">
+        <div key={`${side}:${lane.role}`} className="relative min-h-28 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-0">
           <div className="absolute inset-0 bg-cover bg-center opacity-48" style={{ backgroundImage: `url(${lane.champion.splashUrl})` }} />
           <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/55 to-transparent" />
-          <div className="relative flex h-full min-h-0 flex-col justify-end p-2">
+          <div className="relative flex h-full min-h-0 flex-col justify-end p-2.5 sm:p-2">
             <span className="text-[10px] uppercase leading-tight text-[#c89b3c]">{lane.role}</span>
             <span className="truncate text-base font-bold leading-tight">{lane.champion.name}</span>
             {lane.playerName && (
@@ -1981,7 +1998,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
+      <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
         <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
         <DraftScreen
           blueName="Your Team"
@@ -2077,7 +2094,7 @@ function pickUiUnique(list: PublicChampion[], seed: string, count: number, exclu
 
 function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
   return (
-    <section className="flex h-full min-h-0 flex-col gap-3 rounded-sm border border-[#3c3421] bg-[#071018] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
+    <section className="flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-3 rounded-lg border border-[#3c3421] bg-[#071018] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[#c89b3c]">{icon}</span>
         <h2 className="text-xl font-semibold">{title}</h2>
@@ -2090,13 +2107,13 @@ function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title
 
 function VerifiedDataUnavailable({ reason }: { reason: string }) {
   return (
-    <div className="grid min-h-80 flex-1 place-items-center rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_50%_0%,rgba(200,155,60,.12),transparent_34%),linear-gradient(180deg,#0f1724,#071018)] p-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_22px_70px_rgba(0,0,0,.32)]">
+    <div
+      className="grid min-h-80 flex-1 place-items-center rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_50%_0%,rgba(200,155,60,.12),transparent_34%),linear-gradient(180deg,#0f1724,#071018)] p-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_22px_70px_rgba(0,0,0,.32)]"
+      aria-label={reason}
+    >
       <div className="max-w-lg">
-        <div className="font-display text-2xl font-bold text-[#c89b3c]">Verified Riot data is warming</div>
-        <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">{reason}</p>
-        <p className="mt-3 text-xs leading-5 text-[color:var(--muted)]">
-          These modes only display lane assignments from Match-V5 <span className="text-white">teamPosition</span> and summoner spells from Match-V5 spell IDs mapped through Data Dragon.
-        </p>
+        <div className="font-display text-2xl font-bold text-[#c89b3c]">Rounds syncing</div>
+        <p className="mt-3 text-sm leading-6 text-[color:var(--muted)]">Live data is still preparing this mode.</p>
         <button
           type="button"
           onClick={() => window.location.reload()}
@@ -2162,10 +2179,10 @@ function DraftScreen({
   hiddenLabel?: string;
 }) {
   return (
-    <div className="grid min-h-0 grid-cols-[1fr_5rem_1fr] gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-3">
+    <div className="grid gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} />
       <div className="grid place-items-center text-center">
-        <div className="rounded-full border border-[#3c3421] px-4 py-3 text-xl font-bold text-[#c89b3c]">VS</div>
+        <div className="rounded-full border border-[#3c3421] px-3 py-2 text-base font-bold text-[#c89b3c] md:px-4 md:py-3 md:text-xl">VS</div>
       </div>
       <DraftTeam side="red" name={redName} picks={redPicks} bans={redBans} hiddenLabel={hiddenLabel} />
     </div>
@@ -2186,13 +2203,13 @@ function DraftTeam({
   hiddenLabel: string;
 }) {
   return (
-    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+    <div className="grid gap-2 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
       <div className={cn("flex items-center gap-2", side === "red" ? "justify-end" : "justify-start")}>
         {side === "red" && <BanCluster bans={bans} />}
         <div className={cn("truncate text-lg font-bold text-[#c89b3c]", side === "red" && "text-right")}>{name}</div>
         {side === "blue" && <BanCluster bans={bans} />}
       </div>
-      <div className="grid min-h-0 grid-rows-5 gap-2">
+      <div className="grid gap-2 md:min-h-0 md:grid-rows-5">
         {Array.from({ length: 5 }).map((_, index) => (
           <DraftPickCard key={index} pick={picks[index]} hiddenLabel={hiddenLabel} />
         ))}
@@ -2213,8 +2230,8 @@ function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
 
 function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: string }) {
   return (
-    <div className="grid min-h-20 grid-cols-[4.25rem_minmax(0,1fr)] items-center gap-3 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-2">
-      <div className="relative h-16 w-16 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018]">
+    <div className="grid min-h-16 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:grid-cols-[4.25rem_minmax(0,1fr)] sm:gap-3 md:min-h-20">
+      <div className="relative h-14 w-14 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:h-16 sm:w-16">
         {pick?.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -2223,8 +2240,8 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
         )}
       </div>
       <div className="min-w-0">
-        <div className="truncate text-lg font-bold leading-tight">{pick?.label ?? hiddenLabel}</div>
-        <div className="truncate text-sm leading-tight text-[#c89b3c]">{pick?.sublabel ?? "Champion select"}</div>
+        <div className="truncate text-base font-bold leading-tight sm:text-lg">{pick?.label ?? hiddenLabel}</div>
+        <div className="truncate text-xs leading-tight text-[#c89b3c] sm:text-sm">{pick?.sublabel ?? "Champion select"}</div>
         {pick?.playerName && (
           <div title={pick.playerName} className="mt-0.5 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5]">
             {pick.playerName}

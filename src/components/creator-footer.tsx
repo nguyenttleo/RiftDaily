@@ -9,8 +9,8 @@ const creatorLinks = [
 export function CreatorFooter() {
   return (
     <footer className="bg-[#050914] px-5 pb-24 pt-14 text-[#f8fafc]">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#0a1020] p-5">
-        <div className="flex flex-wrap gap-2">
+      <div className="mx-auto flex max-w-7xl flex-col gap-3 rounded-lg border border-white/10 bg-[#0a1020] p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:p-5">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           {creatorLinks.map(({ label, href, icon: Icon }) => (
             <a
               key={label}
@@ -24,7 +24,7 @@ export function CreatorFooter() {
         </div>
         <Link
           href="/suggest"
-          className="font-display inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#f5c542] px-4 text-sm font-extrabold text-[#090b10] transition hover:bg-[#f8d86a]"
+          className="font-display inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#f5c542] px-4 text-sm font-extrabold text-[#090b10] transition hover:bg-[#f8d86a] sm:min-h-10"
         >
           <MessageSquare size={16} />
           Suggestions

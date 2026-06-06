@@ -1,5 +1,5 @@
 import { champions } from "@/game/data/champions";
-import { rankFromStats } from "@/game/scoring";
+import { rankFromProgress } from "@/game/scoring";
 import { isDatabaseConfigured } from "@/lib/env";
 import type { ChallengeType, LeaderboardEntry, UserStats } from "@/types";
 
@@ -387,19 +387,22 @@ async function recomputeUserStats(userId: string): Promise<void> {
 
 function normalizeStatsRow(username: string, row: StatsRow): UserStats {
   const currentStreak = Number(row.current_streak ?? 0);
+  const maxStreak = Number(row.max_streak ?? 0);
+  const gamesPlayed = Number(row.games_played ?? 0);
+  const perfectSolves = Number(row.perfect_solves ?? 0);
   const winRate = Number(row.win_rate ?? 0);
 
   return {
     username,
     currentStreak,
-    maxStreak: Number(row.max_streak ?? 0),
-    gamesPlayed: Number(row.games_played ?? 0),
+    maxStreak,
+    gamesPlayed,
     wins: Number(row.wins ?? 0),
     winRate,
-    perfectSolves: Number(row.perfect_solves ?? 0),
+    perfectSolves,
     fastestSolveMs: row.fastest_solve_ms,
     favoriteRole: row.favorite_role ?? "Unclaimed",
-    rank: rankFromStats(currentStreak, winRate)
+    rank: rankFromProgress({ currentStreak, maxStreak, gamesPlayed, winRate, perfectSolves })
   };
 }
 
