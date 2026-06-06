@@ -196,12 +196,17 @@ interface PersistedMatchupAggregateRow {
   sample_matches: string | number;
 }
 
+interface VerifiedMatchCacheRow {
+  payload: VerifiedMatchChallengeSet;
+}
+
 let cachedMatchSet: {
   key: string;
   expiresAt: number;
   value: VerifiedMatchChallengeSet;
 } | null = null;
 let matchupSampleTableReady: Promise<void> | null = null;
+let verifiedMatchCacheTableReady: Promise<void> | null = null;
 
 export async function getVerifiedRankedMatchChallenges({
   date,
@@ -256,9 +261,24 @@ export async function getVerifiedRankedMatchChallenges({
   const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisFetchBudget / RANK_BUCKETS.length));
   const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / matchIdsPerSourceBudget) + 1));
   const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${matchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
+  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:verified-rounds`;
 
   if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
+  }
+
+  const persistedVerifiedSet = await getPersistedVerifiedMatchCache(persistedCacheKey);
+
+  if (persistedVerifiedSet && hasBuildWinrateSamplesRecord(persistedVerifiedSet.championWinrateSamples)) {
+    const value = mergePersistedMatchupsIntoVerifiedSet(persistedVerifiedSet, persistedChampionMatchupRounds);
+
+    cachedMatchSet = {
+      key: cacheKey,
+      expiresAt: Date.now() + 1000 * 60 * 60 * 2,
+      value
+    };
+
+    return value;
   }
 
   try {
@@ -489,6 +509,7 @@ export async function getVerifiedRankedMatchChallenges({
     };
 
     if (hasVerifiedBuildSamples) {
+      await persistVerifiedMatchCache(persistedCacheKey, value);
       cachedMatchSet = {
         key: cacheKey,
         expiresAt: Date.now() + 1000 * 60 * 60 * 2,
@@ -877,6 +898,10 @@ function hasBuildWinrateCandidate(championWinrates: Map<string, WinrateAccumulat
   return [...championWinrates.values()].some((sample) => sample.games >= MIN_BUILD_SAMPLE_GAMES);
 }
 
+function hasBuildWinrateSamplesRecord(samples: Record<string, BuildWinrateStats>) {
+  return Object.values(samples).some((sample) => sample.games >= MIN_BUILD_SAMPLE_GAMES);
+}
+
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
   return [...championMatchupSamples.values()].filter(
     (sample) => sample.games >= MIN_MATCHUP_SAMPLE_GAMES && sample.leftWins !== sample.games - sample.leftWins
@@ -1001,6 +1026,85 @@ async function getPersistedChampionMatchupRounds(date: string, publicChampions: 
   } catch {
     return [];
   }
+}
+
+function mergePersistedMatchupsIntoVerifiedSet(cachedSet: VerifiedMatchChallengeSet, championMatchupRounds: ChampionMatchupRound[]) {
+  const championMatchupMessage =
+    championMatchupRounds.length > 0
+      ? undefined
+      : `Champion Matchup needs ${MIN_MATCHUP_SAMPLE_GAMES}+ Riot Match-V5 ranked games containing both champions in their selected lanes in the same match.`;
+
+  return {
+    ...cachedSet,
+    championMatchupRounds,
+    status: cachedSet.guessEloRounds.length > 0 || cachedSet.dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" as const : "unavailable" as const,
+    ...(championMatchupMessage ? { championMatchupMessage } : { championMatchupMessage: undefined })
+  };
+}
+
+async function getPersistedVerifiedMatchCache(cacheKey: string) {
+  if (!isDatabaseConfigured()) {
+    return null;
+  }
+
+  try {
+    await ensureVerifiedMatchCacheTable();
+    const result = await query<VerifiedMatchCacheRow>(
+      `select payload
+      from verified_match_cache
+      where cache_key = $1
+        and expires_at > now()
+      limit 1`,
+      [cacheKey]
+    );
+
+    return result.rows[0]?.payload ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistVerifiedMatchCache(cacheKey: string, value: VerifiedMatchChallengeSet) {
+  if (!isDatabaseConfigured()) {
+    return;
+  }
+
+  try {
+    await ensureVerifiedMatchCacheTable();
+    await query(
+      `insert into verified_match_cache (cache_key, payload, expires_at)
+      values ($1, $2::jsonb, now() + interval '2 hours')
+      on conflict (cache_key)
+      do update set
+        payload = excluded.payload,
+        expires_at = excluded.expires_at,
+        created_at = now()`,
+      [cacheKey, JSON.stringify(value)]
+    );
+  } catch {
+    // Live Riot data remains available even if the optional shared cache cannot be written.
+  }
+}
+
+async function ensureVerifiedMatchCacheTable() {
+  if (!isDatabaseConfigured()) {
+    return;
+  }
+
+  verifiedMatchCacheTableReady ??= (async () => {
+    await query(`create table if not exists verified_match_cache (
+      cache_key text primary key,
+      payload jsonb not null,
+      created_at timestamptz not null default now(),
+      expires_at timestamptz not null
+    )`);
+    await query("create index if not exists verified_match_cache_expires_idx on verified_match_cache (expires_at desc)");
+  })().catch((error) => {
+    verifiedMatchCacheTableReady = null;
+    throw error;
+  });
+
+  await verifiedMatchCacheTableReady;
 }
 
 async function countPersistedTwentyGameMatchupPairs(currentPatchPrefix: string) {
