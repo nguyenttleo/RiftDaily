@@ -10,7 +10,7 @@ import {
 } from "@/game/generators/daily";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
-import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
+import { getVerifiedRankedMatchChallenges, warmChampionMatchupSampleCache } from "@/lib/riot/match-v5";
 import type { ChallengeType } from "@/types";
 
 export const runtime = "nodejs";
@@ -40,18 +40,64 @@ async function generate(request: Request) {
 
   const url = new URL(request.url);
   const date = url.searchParams.get("date") ?? getUtcDateKey();
+  const mode = url.searchParams.get("mode") ?? "daily";
   const version = await getLatestDataDragonVersion();
   const ability = await ensureChallenge("ability", date, version);
   const champion = await ensureChallenge("champion", date, version);
+
+  if (mode === "warm-matchups") {
+    const publicChampions = await getLivePublicChampions(version);
+    const warmResult = await warmChampionMatchupSampleCache({
+      date,
+      dataDragonVersion: version,
+      publicChampions,
+      batchKey: url.searchParams.get("batch") ?? String(Math.floor(Date.now() / 600000)),
+      currentPatchMatchTarget: numberParam(url, "target", 12),
+      sourceCountPerBucket: numberParam(url, "sources", 1),
+      matchHistoryPagesPerSource: numberParam(url, "pages", 1),
+      timeBudgetMs: numberParam(url, "budgetMs", 22000)
+    });
+
+    return NextResponse.json({
+      ok: warmResult.status === "ready",
+      date,
+      mode,
+      challenges: {
+        ability,
+        champion
+      },
+      warmResult
+    });
+  }
+
+  const includeVerified = mode === "verified" || url.searchParams.get("verified") === "1";
+
+  if (!includeVerified) {
+    return NextResponse.json({
+      ok: true,
+      date,
+      mode,
+      challenges: {
+        ability,
+        champion
+      },
+      verified: {
+        skipped: true,
+        message: "Daily challenge rows generated. Use mode=warm-matchups for small cache-warming batches."
+      }
+    });
+  }
+
   const [publicChampions, summonerSpells] = await Promise.all([
     getLivePublicChampions(version),
     getLiveSummonerSpells(version)
   ]);
   const verified = await getVerifiedRankedMatchChallenges({
     date,
+    dataDragonVersion: version,
     publicChampions,
     summonerSpells,
-    allowLiveMatchupCollection: true
+    allowLiveMatchupCollection: false
   });
 
   return NextResponse.json({
@@ -69,6 +115,12 @@ async function generate(request: Request) {
       message: verified.message
     }
   });
+}
+
+function numberParam(url: URL, key: string, fallback: number) {
+  const value = Number(url.searchParams.get(key));
+
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 async function ensureChallenge(type: ChallengeType, date: string, version: string) {

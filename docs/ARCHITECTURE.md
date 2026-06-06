@@ -19,7 +19,7 @@ flowchart TD
 3. Item and recipe modes use live Riot Data Dragon champion/item/spell data hydrated server-side.
 4. Build mode displays champion winrate stats only when they can be derived from verified Riot Match-V5 ranked solo sample outcomes.
 5. Guess the Elo and Dodge/Queue use Riot League-V4 source players plus Match-V5 ranked solo matches. A round is accepted only when Match-V5 provides five lane positions per team and exactly one Smite jungler on each team.
-6. Champion Matchup uses only exact same-match head-to-head samples: both champion-lane picks must appear on opposite teams in the same ranked Match-V5 games. The game prefers 20+ samples and can use verified 5+ warming samples until Supabase has enough cached pairs.
+6. Champion Matchup uses only exact same-match current-patch head-to-head samples: both champion-lane picks must appear on opposite teams in the same ranked Match-V5 games and the match `gameVersion` must match the active Data Dragon major/minor patch. The game uses all eligible rows already cached in Supabase and only displays pairs with 20+ current-patch games.
 7. Build, Recipe, Elo, and Dodge/Queue support infinite play with per-user streak and personal-best tracking in the browser.
 8. Auth, stats, guesses, suggestions, matchup sample cache rows, and leaderboard rows persist in Supabase when `DATABASE_URL` is configured.
 

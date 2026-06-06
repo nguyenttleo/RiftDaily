@@ -2,7 +2,7 @@
 
 Rift Daily is a League-inspired infinite challenge hub for item builds, item recipes, verified Match-V5 loading-screen reads, champion matchup calls, Dodge-or-Queue lobbies, and a Kennen skillshot dodge trainer.
 
-The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Champion Matchup prefers 20+ game head-to-head samples where both champion-lane picks appeared on opposite teams in the same Riot Match-V5 ranked games, with verified 5+ game warming samples used while Supabase builds that cache. Build mode shows Match-V5 ranked-sample baseline and target-build-core winrates only when each stat has at least 5 verified games and the build sample is at or above the baseline. Supabase enables persisted auth, suggestions, stats, matchup sample caching, and leaderboards in production.
+The app uses Riot Data Dragon at runtime for verified champion, item, spell, splash, and icon data. Guess the Elo and Dodge-or-Queue use Riot Match-V5 ranked matches for lane assignments and summoner spell choices. Champion Matchup uses all current-patch head-to-head samples available in the Supabase cache where both champion-lane picks appeared on opposite teams in the same Riot Match-V5 ranked games; pairs are valid only at 20+ current-patch games. Build mode shows Match-V5 ranked-sample baseline and target-build-core winrates only when each stat has at least 5 verified games and the build sample is at or above the baseline. Supabase enables persisted auth, suggestions, stats, matchup sample caching, and leaderboards in production.
 
 ## Stack
 
@@ -21,7 +21,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Catalog gameplay loads verified Riot Data Dragon data without secrets. Guess the Elo, Champion Matchup, and Dodge-or-Queue require `RIOT_API_KEY` because they only display real Match-V5 `teamPosition`, same-match matchup, and `summoner1Id`/`summoner2Id` data. Account creation, saved stats, matchup sample caching, and leaderboards require `DATABASE_URL`.
+Open `http://localhost:3000`. Catalog gameplay loads verified Riot Data Dragon data without secrets. Guess the Elo, Champion Matchup, and Dodge-or-Queue require `RIOT_API_KEY` because they only display real Match-V5 `teamPosition`, same-match current-patch matchup, and `summoner1Id`/`summoner2Id` data. Account creation, saved stats, matchup sample caching, and leaderboards require `DATABASE_URL`.
 
 ## Useful Scripts
 
@@ -46,7 +46,7 @@ npm run sync:riot
 7. Deploy with the included `amplify.yml`.
 8. After the first deploy, set `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL` to the final Amplify domain and redeploy.
 9. Add a valid Riot API key in `RIOT_API_KEY`; development keys expire, so production hosting should use a production Riot key.
-10. Optionally create an AWS EventBridge Scheduler/API Destination job that calls `/api/cron/generate-daily` at midnight UTC.
+10. Optionally create AWS EventBridge Scheduler jobs that call `/api/cron/generate-daily` daily and `/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1` on a short interval through a Lambda wrapper.
 
 Detailed walkthroughs are in:
 

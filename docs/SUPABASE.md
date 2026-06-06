@@ -56,6 +56,12 @@ select count(*) from champions;
 select username, email from users order by created_at desc limit 5;
 select * from suggestions order by created_at desc limit 5;
 select count(*) from champion_matchup_samples;
+select split_part(game_version, '.', 1) || '.' || split_part(game_version, '.', 2) as patch,
+       count(*) as matchup_rows,
+       count(distinct match_id) as matches
+from champion_matchup_samples
+group by 1
+order by matchup_rows desc;
 ```
 
 If `champions` has the full roster and suggestions insert from `/suggest`, Supabase is wired correctly.
@@ -64,5 +70,5 @@ If `champions` has the full roster and suggestions insert from `/suggest`, Supab
 
 - Keep `DATABASE_URL` server-side only. Do not prefix it with `NEXT_PUBLIC_`.
 - The suggestion form posts to `/api/suggestions` and persists into the `suggestions` table when `DATABASE_URL` is configured.
-- Champion Matchup samples accumulate in `champion_matchup_samples` from verified Riot Match-V5 ranked games; the game prefers 20+ exact same-match samples and can display verified 5+ warming samples while the cache grows.
+- Champion Matchup samples accumulate in `champion_matchup_samples` from verified Riot Match-V5 ranked games; gameplay filters that cache to the current Data Dragon patch and uses every eligible current-patch row available for each champion-lane pair. The game only displays exact same-match current-patch pairs with 20+ games.
 - Free-tier Supabase can pause after inactivity. If accounts, saved stats, or leaderboards stop updating, check whether the project needs to be resumed.

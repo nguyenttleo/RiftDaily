@@ -16,11 +16,13 @@ const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"] as const;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
-const WARMING_MATCHUP_SAMPLE_GAMES = 5;
 const TARGET_MATCHUP_ROUNDS = 16;
-const MATCH_IDS_PER_SOURCE = 20;
-const MAX_ANALYSIS_MATCH_SAMPLE_SIZE = 4096;
-const MAX_SOURCES_PER_RANK_BUCKET = 32;
+const MATCH_IDS_PER_REQUEST = 100;
+const LEAGUE_ENTRY_PAGES_PER_BUCKET = 3;
+const MAX_MATCH_HISTORY_PAGES_PER_SOURCE = 5;
+const MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE = 20000;
+const MAX_ANALYSIS_MATCH_FETCH_BUDGET = 40000;
+const MAX_SOURCES_PER_RANK_BUCKET = 48;
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
@@ -116,6 +118,20 @@ export interface VerifiedMatchChallengeSet {
   championMatchupMessage?: string;
 }
 
+export interface ChampionMatchupWarmResult {
+  status: "ready" | "unconfigured" | "unavailable";
+  message?: string;
+  patchPrefix: string;
+  batchKey: string;
+  requestedCurrentPatchMatches: number;
+  sourcesChecked: number;
+  matchIdsChecked: number;
+  riotMatchesFetched: number;
+  currentPatchMatches: number;
+  insertedRowsAttempted: number;
+  validTwentyGamePairs: number;
+}
+
 interface WinrateAccumulator {
   championName: string;
   wins: number;
@@ -174,11 +190,13 @@ let matchupSampleTableReady: Promise<void> | null = null;
 
 export async function getVerifiedRankedMatchChallenges({
   date,
+  dataDragonVersion,
   publicChampions,
   summonerSpells,
   allowLiveMatchupCollection = false
 }: {
   date: string;
+  dataDragonVersion: string;
   publicChampions: PublicChampion[];
   summonerSpells: SummonerSpellRef[];
   allowLiveMatchupCollection?: boolean;
@@ -200,14 +218,24 @@ export async function getVerifiedRankedMatchChallenges({
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
   const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
-  const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount) ? Math.max(sampleSize, Math.min(MAX_ANALYSIS_MATCH_SAMPLE_SIZE, env.riotMatchupSampleMatchCount)) : MAX_ANALYSIS_MATCH_SAMPLE_SIZE;
+  const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount)
+    ? Math.max(sampleSize, Math.min(MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE, env.riotMatchupSampleMatchCount))
+    : 1600;
+  const matchHistoryPagesPerSource = Number.isFinite(env.riotMatchHistoryPagesPerSource)
+    ? Math.max(1, Math.min(MAX_MATCH_HISTORY_PAGES_PER_SOURCE, env.riotMatchHistoryPagesPerSource))
+    : 2;
+  const currentPatchPrefix = patchPrefixFromVersion(dataDragonVersion);
   const championLookup = createChampionLookup(publicChampions);
-  const persistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions);
+  const persistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
   const shouldCollectLiveMatchups = allowLiveMatchupCollection && persistedChampionMatchupRounds.length < TARGET_MATCHUP_ROUNDS;
-  const analysisSampleSize = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
-  const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisSampleSize / RANK_BUCKETS.length));
-  const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / MATCH_IDS_PER_SOURCE) + 1));
-  const cacheKey = `${date}:${platform}:${sampleSize}:${analysisMatchesPerRank}:${sourceCountPerBucket}:${persistedChampionMatchupRounds.length}`;
+  const analysisTargetMatchCount = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
+  const analysisFetchBudget = shouldCollectLiveMatchups
+    ? Math.min(MAX_ANALYSIS_MATCH_FETCH_BUDGET, Math.max(analysisTargetMatchCount, requestedMatchupSampleSize * 3))
+    : analysisTargetMatchCount;
+  const matchIdsPerSourceBudget = MATCH_IDS_PER_REQUEST * (shouldCollectLiveMatchups ? matchHistoryPagesPerSource : 1);
+  const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisFetchBudget / RANK_BUCKETS.length));
+  const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / matchIdsPerSourceBudget) + 1));
+  const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${matchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
 
   if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
@@ -222,6 +250,7 @@ export async function getVerifiedRankedMatchChallenges({
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
     const championMatchupSamples = new Map<string, ChampionMatchupAccumulator>();
+    const currentPatchMatchupMatchIds = new Set<string>();
     const matchupSampleRecords: ChampionMatchupSampleRecord[] = [];
     const flushMatchupSampleRecords = async (force = false) => {
       if (matchupSampleRecords.length < 800 && !force) {
@@ -230,6 +259,16 @@ export async function getVerifiedRankedMatchChallenges({
 
       const records = matchupSampleRecords.splice(0, matchupSampleRecords.length);
       await persistChampionMatchupSamples(records);
+    };
+    const collectMatchupSamples = async (match: RiotMatchDto) => {
+      const records = addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples, currentPatchPrefix);
+
+      if (records.length > 0) {
+        currentPatchMatchupMatchIds.add(match.metadata.matchId);
+        matchupSampleRecords.push(...records);
+      }
+
+      await flushMatchupSampleRecords();
     };
 
     for (const bucket of RANK_BUCKETS) {
@@ -244,10 +283,7 @@ export async function getVerifiedRankedMatchChallenges({
         let matchIds: string[] = [];
 
         try {
-          matchIds = await riotFetch<string[]>(
-            regional,
-            `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${MATCH_IDS_PER_SOURCE}`
-          );
+          matchIds = await getRankedMatchIdsForSource(regional, source.puuid, 1);
         } catch {
           continue;
         }
@@ -265,6 +301,14 @@ export async function getVerifiedRankedMatchChallenges({
 
           try {
             const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+
+            if (!isRankedClassicSummonersRiftMatch(match)) {
+              continue;
+            }
+
+            addChampionWinrateSamples(match, championLookup, championWinrates);
+            await collectMatchupSamples(match);
+
             const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
 
             if (!verified) {
@@ -272,10 +316,6 @@ export async function getVerifiedRankedMatchChallenges({
             }
 
             const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
-
-            addChampionWinrateSamples(match, championLookup, championWinrates);
-            matchupSampleRecords.push(...addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples));
-            await flushMatchupSampleRecords();
 
             if (dodgeQueueRounds.length < sampleSize) {
               dodgeQueueRounds.push(verified.dodgeQueue);
@@ -292,23 +332,40 @@ export async function getVerifiedRankedMatchChallenges({
     }
 
     for (const source of seededOrder(sources, `${date}:analysis-sources`)) {
-      if (isAnalysisComplete(seenMatches.size, requestedBuildSampleSize, shouldCollectLiveMatchups, championMatchupSamples) || seenMatches.size >= analysisSampleSize) {
+      if (
+        isAnalysisComplete(
+          seenMatches.size,
+          currentPatchMatchupMatchIds.size,
+          requestedBuildSampleSize,
+          requestedMatchupSampleSize,
+          shouldCollectLiveMatchups,
+          championMatchupSamples
+        ) ||
+        seenMatches.size >= analysisFetchBudget
+      ) {
         break;
       }
 
       let matchIds: string[] = [];
 
       try {
-        matchIds = await riotFetch<string[]>(
-          regional,
-          `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${MATCH_IDS_PER_SOURCE}`
-        );
+        matchIds = await getRankedMatchIdsForSource(regional, source.puuid, matchHistoryPagesPerSource);
       } catch {
         continue;
       }
 
       for (const matchId of seededOrder(matchIds, `${date}:analysis:${source.bucket}:${source.puuid}`)) {
-        if (isAnalysisComplete(seenMatches.size, requestedBuildSampleSize, shouldCollectLiveMatchups, championMatchupSamples) || seenMatches.size >= analysisSampleSize) {
+        if (
+          isAnalysisComplete(
+            seenMatches.size,
+            currentPatchMatchupMatchIds.size,
+            requestedBuildSampleSize,
+            requestedMatchupSampleSize,
+            shouldCollectLiveMatchups,
+            championMatchupSamples
+          ) ||
+          seenMatches.size >= analysisFetchBudget
+        ) {
           break;
         }
 
@@ -320,15 +377,13 @@ export async function getVerifiedRankedMatchChallenges({
 
         try {
           const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
-          const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
 
-          if (!verified) {
+          if (!isRankedClassicSummonersRiftMatch(match)) {
             continue;
           }
 
           addChampionWinrateSamples(match, championLookup, championWinrates);
-          matchupSampleRecords.push(...addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples));
-          await flushMatchupSampleRecords();
+          await collectMatchupSamples(match);
         } catch {
           continue;
         }
@@ -343,7 +398,7 @@ export async function getVerifiedRankedMatchChallenges({
     const orderedDodgeQueueRounds = orderRoundsWithoutConsecutivePlayers(dodgeQueueRounds, `${date}:dodge-queue-round-order`, dodgeQueueRoundPlayers);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
     const liveChampionMatchupRounds = toChampionMatchupRounds(championMatchupSamples, date);
-    const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions);
+    const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
     const championMatchupRounds = mergeChampionMatchupRounds(refreshedPersistedChampionMatchupRounds, liveChampionMatchupRounds);
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
@@ -391,6 +446,166 @@ export async function getVerifiedRankedMatchChallenges({
   }
 }
 
+export async function warmChampionMatchupSampleCache({
+  date,
+  dataDragonVersion,
+  publicChampions,
+  batchKey,
+  currentPatchMatchTarget = 12,
+  sourceCountPerBucket = 1,
+  matchHistoryPagesPerSource = 1,
+  timeBudgetMs = 22000
+}: {
+  date: string;
+  dataDragonVersion: string;
+  publicChampions: PublicChampion[];
+  batchKey: string;
+  currentPatchMatchTarget?: number;
+  sourceCountPerBucket?: number;
+  matchHistoryPagesPerSource?: number;
+  timeBudgetMs?: number;
+}): Promise<ChampionMatchupWarmResult> {
+  const currentPatchPrefix = patchPrefixFromVersion(dataDragonVersion);
+  const requestedCurrentPatchMatches = Math.max(1, Math.min(80, currentPatchMatchTarget));
+  const boundedSourceCount = Math.max(1, Math.min(8, sourceCountPerBucket));
+  const boundedHistoryPages = Math.max(1, Math.min(MAX_MATCH_HISTORY_PAGES_PER_SOURCE, matchHistoryPagesPerSource));
+
+  if (!isRiotApiConfigured()) {
+    return {
+      status: "unconfigured",
+      message: "RIOT_API_KEY is required to warm Champion Matchup samples.",
+      patchPrefix: currentPatchPrefix,
+      batchKey,
+      requestedCurrentPatchMatches,
+      sourcesChecked: 0,
+      matchIdsChecked: 0,
+      riotMatchesFetched: 0,
+      currentPatchMatches: 0,
+      insertedRowsAttempted: 0,
+      validTwentyGamePairs: 0
+    };
+  }
+
+  if (!isDatabaseConfigured()) {
+    return {
+      status: "unconfigured",
+      message: "DATABASE_URL is required to persist Champion Matchup samples.",
+      patchPrefix: currentPatchPrefix,
+      batchKey,
+      requestedCurrentPatchMatches,
+      sourcesChecked: 0,
+      matchIdsChecked: 0,
+      riotMatchesFetched: 0,
+      currentPatchMatches: 0,
+      insertedRowsAttempted: 0,
+      validTwentyGamePairs: 0
+    };
+  }
+
+  const startedAt = Date.now();
+  const platform = normalizePlatform(env.riotRegion);
+  const regional = regionalRouteForPlatform(platform);
+  const championLookup = createChampionLookup(publicChampions);
+  const championMatchupSamples = new Map<string, ChampionMatchupAccumulator>();
+  const matchupSampleRecords: ChampionMatchupSampleRecord[] = [];
+  const seenMatches = new Set<string>();
+  let sourcesChecked = 0;
+  let matchIdsChecked = 0;
+  let riotMatchesFetched = 0;
+  let currentPatchMatches = 0;
+  let insertedRowsAttempted = 0;
+
+  const flush = async (force = false) => {
+    if (matchupSampleRecords.length < 200 && !force) {
+      return;
+    }
+
+    const records = matchupSampleRecords.splice(0, matchupSampleRecords.length);
+    insertedRowsAttempted += uniqueMatchupSampleRecords(records).length;
+    await persistChampionMatchupSamples(records);
+  };
+
+  try {
+    const sources = await getRankedSources(platform, `${date}:matchup-warm:${batchKey}`, boundedSourceCount);
+
+    for (const source of seededOrder(sources, `${date}:matchup-warm:sources:${batchKey}`)) {
+      if (Date.now() - startedAt > timeBudgetMs || currentPatchMatches >= requestedCurrentPatchMatches) {
+        break;
+      }
+
+      sourcesChecked += 1;
+      let matchIds: string[] = [];
+
+      try {
+        matchIds = await getRankedMatchIdsForSource(regional, source.puuid, boundedHistoryPages);
+      } catch {
+        continue;
+      }
+
+      for (const matchId of seededOrder(matchIds, `${date}:matchup-warm:matches:${batchKey}:${source.puuid}`)) {
+        if (Date.now() - startedAt > timeBudgetMs || currentPatchMatches >= requestedCurrentPatchMatches) {
+          break;
+        }
+
+        if (seenMatches.has(matchId)) {
+          continue;
+        }
+
+        seenMatches.add(matchId);
+        matchIdsChecked += 1;
+
+        try {
+          const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+          riotMatchesFetched += 1;
+
+          if (!isRankedClassicSummonersRiftMatch(match)) {
+            continue;
+          }
+
+          const records = addChampionHeadToHeadSamples(match, platform, championLookup, championMatchupSamples, currentPatchPrefix);
+
+          if (records.length > 0) {
+            currentPatchMatches += 1;
+            matchupSampleRecords.push(...records);
+            await flush();
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    await flush(true);
+
+    return {
+      status: "ready",
+      patchPrefix: currentPatchPrefix,
+      batchKey,
+      requestedCurrentPatchMatches,
+      sourcesChecked,
+      matchIdsChecked,
+      riotMatchesFetched,
+      currentPatchMatches,
+      insertedRowsAttempted,
+      validTwentyGamePairs: await countPersistedTwentyGameMatchupPairs(currentPatchPrefix)
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      message: error instanceof Error ? error.message : "Champion Matchup cache warm failed.",
+      patchPrefix: currentPatchPrefix,
+      batchKey,
+      requestedCurrentPatchMatches,
+      sourcesChecked,
+      matchIdsChecked,
+      riotMatchesFetched,
+      currentPatchMatches,
+      insertedRowsAttempted,
+      validTwentyGamePairs: await countPersistedTwentyGameMatchupPairs(currentPatchPrefix)
+    };
+  }
+}
+
 function addChampionWinrateSamples(
   match: RiotMatchDto,
   championLookup: Map<number, PublicChampion>,
@@ -430,8 +645,13 @@ function addChampionHeadToHeadSamples(
   match: RiotMatchDto,
   platform: string,
   championLookup: Map<number, PublicChampion>,
-  championMatchupSamples: Map<string, ChampionMatchupAccumulator>
+  championMatchupSamples: Map<string, ChampionMatchupAccumulator>,
+  currentPatchPrefix: string
 ) {
+  if (!isCurrentPatchMatch(match, currentPatchPrefix)) {
+    return [];
+  }
+
   const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
   const records: ChampionMatchupSampleRecord[] = [];
   const picks = match.info.participants
@@ -529,22 +749,11 @@ function championLaneKey(pick: Pick<ChampionLanePick, "champion" | "position">) 
 }
 
 function toChampionMatchupRounds(championMatchupSamples: Map<string, ChampionMatchupAccumulator>, date: string) {
-  const strictRounds = toChampionMatchupRoundsForThreshold(
+  return toChampionMatchupRoundsForThreshold(
     championMatchupSamples,
     date,
     MIN_MATCHUP_SAMPLE_GAMES,
     "Riot Match-V5 ranked solo head-to-head champion-lane sample"
-  );
-
-  if (strictRounds.length > 0) {
-    return strictRounds;
-  }
-
-  return toChampionMatchupRoundsForThreshold(
-    championMatchupSamples,
-    date,
-    WARMING_MATCHUP_SAMPLE_GAMES,
-    "Riot Match-V5 ranked solo head-to-head champion-lane warming sample"
   );
 }
 
@@ -581,13 +790,17 @@ function toChampionMatchupRoundsForThreshold(
 
 function isAnalysisComplete(
   seenMatchCount: number,
+  currentPatchMatchupMatchCount: number,
   requestedBuildSampleSize: number,
+  requestedMatchupSampleSize: number,
   needsLiveMatchupRounds: boolean,
   championMatchupSamples: Map<string, ChampionMatchupAccumulator>
 ) {
   return (
     seenMatchCount >= requestedBuildSampleSize &&
-    (!needsLiveMatchupRounds || eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS)
+    (!needsLiveMatchupRounds ||
+      eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS ||
+      currentPatchMatchupMatchCount >= requestedMatchupSampleSize)
   );
 }
 
@@ -676,7 +889,7 @@ function uniqueMatchupSampleRecords(records: ChampionMatchupSampleRecord[]) {
   return uniqueRecords;
 }
 
-async function getPersistedChampionMatchupRounds(date: string, publicChampions: PublicChampion[]) {
+async function getPersistedChampionMatchupRounds(date: string, publicChampions: PublicChampion[], currentPatchPrefix: string) {
   if (!isDatabaseConfigured()) {
     return [];
   }
@@ -693,48 +906,57 @@ async function getPersistedChampionMatchupRounds(date: string, publicChampions: 
         sum(case when left_won then 1 else 0 end)::int as left_wins,
         count(distinct match_id)::int as sample_matches
       from champion_matchup_samples
+      where game_version like $2
       group by left_champion_id, left_role, right_champion_id, right_role
       having count(*) >= $1
         and sum(case when left_won then 1 else 0 end) <> count(*) - sum(case when left_won then 1 else 0 end)`,
-      [MIN_MATCHUP_SAMPLE_GAMES]
+      [MIN_MATCHUP_SAMPLE_GAMES, `${currentPatchPrefix}%`]
     );
     const strictRounds = toPersistedChampionMatchupRounds(
       strictResult.rows,
       publicChampions,
       date,
       MIN_MATCHUP_SAMPLE_GAMES,
-      "Supabase cached Riot Match-V5 head-to-head champion-lane sample"
+      `Supabase cached Riot Match-V5 ${currentPatchPrefix} head-to-head champion-lane sample`
     );
 
     if (strictRounds.length > 0) {
       return strictRounds;
     }
 
-    const warmingResult = await query<PersistedMatchupAggregateRow>(
-      `select
-        left_champion_id,
-        left_role,
-        right_champion_id,
-        right_role,
-        count(*)::int as games,
-        sum(case when left_won then 1 else 0 end)::int as left_wins,
-        count(distinct match_id)::int as sample_matches
-      from champion_matchup_samples
-      group by left_champion_id, left_role, right_champion_id, right_role
-      having count(*) >= $1
-        and sum(case when left_won then 1 else 0 end) <> count(*) - sum(case when left_won then 1 else 0 end)`,
-      [WARMING_MATCHUP_SAMPLE_GAMES]
-    );
-
-    return toPersistedChampionMatchupRounds(
-      warmingResult.rows,
-      publicChampions,
-      date,
-      WARMING_MATCHUP_SAMPLE_GAMES,
-      "Supabase cached Riot Match-V5 head-to-head champion-lane warming sample"
-    );
+    return [];
   } catch {
     return [];
+  }
+}
+
+async function countPersistedTwentyGameMatchupPairs(currentPatchPrefix: string) {
+  if (!isDatabaseConfigured()) {
+    return 0;
+  }
+
+  try {
+    await ensureChampionMatchupSampleTable();
+    const result = await query<{ pairs: string | number }>(
+      `select count(*)::int as pairs
+      from (
+        select
+          left_champion_id,
+          left_role,
+          right_champion_id,
+          right_role
+        from champion_matchup_samples
+        where game_version like $2
+        group by left_champion_id, left_role, right_champion_id, right_role
+        having count(*) >= $1
+          and sum(case when left_won then 1 else 0 end) <> count(*) - sum(case when left_won then 1 else 0 end)
+      ) valid_pairs`,
+      [MIN_MATCHUP_SAMPLE_GAMES, `${currentPatchPrefix}%`]
+    );
+
+    return Number(result.rows[0]?.pairs ?? 0);
+  } catch {
+    return 0;
   }
 }
 
@@ -760,6 +982,7 @@ async function ensureChampionMatchupSampleTable() {
     await query(
       "create index if not exists champion_matchup_samples_pair_idx on champion_matchup_samples (left_champion_id, left_role, right_champion_id, right_role)"
     );
+    await query("create index if not exists champion_matchup_samples_version_pair_idx on champion_matchup_samples (game_version, left_champion_id, left_role, right_champion_id, right_role)");
     await query("create index if not exists champion_matchup_samples_created_idx on champion_matchup_samples (created_at desc)");
   })().catch((error) => {
     matchupSampleTableReady = null;
@@ -981,8 +1204,36 @@ function formatRankDistribution(distribution: Record<RankBucket, number>) {
   return RANK_BUCKETS.map((bucket) => `${bucket}: ${distribution[bucket]}`).join(", ");
 }
 
+async function getRankedMatchIdsForSource(regional: string, puuid: string, pages: number) {
+  const ids: string[] = [];
+
+  for (let page = 0; page < pages; page += 1) {
+    const pageIds = await riotFetch<string[]>(
+      regional,
+      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=${page * MATCH_IDS_PER_REQUEST}&count=${MATCH_IDS_PER_REQUEST}`
+    );
+
+    ids.push(...pageIds);
+
+    if (pageIds.length < MATCH_IDS_PER_REQUEST) {
+      break;
+    }
+  }
+
+  return unique(ids);
+}
+
 function isRankBucket(value: string): value is RankBucket {
   return (RANK_BUCKETS as readonly string[]).includes(value);
+}
+
+function isRankedClassicSummonersRiftMatch(match: RiotMatchDto) {
+  return (
+    match.info.queueId === RANKED_SOLO_QUEUE_ID &&
+    match.info.mapId === 11 &&
+    match.info.gameMode === "CLASSIC" &&
+    match.info.participants.length === 10
+  );
 }
 
 async function getRankedSources(platform: string, seed: string, sourceCountPerBucket: number): Promise<RankedSource[]> {
@@ -994,10 +1245,7 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
   const sources: RankedSource[] = [];
 
   for (const plan of sourcePlans) {
-    const entries = await riotFetch<RiotLeagueEntry[]>(
-      platform,
-      `/lol/league/v4/entries/RANKED_SOLO_5x5/${plan.tier}/${plan.division}?page=1`
-    );
+    const entries = await getLeagueEntryPageCandidates(platform, plan.tier, plan.division);
 
     for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
       const puuid = await resolveEntryPuuid(platform, entry);
@@ -1019,6 +1267,37 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
   }
 
   return seededOrder(sources, `${seed}:ranked-sources`);
+}
+
+async function getLeagueEntryPageCandidates(platform: string, tier: string, division: string) {
+  const entries: RiotLeagueEntry[] = [];
+
+  for (let page = 1; page <= LEAGUE_ENTRY_PAGES_PER_BUCKET; page += 1) {
+    const pageEntries = await riotFetch<RiotLeagueEntry[]>(
+      platform,
+      `/lol/league/v4/entries/RANKED_SOLO_5x5/${tier}/${division}?page=${page}`
+    );
+
+    entries.push(...pageEntries);
+
+    if (pageEntries.length === 0) {
+      break;
+    }
+  }
+
+  const seen = new Set<string>();
+  const uniqueEntries: RiotLeagueEntry[] = [];
+
+  for (const entry of entries) {
+    const key = entry.puuid ?? entry.summonerId;
+
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      uniqueEntries.push(entry);
+    }
+  }
+
+  return uniqueEntries;
 }
 
 async function resolveEntryPuuid(platform: string, entry: RiotLeagueEntry) {
@@ -1268,6 +1547,16 @@ function dataDragonVersionFromGameVersion(gameVersion: string) {
   const [major, minor] = gameVersion.split(".");
 
   return major && minor ? `${major}.${minor}.1` : gameVersion;
+}
+
+function patchPrefixFromVersion(version: string) {
+  const [major, minor] = version.split(".");
+
+  return major && minor ? `${major}.${minor}.` : version;
+}
+
+function isCurrentPatchMatch(match: RiotMatchDto, currentPatchPrefix: string) {
+  return match.info.gameVersion.startsWith(currentPatchPrefix);
 }
 
 function formatRiotId(participant?: RiotParticipantDto) {

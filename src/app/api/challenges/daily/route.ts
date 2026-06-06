@@ -59,6 +59,7 @@ export async function GET() {
       liveItems,
       await getVerifiedRankedMatchChallenges({
         date: generated.date,
+        dataDragonVersion: version,
         publicChampions,
         summonerSpells
       })
@@ -68,7 +69,9 @@ export async function GET() {
     stats
   };
 
-  return NextResponse.json(body);
+  const response = NextResponse.json(body);
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  return response;
 }
 
 async function resolveDailyAbilityChallenge(date: string, version: string) {

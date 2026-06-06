@@ -32,6 +32,7 @@ RIOT_REGION
 RIOT_MATCH_SAMPLE_SIZE
 RIOT_BUILD_SAMPLE_MATCH_COUNT
 RIOT_MATCHUP_SAMPLE_MATCH_COUNT
+RIOT_MATCH_HISTORY_PAGES_PER_SOURCE
 NEXT_PUBLIC_CREATOR_GITHUB_URL
 NEXT_PUBLIC_CREATOR_LINKEDIN_URL
 ```
@@ -48,7 +49,8 @@ Use these values:
 - `RIOT_REGION`: `na1` unless you want a different Riot platform route.
 - `RIOT_MATCH_SAMPLE_SIZE`: number of verified ranked matches to prepare for infinite-style Elo/Lobby queues. `16` is a good free-tier default.
 - `RIOT_BUILD_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Build baseline/correct-build winrate samples. `128` is the recommended production value so Build stats can find 5+ verified-game build samples more reliably.
-- `RIOT_MATCHUP_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used by the cron warmer for Champion Matchup champion-lane samples. `1600` is recommended so exact same-match champion-lane pairs can reach preferred 20+ shared games; verified 5+ warming samples keep the game playable while the cache grows.
+- `RIOT_MATCHUP_SAMPLE_MATCH_COUNT`: target number of current-patch verified ranked matches used by the cron warmer for Champion Matchup champion-lane samples. The app stores verified Match-V5 rows, then filters gameplay to the active Data Dragon patch and uses every eligible current-patch cached row for each exact champion-lane pair. Matchup pairs only display at 20+ current-patch games, so increase this if your Riot key and hosting limits allow a larger current-patch cache.
+- `RIOT_MATCH_HISTORY_PAGES_PER_SOURCE`: number of Match-V5 ranked history pages fetched per source player when building matchup samples. `2` is a conservative default; each page can add up to 100 match IDs per source.
 
 Generate secrets locally:
 
@@ -71,24 +73,35 @@ Redeploy after changing those values so auth callbacks and public links use the 
 
 ## 5. Schedule Daily Generation
 
-The app generates deterministic daily content on demand, but you should warm/store daily challenge rows and verified Riot samples with:
+The app generates deterministic daily content on demand. Keep the daily row generator fast:
 
 ```text
 GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily
 Authorization: Bearer YOUR_CRON_SECRET
 ```
 
+Build Champion Matchup cache in small batches so Amplify does not time out:
+
+```text
+GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1
+Authorization: Bearer YOUR_CRON_SECRET
+```
+
 Recommended AWS path:
 
-1. Create an EventBridge Scheduler schedule at `cron(0 0 * * ? *)` for midnight UTC.
-2. Use an EventBridge API Destination or Lambda target that calls the URL above.
-3. Add the `Authorization: Bearer ...` header.
+1. Create an EventBridge Scheduler schedule at `cron(5 0 * * ? *)` for midnight UTC that invokes a Lambda wrapper calling `/api/cron/generate-daily`.
+2. Create a second EventBridge Scheduler schedule at `rate(15 minutes)` that invokes the same Lambda wrapper with `/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1`.
+3. Store the cron URL and `CRON_SECRET` as Lambda environment variables and send `Authorization: Bearer ...`.
 
-The response includes verified round counts for Guess the Elo, Dodge-or-Queue, and Champion Matchup. You can also call the endpoint manually after deploy to verify it:
+The warm response includes how many current-patch matches were processed and how many 20+ game Matchup pairs are valid. You can call the endpoints manually after deploy:
 
 ```powershell
 Invoke-WebRequest `
   -Uri "https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily" `
+  -Headers @{ Authorization = "Bearer YOUR_CRON_SECRET" }
+
+Invoke-WebRequest `
+  -Uri "https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1" `
   -Headers @{ Authorization = "Bearer YOUR_CRON_SECRET" }
 ```
 

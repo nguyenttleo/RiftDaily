@@ -15,5 +15,8 @@ create table if not exists champion_matchup_samples (
 create index if not exists champion_matchup_samples_pair_idx
   on champion_matchup_samples (left_champion_id, left_role, right_champion_id, right_role);
 
+create index if not exists champion_matchup_samples_version_pair_idx
+  on champion_matchup_samples (game_version, left_champion_id, left_role, right_champion_id, right_role);
+
 create index if not exists champion_matchup_samples_created_idx
   on champion_matchup_samples (created_at desc);

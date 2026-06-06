@@ -14,6 +14,10 @@ frontend:
         - printf "CRON_SECRET=%s\n" "$CRON_SECRET" >> .env.production
         - printf "RIOT_API_KEY=%s\n" "$RIOT_API_KEY" >> .env.production
         - printf "RIOT_REGION=%s\n" "$RIOT_REGION" >> .env.production
+        - printf "RIOT_MATCH_SAMPLE_SIZE=%s\n" "$RIOT_MATCH_SAMPLE_SIZE" >> .env.production
+        - printf "RIOT_BUILD_SAMPLE_MATCH_COUNT=%s\n" "$RIOT_BUILD_SAMPLE_MATCH_COUNT" >> .env.production
+        - printf "RIOT_MATCHUP_SAMPLE_MATCH_COUNT=%s\n" "$RIOT_MATCHUP_SAMPLE_MATCH_COUNT" >> .env.production
+        - printf "RIOT_MATCH_HISTORY_PAGES_PER_SOURCE=%s\n" "$RIOT_MATCH_HISTORY_PAGES_PER_SOURCE" >> .env.production
         - printf "NEXT_PUBLIC_CREATOR_GITHUB_URL=%s\n" "$NEXT_PUBLIC_CREATOR_GITHUB_URL" >> .env.production
         - printf "NEXT_PUBLIC_CREATOR_LINKEDIN_URL=%s\n" "$NEXT_PUBLIC_CREATOR_LINKEDIN_URL" >> .env.production
         - npm run build
