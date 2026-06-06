@@ -16,7 +16,7 @@ import type {
 
 import { getUtcDateKey, seededIndex } from "./daily";
 
-const MIN_BUILD_WINRATE_GAMES = 20;
+const MIN_BUILD_WINRATE_GAMES = 5;
 const POSITIVE_BUILD_ITEM_BOOST = 1200;
 
 export async function generateExpandedDailyChallenges(
@@ -29,6 +29,7 @@ export async function generateExpandedDailyChallenges(
     dodgeQueueRounds: DodgeQueueRound[];
     championMatchupRounds?: ChampionMatchupRound[];
     championWinrateSamples?: Record<string, BuildWinrateStats>;
+    status?: "ready" | "unconfigured" | "unavailable";
     message?: string;
   },
   date = new Date()
@@ -47,7 +48,11 @@ export async function generateExpandedDailyChallenges(
     itemRecipe: generateItemRecipeChallenge(dateKey, `${salt}:${dateKey}:item-recipe`, gameItems),
     guessElo: generateGuessEloChallenge(dateKey, verifiedMatches?.guessEloRounds ?? [], verifiedMatches?.message),
     dodgeQueue: generateDodgeQueueChallenge(dateKey, verifiedMatches?.dodgeQueueRounds ?? [], verifiedMatches?.message),
-    championMatchup: generateChampionMatchupChallenge(dateKey, verifiedMatches?.championMatchupRounds ?? [], verifiedMatches?.message),
+    championMatchup: generateChampionMatchupChallenge(
+      dateKey,
+      verifiedMatches?.championMatchupRounds ?? [],
+      verifiedMatches?.status === "unconfigured" ? verifiedMatches.message : undefined
+    ),
     skillshotDodge: generateSkillshotDodgeChallenge(dateKey)
   };
 }
@@ -77,6 +82,7 @@ function generateItemBuildChallenge(
       score: scoreItemForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
     }))
     .sort((a, b) => b.score - a.score);
+  const uniqueCandidateItems = uniqueScoredItemsByName(candidateItems);
   const bootCandidates = itemCatalog
     .filter((item) => isBootUpgrade(item))
     .map((item) => ({
@@ -84,16 +90,17 @@ function generateItemBuildChallenge(
       score: scoreBootsForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
     }))
     .sort((a, b) => b.score - a.score);
-  const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
+  const uniqueBootCandidates = uniqueScoredItemsByName(bootCandidates);
+  const answerBuild = uniqueCandidateItems.slice(0, 5).map((candidate) => candidate.item);
   const answer = answerBuild[0];
-  const answerBoots = bootCandidates[0]?.item ?? itemCatalog.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
+  const answerBoots = uniqueBootCandidates[0]?.item ?? itemCatalog.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
   const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
-  const possibleItems = candidateItems
+  const possibleItems = uniqueCandidateItems
     .filter((candidate) => candidate.score >= 6)
     .slice(0, 32)
     .map((candidate) => candidate.item);
-  const possibleBoots = bootCandidates.map((candidate) => candidate.item);
-  const candidates = [answer, ...candidateItems.slice(1).filter((candidate) => candidate.item.id !== answer.id).slice(0, 3).map((candidate) => candidate.item)]
+  const possibleBoots = uniqueBootCandidates.map((candidate) => candidate.item);
+  const candidates = [answer, ...uniqueCandidateItems.slice(1).filter((candidate) => candidate.item.id !== answer.id).slice(0, 3).map((candidate) => candidate.item)]
     .sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000));
 
   return {
@@ -158,7 +165,7 @@ function withTargetBuildWinrate(stats: BuildWinrateStats | undefined, targetItem
       const wins = games.filter((game) => game.win).length;
       const winRate = Math.round((wins / games.length) * 1000) / 10;
 
-      if (winRate <= stats.winRate) {
+      if (winRate < stats.winRate) {
         continue;
       }
 
@@ -236,7 +243,7 @@ function buildPositiveItemSamples(stats: BuildWinrateStats | undefined) {
 
     const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
 
-    if (winRate > stats.winRate) {
+    if (winRate >= stats.winRate) {
       samples.set(itemId, {
         ...itemStats,
         winRate,
@@ -252,6 +259,26 @@ function sampleItemScore(itemId: string, frequency: Map<string, number>, positiv
   const positive = positiveSamples.get(itemId);
 
   return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
+}
+
+function uniqueScoredItemsByName<T extends { item: GameItem }>(items: T[]) {
+  const seen = new Set<string>();
+  const uniqueItems: T[] = [];
+
+  for (const entry of items) {
+    const key = itemNameKey(entry.item);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueItems.push(entry);
+    }
+  }
+
+  return uniqueItems;
+}
+
+function itemNameKey(item: GameItem) {
+  return item.name.trim().toLowerCase();
 }
 
 function combinations(values: string[], size: number) {
@@ -364,7 +391,7 @@ function generateChampionMatchupChallenge(date: string, rounds: ChampionMatchupR
     right: emptyMatchupPick(),
     answerSide: "left",
     dataSource: "Riot Match-V5",
-    unavailableReason: unavailableReason ?? "Riot Match-V5 ranked matchup data is not configured."
+    unavailableReason: unavailableReason ?? "Champion Matchup needs at least two different lane samples with 20+ verified Riot Match-V5 ranked games."
   };
   const first = rounds[0] ?? fallback;
 

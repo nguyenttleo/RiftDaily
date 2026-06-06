@@ -13,6 +13,10 @@ const SMITE_ID = 11;
 const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Emerald/Diamond", "Master+"] as const;
+const MIN_MATCHUP_SAMPLE_GAMES = 20;
+const MATCH_IDS_PER_SOURCE = 20;
+const MAX_ANALYSIS_MATCH_SAMPLE_SIZE = 512;
+const MAX_SOURCES_PER_RANK_BUCKET = 12;
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
@@ -101,12 +105,10 @@ interface WinrateAccumulator {
   }>;
 }
 
-interface MatchupAccumulator {
+interface ChampionLaneAccumulator {
+  champion: PublicChampion;
   role: string;
-  leftChampion: PublicChampion;
-  rightChampion: PublicChampion;
-  leftWins: number;
-  rightWins: number;
+  wins: number;
   games: number;
   matchIds: Set<string>;
 }
@@ -143,16 +145,18 @@ export async function getVerifiedRankedMatchChallenges({
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
   const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
-  const buildMatchesPerRank = Math.max(roundsPerRank, Math.ceil(requestedBuildSampleSize / RANK_BUCKETS.length));
-  const buildSampleSize = buildMatchesPerRank * RANK_BUCKETS.length;
-  const cacheKey = `${date}:${platform}:${sampleSize}:${buildSampleSize}`;
+  const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount) ? Math.max(sampleSize, Math.min(MAX_ANALYSIS_MATCH_SAMPLE_SIZE, env.riotMatchupSampleMatchCount)) : MAX_ANALYSIS_MATCH_SAMPLE_SIZE;
+  const analysisSampleSize = Math.max(requestedBuildSampleSize, requestedMatchupSampleSize);
+  const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisSampleSize / RANK_BUCKETS.length));
+  const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / MATCH_IDS_PER_SOURCE) + 1));
+  const cacheKey = `${date}:${platform}:${sampleSize}:${analysisMatchesPerRank}:${sourceCountPerBucket}`;
 
   if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
   }
 
   try {
-    const sources = await getRankedSources(platform, date);
+    const sources = await getRankedSources(platform, date, sourceCountPerBucket);
     const sourcesByBucket = groupSourcesByBucket(sources);
     const championLookup = createChampionLookup(publicChampions);
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
@@ -161,14 +165,14 @@ export async function getVerifiedRankedMatchChallenges({
     const buildMatchesByBucket = createEmptyRankCountMap();
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
-    const championMatchups = new Map<string, MatchupAccumulator>();
+    const championLaneSamples = new Map<string, ChampionLaneAccumulator>();
 
     for (const bucket of RANK_BUCKETS) {
       const bucketRounds = guessRoundsByBucket.get(bucket) ?? [];
       const bucketSources = sourcesByBucket.get(bucket) ?? [];
 
       for (const source of bucketSources) {
-        if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= buildMatchesPerRank) {
+        if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= analysisMatchesPerRank) {
           break;
         }
 
@@ -177,14 +181,14 @@ export async function getVerifiedRankedMatchChallenges({
         try {
           matchIds = await riotFetch<string[]>(
             regional,
-            `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=15`
+            `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${MATCH_IDS_PER_SOURCE}`
           );
         } catch {
           continue;
         }
 
         for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
-          if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= buildMatchesPerRank) {
+          if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= analysisMatchesPerRank) {
             break;
           }
 
@@ -205,7 +209,7 @@ export async function getVerifiedRankedMatchChallenges({
             const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
 
             addChampionWinrateSamples(match, championLookup, championWinrates);
-            addChampionMatchupSamples(match, championLookup, championMatchups);
+            addChampionLaneWinrateSamples(match, championLookup, championLaneSamples);
             buildMatchesByBucket.set(bucket, (buildMatchesByBucket.get(bucket) ?? 0) + 1);
 
             if (usedForPuzzleRound) {
@@ -225,7 +229,7 @@ export async function getVerifiedRankedMatchChallenges({
     const guessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
     const distribution = rankDistribution(guessEloRounds);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
-    const championMatchupRounds = toChampionMatchupRounds(championMatchups, date);
+    const championMatchupRounds = toChampionMatchupRounds(championLaneSamples, date);
     const hasBalancedGuessRounds =
       guessEloRounds.length === sampleSize &&
       RANK_BUCKETS.every((bucket) => distribution[bucket] === roundsPerRank);
@@ -296,62 +300,89 @@ function addChampionWinrateSamples(
   }
 }
 
-function addChampionMatchupSamples(
+function addChampionLaneWinrateSamples(
   match: RiotMatchDto,
   championLookup: Map<number, PublicChampion>,
-  championMatchups: Map<string, MatchupAccumulator>
+  championLaneSamples: Map<string, ChampionLaneAccumulator>
 ) {
   const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
 
-  for (const position of POSITION_ORDER) {
-    const blue = match.info.participants.find((participant) => participant.teamId === 100 && participant.teamPosition === position);
-    const red = match.info.participants.find((participant) => participant.teamId === 200 && participant.teamPosition === position);
-    const blueChampion = blue ? championLookup.get(blue.championId) : undefined;
-    const redChampion = red ? championLookup.get(red.championId) : undefined;
-
-    if (!blue || !red || !blueChampion || !redChampion || blueChampion.id === redChampion.id) {
+  for (const participant of match.info.participants) {
+    if (!isRiotPosition(participant.teamPosition)) {
       continue;
     }
 
-    const blueFirst = blueChampion.id.localeCompare(redChampion.id) <= 0;
-    const leftParticipant = blueFirst ? blue : red;
-    const rightParticipant = blueFirst ? red : blue;
-    const leftChampion = blueFirst ? blueChampion : redChampion;
-    const rightChampion = blueFirst ? redChampion : blueChampion;
-    const key = `${position}:${leftChampion.id}:${rightChampion.id}`;
-    const current = championMatchups.get(key) ?? {
-      role: toLaneLabel(position),
-      leftChampion,
-      rightChampion,
-      leftWins: 0,
-      rightWins: 0,
+    const champion = championLookup.get(participant.championId);
+
+    if (!champion) {
+      continue;
+    }
+
+    const key = `${participant.teamPosition}:${champion.id}`;
+    const current = championLaneSamples.get(key) ?? {
+      role: toLaneLabel(participant.teamPosition),
+      champion,
+      wins: 0,
       games: 0,
       matchIds: new Set<string>()
     };
 
     current.games += 1;
-    current.leftWins += winningTeams.get(leftParticipant.teamId) ? 1 : 0;
-    current.rightWins += winningTeams.get(rightParticipant.teamId) ? 1 : 0;
+    current.wins += winningTeams.get(participant.teamId) ? 1 : 0;
     current.matchIds.add(match.metadata.matchId);
-    championMatchups.set(key, current);
+    championLaneSamples.set(key, current);
   }
 }
 
-function toChampionMatchupRounds(championMatchups: Map<string, MatchupAccumulator>, date: string) {
-  const dataSource = "Riot Match-V5 ranked solo same-lane matchup sample";
-  const rounds = [...championMatchups.entries()]
-    .map(([key, matchup]) => ({ key, matchup }))
-    .filter(({ matchup }) => matchup.games > 0 && matchup.leftWins !== matchup.rightWins)
-    .sort((a, b) => seededOrderKey(`${date}:champion-matchup:${a.key}`) - seededOrderKey(`${date}:champion-matchup:${b.key}`))
-    .map(({ key, matchup }, index): ChampionMatchupRound => {
-      const leftPick = toMatchupPick(matchup.leftChampion, matchup.role, matchup.leftWins, matchup.games, matchup.matchIds.size);
-      const rightPick = toMatchupPick(matchup.rightChampion, matchup.role, matchup.rightWins, matchup.games, matchup.matchIds.size);
-      const shouldFlip = hashString(`${date}:champion-matchup:flip:${key}`) % 2 === 0;
+function toChampionMatchupRounds(championLaneSamples: Map<string, ChampionLaneAccumulator>, date: string) {
+  const dataSource = "Riot Match-V5 ranked solo champion-lane winrate sample";
+  const samples = [...championLaneSamples.entries()]
+    .map(([key, sample]) => ({ key, sample }))
+    .filter(({ sample }) => sample.games >= MIN_MATCHUP_SAMPLE_GAMES)
+    .sort((a, b) => seededOrderKey(`${date}:champion-lane:${a.key}`) - seededOrderKey(`${date}:champion-lane:${b.key}`));
+  const pairCandidates: Array<{
+    leftKey: string;
+    rightKey: string;
+    left: ChampionLaneAccumulator;
+    right: ChampionLaneAccumulator;
+  }> = [];
+
+  for (let leftIndex = 0; leftIndex < samples.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < samples.length; rightIndex += 1) {
+      const left = samples[leftIndex];
+      const right = samples[rightIndex];
+      const leftWinRate = toWinRate(left.sample.wins, left.sample.games);
+      const rightWinRate = toWinRate(right.sample.wins, right.sample.games);
+
+      if (
+        left.sample.champion.id === right.sample.champion.id ||
+        left.sample.role === right.sample.role ||
+        leftWinRate === rightWinRate
+      ) {
+        continue;
+      }
+
+      pairCandidates.push({
+        leftKey: left.key,
+        rightKey: right.key,
+        left: left.sample,
+        right: right.sample
+      });
+    }
+  }
+
+  return pairCandidates
+    .sort((a, b) => seededOrderKey(`${date}:champion-matchup:${a.leftKey}:${a.rightKey}`) - seededOrderKey(`${date}:champion-matchup:${b.leftKey}:${b.rightKey}`))
+    .slice(0, 96)
+    .map((pair, index): ChampionMatchupRound => {
+      const leftPick = toMatchupPick(pair.left.champion, pair.left.role, pair.left.wins, pair.left.games, pair.left.matchIds.size);
+      const rightPick = toMatchupPick(pair.right.champion, pair.right.role, pair.right.wins, pair.right.games, pair.right.matchIds.size);
+      const shouldFlip = hashString(`${date}:champion-matchup:flip:${pair.leftKey}:${pair.rightKey}`) % 2 === 0;
       const displayLeft = shouldFlip ? rightPick : leftPick;
       const displayRight = shouldFlip ? leftPick : rightPick;
 
       return {
-        id: `${date}:champion-matchup:${index}:${normalize(matchup.role)}:${matchup.leftChampion.id}:${matchup.rightChampion.id}`,
+        id: `${date}:champion-matchup:${index}:${normalize(displayLeft.role)}:${displayLeft.champion.id}:vs:${normalize(displayRight.role)}:${displayRight.champion.id}`,
         date,
         left: displayLeft,
         right: displayRight,
@@ -359,8 +390,6 @@ function toChampionMatchupRounds(championMatchups: Map<string, MatchupAccumulato
         dataSource
       };
     });
-
-  return rounds.slice(0, 96);
 }
 
 function toMatchupPick(champion: PublicChampion, role: string, wins: number, games: number, sampleMatches: number) {
@@ -369,9 +398,13 @@ function toMatchupPick(champion: PublicChampion, role: string, wins: number, gam
     role,
     wins,
     games,
-    winRate: Math.round((wins / games) * 1000) / 10,
+    winRate: toWinRate(wins, games),
     sampleMatches
   };
+}
+
+function toWinRate(wins: number, games: number) {
+  return Math.round((wins / games) * 1000) / 10;
 }
 
 function toChampionWinrateSamples(championWinrates: Map<string, WinrateAccumulator>) {
@@ -464,7 +497,7 @@ function isRankBucket(value: string): value is RankBucket {
   return (RANK_BUCKETS as readonly string[]).includes(value);
 }
 
-async function getRankedSources(platform: string, seed: string): Promise<RankedSource[]> {
+async function getRankedSources(platform: string, seed: string, sourceCountPerBucket: number): Promise<RankedSource[]> {
   const sourcePlans = [
     { bucket: "Iron/Bronze", tier: "BRONZE", division: "I" },
     { bucket: "Silver/Gold", tier: "GOLD", division: "II" },
@@ -478,7 +511,7 @@ async function getRankedSources(platform: string, seed: string): Promise<RankedS
       `/lol/league/v4/entries/RANKED_SOLO_5x5/${plan.tier}/${plan.division}?page=1`
     );
 
-    for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, 4)) {
+    for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
       const puuid = await resolveEntryPuuid(platform, entry);
 
       if (puuid) {
@@ -489,7 +522,7 @@ async function getRankedSources(platform: string, seed: string): Promise<RankedS
 
   const master = await riotFetch<RiotLeagueList>(platform, "/lol/league/v4/masterleagues/by-queue/RANKED_SOLO_5x5");
 
-  for (const entry of seededOrder(master.entries ?? [], `${seed}:Master+`).slice(0, 4)) {
+  for (const entry of seededOrder(master.entries ?? [], `${seed}:Master+`).slice(0, sourceCountPerBucket)) {
     const puuid = await resolveEntryPuuid(platform, entry);
 
     if (puuid) {
@@ -694,6 +727,10 @@ function toLaneLabel(position: RiotPosition) {
   if (position === "MIDDLE") return "Mid";
   if (position === "BOTTOM") return "Bot";
   return "Supp";
+}
+
+function isRiotPosition(value: string): value is RiotPosition {
+  return (POSITION_ORDER as readonly string[]).includes(value);
 }
 
 function seededOrder<T>(items: T[], seed: string) {

@@ -23,7 +23,7 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
-const MIN_BUILD_WINRATE_GAMES = 20;
+const MIN_BUILD_WINRATE_GAMES = 5;
 const POSITIVE_BUILD_ITEM_BOOST = 1200;
 type ItemGuessResult = "correct" | "wrong";
 
@@ -50,8 +50,10 @@ export function ItemBuildGame({
   const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, round.answerBootsId));
   const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
   const ready = selectedItems.length === 5 && Boolean(selectedBoots);
-  const randomizedPossibleItems = useMemo(() => seededShuffle(round.possibleItems, `${round.id}:possible-items`), [round.id, round.possibleItems]);
-  const randomizedPossibleBoots = useMemo(() => seededShuffle(round.possibleBoots, `${round.id}:possible-boots`), [round.id, round.possibleBoots]);
+  const possibleItems = useMemo(() => uniqueItemsByName(round.possibleItems, new Set(round.answerItemIds)), [round.answerItemIds, round.possibleItems]);
+  const possibleBoots = useMemo(() => uniqueItemsByName(round.possibleBoots, new Set([round.answerBootsId])), [round.answerBootsId, round.possibleBoots]);
+  const randomizedPossibleItems = useMemo(() => seededShuffle(possibleItems, `${round.id}:possible-items`), [round.id, possibleItems]);
+  const randomizedPossibleBoots = useMemo(() => seededShuffle(possibleBoots, `${round.id}:possible-boots`), [round.id, possibleBoots]);
   const lockedBuildResults = useMemo(() => {
     const results = new Map<string, ItemGuessResult>();
 
@@ -170,7 +172,7 @@ export function ItemBuildGame({
               <BuildWinrateCard stats={round.winrateStats} />
               <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
                 <div className="text-xs uppercase text-[color:var(--muted)]">Verified Catalog</div>
-                <div className="mt-1 font-display text-3xl font-bold text-[#c89b3c]">{round.possibleItems.length}</div>
+                <div className="mt-1 font-display text-3xl font-bold text-[#c89b3c]">{possibleItems.length}</div>
                 <div className="text-xs text-[color:var(--muted)]">Live item candidates from {round.catalogModel.source}.</div>
               </div>
             </div>
@@ -218,7 +220,7 @@ export function ItemBuildGame({
             <div className="rounded-sm border border-white/10 bg-[#0b111b] p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
-                <span className="text-xs text-[color:var(--muted)]">{round.possibleItems.length} verified options</span>
+                <span className="text-xs text-[color:var(--muted)]">{possibleItems.length} verified options</span>
               </div>
               <div className="grid content-start gap-2 px-1 pb-4 pt-2 sm:grid-cols-4 2xl:grid-cols-6">
                 {randomizedPossibleItems.map((item) => (
@@ -435,7 +437,7 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
     );
   }
 
-  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES && stats.buildWinRate > stats.winRate;
+  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES && stats.buildWinRate >= stats.winRate;
   const delta = hasBuildSample ? stats.buildWinRate! - stats.winRate : null;
   const buildDetail = hasBuildSample
     ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
@@ -459,7 +461,7 @@ function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"
           {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% vs baseline
         </div>
       )}
-      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item samples above baseline.</div>}
+      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item samples at or above baseline.</div>}
       <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[#c89b3c]">{stats.source}</div>
     </div>
   );
@@ -521,7 +523,7 @@ function withTargetBuildWinrateForUi(stats: ItemBuildChallenge["winrateStats"] |
       const wins = games.filter((game) => game.win).length;
       const winRate = Math.round((wins / games.length) * 1000) / 10;
 
-      if (winRate <= stats.winRate) {
+      if (winRate < stats.winRate) {
         continue;
       }
 
@@ -561,13 +563,17 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
     return [base];
   }
 
-  return [
-    base,
-    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedBuildRound(base, champions, itemCatalog, index + 1))
-  ];
+  const rounds: ItemBuildChallenge[] = [base];
+
+  for (let index = 1; index <= INFINITE_ROUNDS; index += 1) {
+    const previousChampionId = rounds[rounds.length - 1]?.champion.id;
+    rounds.push(createGeneratedBuildRound(base, champions, itemCatalog, index, previousChampionId));
+  }
+
+  return rounds;
 }
 
-function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number): ItemBuildChallenge {
+function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge {
   const seed = `${base.date}:item-build-infinite:${round}`;
   const buildCandidateIds = buildCandidateItemIdsForUi(itemCatalog);
   const sampledChampions = champions
@@ -575,7 +581,7 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
     .sort((a, b) => (base.winrateSamples?.[b.id]?.games ?? 0) - (base.winrateSamples?.[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
     .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
-  const champion = championPool[hashString(`${seed}:champion`) % championPool.length];
+  const champion = pickBuildChampion(championPool, `${seed}:champion`, previousChampionId);
   const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
   const sampleItemFrequency = buildItemFrequencyForUi(base.winrateSamples?.[champion.id]);
   const positiveItemSamples = buildPositiveItemSamplesForUi(base.winrateSamples?.[champion.id]);
@@ -583,27 +589,29 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
     .filter(isBuildCandidateItemForUi)
     .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
+  const uniqueCandidateItems = uniqueScoredItemsByNameForUi(candidateItems);
   const bootCandidates = itemCatalog
     .filter((item) => isBuildBootUpgrade(item))
     .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
+  const uniqueBootCandidates = uniqueScoredItemsByNameForUi(bootCandidates);
 
-  if (candidateItems.length < 5 || bootCandidates.length === 0) {
+  if (uniqueCandidateItems.length < 5 || uniqueBootCandidates.length === 0) {
     return base;
   }
 
-  const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
-  const answerBoots = bootCandidates[0].item;
+  const answerBuild = uniqueCandidateItems.slice(0, 5).map((candidate) => candidate.item);
+  const answerBoots = uniqueBootCandidates[0].item;
   const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
-  const possibleItems = candidateItems.slice(0, 36).map((candidate) => candidate.item);
-  const possibleBoots = bootCandidates.map((candidate) => candidate.item);
+  const possibleItems = uniqueCandidateItems.slice(0, 36).map((candidate) => candidate.item);
+  const possibleBoots = uniqueBootCandidates.map((candidate) => candidate.item);
 
   return {
     ...base,
     id: `${base.date}:item-build:${round}`,
     champion,
     enemyTeam,
-    candidates: candidateItems.slice(0, 4).map((candidate) => candidate.item),
+    candidates: uniqueCandidateItems.slice(0, 4).map((candidate) => candidate.item),
     possibleItems,
     possibleBoots,
     answerItemId: answerBuild[0].id,
@@ -621,6 +629,20 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
       targetItemCount: answerBuild.length
     }
   };
+}
+
+function pickBuildChampion(championPool: PublicChampion[], seed: string, previousChampionId?: string) {
+  const start = hashString(seed) % championPool.length;
+
+  for (let offset = 0; offset < championPool.length; offset += 1) {
+    const champion = championPool[(start + offset) % championPool.length];
+
+    if (champion.id !== previousChampionId || championPool.length === 1) {
+      return champion;
+    }
+  }
+
+  return championPool[start];
 }
 
 function buildItemFrequencyForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
@@ -678,7 +700,7 @@ function buildPositiveItemSamplesForUi(stats: ItemBuildChallenge["winrateStats"]
 
     const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
 
-    if (winRate > stats.winRate) {
+    if (winRate >= stats.winRate) {
       samples.set(itemId, {
         ...itemStats,
         winRate,
@@ -694,6 +716,41 @@ function sampleItemScoreForUi(itemId: string, frequency: Map<string, number>, po
   const positive = positiveSamples.get(itemId);
 
   return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
+}
+
+function uniqueScoredItemsByNameForUi<T extends { item: GameItem }>(items: T[]) {
+  const seen = new Set<string>();
+  const uniqueEntries: T[] = [];
+
+  for (const entry of items) {
+    const key = itemNameKeyForUi(entry.item);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueEntries.push(entry);
+    }
+  }
+
+  return uniqueEntries;
+}
+
+function uniqueItemsByName(items: GameItem[], preferredIds = new Set<string>()) {
+  const byName = new Map<string, GameItem>();
+
+  for (const item of items) {
+    const key = itemNameKeyForUi(item);
+    const existing = byName.get(key);
+
+    if (!existing || (preferredIds.has(item.id) && !preferredIds.has(existing.id))) {
+      byName.set(key, item);
+    }
+  }
+
+  return [...byName.values()];
+}
+
+function itemNameKeyForUi(item: GameItem) {
+  return item.name.trim().toLowerCase();
 }
 
 function combinationsForUi(values: string[], size: number) {
@@ -766,7 +823,8 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.missingComponentId;
   const selected = round.allComponents.find((item) => item.id === answer);
-  const randomizedComponents = useMemo(() => seededShuffle(round.allComponents, `${round.id}:components`), [round.id, round.allComponents]);
+  const componentChoices = useMemo(() => uniqueItemsByName(round.allComponents, new Set([round.missingComponentId])), [round.allComponents, round.missingComponentId]);
+  const randomizedComponents = useMemo(() => seededShuffle(componentChoices, `${round.id}:components`), [round.id, componentChoices]);
 
   function submitRecipe() {
     if (!answer || submitted) {
@@ -843,7 +901,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
                 <div className="text-sm uppercase text-[#c89b3c]">Component Shop</div>
                 <div className="text-xs text-[color:var(--muted)]">Components that build into other purchasable League items.</div>
               </div>
-              <div className="text-xs text-[color:var(--muted)]">{round.allComponents.length} components</div>
+              <div className="text-xs text-[color:var(--muted)]">{componentChoices.length} components</div>
             </div>
             <div className="grid content-start gap-3 px-2 pb-5 pt-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-6">
               {randomizedComponents.map((item) => {
@@ -1248,7 +1306,7 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
         <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-4">
           <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
           <div className="grid min-h-[30rem] gap-3 rounded-sm border border-[#3c3421] bg-[#050607] p-3 lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
-            <MatchupChampionCard side="left" pick={round.left} revealed selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
+            <MatchupChampionCard side="left" pick={round.left} revealed={submitted} selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
             <div className="grid place-items-center">
               <div className="grid h-20 w-20 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-2xl font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)]">
                 VS
@@ -1334,7 +1392,7 @@ function MatchupChampionCard({
             {pick.role}
           </span>
           <span className="rounded-sm border border-white/10 bg-[#050607]/70 px-3 py-1 text-xs text-[color:var(--muted)]">
-            {pick.sampleMatches} match{pick.sampleMatches === 1 ? "" : "es"}
+            {pick.games} game{pick.games === 1 ? "" : "s"}
           </span>
         </div>
         <div className={cn("grid gap-4", side === "right" && "justify-items-end text-right")}>
@@ -1345,12 +1403,12 @@ function MatchupChampionCard({
           <div className={cn("grid max-w-xs gap-2 rounded-sm border border-white/10 bg-[#050607]/78 p-4 backdrop-blur", !revealed && "border-[#c89b3c]/35")}>
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.1em] text-[color:var(--muted)]">
               <TrendingUp size={14} />
-              Same-lane sample
+              Champion-lane sample
             </div>
             {revealed ? (
               <>
                 <div className={cn("font-display text-5xl font-black leading-none", submitted && correctSide ? "text-green-300" : "text-[#f1d58a]")}>{pick.winRate.toFixed(1)}%</div>
-                <div className="text-sm text-[color:var(--muted)]">{pick.wins}W / {pick.games}G against this pick</div>
+                <div className="text-sm text-[color:var(--muted)]">{pick.wins}W / {pick.games}G in this lane</div>
               </>
             ) : (
               <>
@@ -1370,7 +1428,7 @@ function MatchupRevealLine({ pick }: { pick: ChampionMatchupRound["left"] }) {
     <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
       <div className="text-xs uppercase text-[#c89b3c]">{pick.champion.name} {pick.role}</div>
       <div className="mt-1 text-sm text-[color:var(--muted)]">
-        {pick.winRate.toFixed(1)}% sampled winrate, {pick.wins} wins over {pick.games} verified same-lane matchup game{pick.games === 1 ? "" : "s"}.
+        {pick.winRate.toFixed(1)}% sampled winrate, {pick.wins} wins over {pick.games} verified {pick.role} game{pick.games === 1 ? "" : "s"}.
       </div>
     </div>
   );
