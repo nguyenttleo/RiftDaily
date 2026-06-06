@@ -21,6 +21,7 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
+const MIN_BUILD_WINRATE_GAMES = 5;
 type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({
@@ -421,28 +422,112 @@ function isBuildGuessSolved(guess: { items: string[]; boots: string }, answerSet
 }
 
 function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"] }) {
-  if (!stats || stats.games === 0) {
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
     return (
       <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-        <div className="text-xs uppercase text-[color:var(--muted)]">Match-V5 Winrate</div>
+        <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Stats</div>
         <div className="mt-1 font-display text-3xl font-bold text-[color:var(--muted)]">N/A</div>
-        <div className="text-xs text-[color:var(--muted)]">No verified ranked sample for this champion yet.</div>
+        <div className="text-xs text-[color:var(--muted)]">Needs at least {MIN_BUILD_WINRATE_GAMES} verified ranked games.</div>
       </div>
     );
   }
 
-  const positive = stats.winRate >= 50;
+  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES;
+  const delta = hasBuildSample ? stats.buildWinRate! - stats.winRate : null;
+  const buildDetail = hasBuildSample
+    ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
+    : undefined;
 
   return (
     <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
-      <div className="text-xs uppercase text-[color:var(--muted)]">Match-V5 Winrate</div>
-      <div className={cn("mt-1 font-display text-3xl font-bold", positive ? "text-green-300" : "text-red-300")}>{stats.winRate.toFixed(1)}%</div>
-      <div className="text-xs text-[color:var(--muted)]">
-        {stats.wins}W / {stats.games}G from {stats.sampleMatches} verified ranked match{stats.sampleMatches === 1 ? "" : "es"}.
+      <div className="text-xs uppercase text-[color:var(--muted)]">Winrate Stats</div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <WinrateMiniStat label="Baseline" winRate={stats.winRate} wins={stats.wins} games={stats.games} />
+        <WinrateMiniStat
+          label="Correct Build"
+          winRate={hasBuildSample ? stats.buildWinRate : undefined}
+          wins={stats.buildWins}
+          games={stats.buildGames}
+          detail={buildDetail}
+        />
       </div>
+      {delta !== null && (
+        <div className={cn("mt-2 text-xs font-semibold", delta >= 0 ? "text-green-300" : "text-red-300")}>
+          {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% vs baseline
+        </div>
+      )}
+      {!hasBuildSample && <div className="mt-2 text-xs text-[color:var(--muted)]">Correct build needs {MIN_BUILD_WINRATE_GAMES}+ target-item inventory samples.</div>}
       <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-[#c89b3c]">{stats.source}</div>
     </div>
   );
+}
+
+function WinrateMiniStat({
+  label,
+  winRate,
+  wins = 0,
+  games = 0,
+  detail
+}: {
+  label: string;
+  winRate?: number;
+  wins?: number;
+  games?: number;
+  detail?: string;
+}) {
+  const hasValue = typeof winRate === "number" && games >= MIN_BUILD_WINRATE_GAMES;
+
+  return (
+    <div className="rounded-sm border border-white/10 bg-[#050607]/70 p-2">
+      <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
+      <div className={cn("font-display text-2xl font-bold", hasValue ? (winRate >= 50 ? "text-green-300" : "text-red-300") : "text-[color:var(--muted)]")}>
+        {hasValue ? `${winRate.toFixed(1)}%` : "N/A"}
+      </div>
+      <div className="text-[11px] text-[color:var(--muted)]">{games > 0 ? `${wins}W / ${games}G` : "<5 games"}</div>
+      {detail && <div className="text-[10px] uppercase tracking-[0.06em] text-[#c89b3c]">{detail}</div>}
+    </div>
+  );
+}
+
+function withTargetBuildWinrateForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, targetItemIds: string[]) {
+  if (!stats) {
+    return undefined;
+  }
+
+  const target = new Set(targetItemIds);
+  const samples = stats.inventorySamples ?? [];
+  let matchingGames: typeof samples = [];
+  let matchedItemCount = targetItemIds.length;
+
+  for (let threshold = targetItemIds.length; threshold >= 1; threshold -= 1) {
+    const games = samples.filter((game) => countTargetItemsForUi(game.itemIds, target) >= threshold);
+
+    if (games.length >= MIN_BUILD_WINRATE_GAMES) {
+      matchingGames = games;
+      matchedItemCount = threshold;
+      break;
+    }
+
+    if (threshold === targetItemIds.length) {
+      matchingGames = games;
+    }
+  }
+
+  const buildWins = matchingGames.filter((game) => game.win).length;
+
+  return {
+    ...stats,
+    targetItemIds,
+    buildWins,
+    buildGames: matchingGames.length,
+    buildWinRate: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? Math.round((buildWins / matchingGames.length) * 1000) / 10 : undefined,
+    buildSampleMatches: new Set(matchingGames.map((game) => game.matchId)).size,
+    buildMatchedItemCount: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? matchedItemCount : undefined
+  };
+}
+
+function countTargetItemsForUi(itemIds: string[], target: Set<string>) {
+  return itemIds.reduce((count, itemId) => count + (target.has(itemId) ? 1 : 0), 0);
 }
 
 function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
@@ -458,17 +543,21 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 
 function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number): ItemBuildChallenge {
   const seed = `${base.date}:item-build-infinite:${round}`;
-  const sampledChampions = champions.filter((champion) => base.winrateSamples?.[champion.id]?.games);
+  const sampledChampions = champions
+    .filter((champion) => (base.winrateSamples?.[champion.id]?.games ?? 0) >= MIN_BUILD_WINRATE_GAMES)
+    .sort((a, b) => (base.winrateSamples?.[b.id]?.games ?? 0) - (base.winrateSamples?.[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
+    .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
   const champion = championPool[hashString(`${seed}:champion`) % championPool.length];
   const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
+  const sampleItemFrequency = buildItemFrequencyForUi(base.winrateSamples?.[champion.id]);
   const candidateItems = itemCatalog
     .filter((item) => item.goldTotal >= 2200 && item.purchasable && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
-    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) }))
+    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12 }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
   const bootCandidates = itemCatalog
     .filter((item) => isBuildBootUpgrade(item))
-    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) }))
+    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12 }))
     .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
 
   if (candidateItems.length < 5 || bootCandidates.length === 0) {
@@ -477,6 +566,7 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
 
   const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
   const answerBoots = bootCandidates[0].item;
+  const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
   const possibleItems = candidateItems.slice(0, 36).map((candidate) => candidate.item);
   const possibleBoots = bootCandidates.map((candidate) => candidate.item);
 
@@ -491,7 +581,7 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
     answerItemId: answerBuild[0].id,
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
-    winrateStats: base.winrateSamples?.[champion.id],
+    winrateStats: withTargetBuildWinrateForUi(base.winrateSamples?.[champion.id], targetItemIds),
     winrateSamples: base.winrateSamples,
     matchupNotes: [
       `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
@@ -503,6 +593,18 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
       targetItemCount: answerBuild.length
     }
   };
+}
+
+function buildItemFrequencyForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
+  const frequency = new Map<string, number>();
+
+  for (const game of stats?.inventorySamples ?? []) {
+    for (const itemId of game.itemIds) {
+      frequency.set(itemId, (frequency.get(itemId) ?? 0) + 1);
+    }
+  }
+
+  return frequency;
 }
 
 function scoreBuildItemForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {

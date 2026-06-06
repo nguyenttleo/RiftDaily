@@ -30,6 +30,7 @@ CRON_SECRET
 RIOT_API_KEY
 RIOT_REGION
 RIOT_MATCH_SAMPLE_SIZE
+RIOT_BUILD_SAMPLE_MATCH_COUNT
 NEXT_PUBLIC_CREATOR_GITHUB_URL
 NEXT_PUBLIC_CREATOR_LINKEDIN_URL
 ```
@@ -45,6 +46,7 @@ Use these values:
 - `RIOT_API_KEY`: required for Guess the Elo and Dodge-or-Queue. Those modes use Riot League-V4 and Match-V5 so lane assignments and summoner spells are real.
 - `RIOT_REGION`: `na1` unless you want a different Riot platform route.
 - `RIOT_MATCH_SAMPLE_SIZE`: number of verified ranked matches to prepare for infinite-style Elo/Lobby queues. `16` is a good free-tier default.
+- `RIOT_BUILD_SAMPLE_MATCH_COUNT`: target number of verified ranked matches used for Build baseline/correct-build winrate samples. `64` gives the Build game a better chance of 5+ game champion samples.
 
 Generate secrets locally:
 

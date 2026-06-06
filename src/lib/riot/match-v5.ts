@@ -52,6 +52,13 @@ interface RiotParticipantDto {
   teamId: TeamId;
   championId: number;
   championName: string;
+  item0: number;
+  item1: number;
+  item2: number;
+  item3: number;
+  item4: number;
+  item5: number;
+  item6: number;
   summoner1Id: number;
   summoner2Id: number;
   teamPosition: string;
@@ -85,6 +92,11 @@ interface WinrateAccumulator {
   wins: number;
   games: number;
   matchIds: Set<string>;
+  gamesWithItems: Array<{
+    win: boolean;
+    matchId: string;
+    itemIds: string[];
+  }>;
 }
 
 let cachedMatchSet: {
@@ -117,7 +129,10 @@ export async function getVerifiedRankedMatchChallenges({
   const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(4, Math.min(32, env.riotMatchSampleSize)) : 16;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
-  const cacheKey = `${date}:${platform}:${sampleSize}`;
+  const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 64;
+  const buildMatchesPerRank = Math.max(roundsPerRank, Math.ceil(requestedBuildSampleSize / RANK_BUCKETS.length));
+  const buildSampleSize = buildMatchesPerRank * RANK_BUCKETS.length;
+  const cacheKey = `${date}:${platform}:${sampleSize}:${buildSampleSize}`;
 
   if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
@@ -130,6 +145,7 @@ export async function getVerifiedRankedMatchChallenges({
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
     const seenMatches = new Set<string>();
     const guessRoundsByBucket = createEmptyRankBucketMap();
+    const buildMatchesByBucket = createEmptyRankCountMap();
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
 
@@ -138,7 +154,7 @@ export async function getVerifiedRankedMatchChallenges({
       const bucketSources = sourcesByBucket.get(bucket) ?? [];
 
       for (const source of bucketSources) {
-        if (bucketRounds.length >= roundsPerRank) {
+        if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= buildMatchesPerRank) {
           break;
         }
 
@@ -147,14 +163,14 @@ export async function getVerifiedRankedMatchChallenges({
         try {
           matchIds = await riotFetch<string[]>(
             regional,
-            `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=10`
+            `/lol/match/v5/matches/by-puuid/${encodeURIComponent(source.puuid)}/ids?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=15`
           );
         } catch {
           continue;
         }
 
         for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
-          if (bucketRounds.length >= roundsPerRank) {
+          if (bucketRounds.length >= roundsPerRank && (buildMatchesByBucket.get(bucket) ?? 0) >= buildMatchesPerRank) {
             break;
           }
 
@@ -172,11 +188,17 @@ export async function getVerifiedRankedMatchChallenges({
               continue;
             }
 
-            addChampionWinrateSamples(match, championLookup, championWinrates);
-            bucketRounds.push(verified.guessElo);
+            const usedForPuzzleRound = bucketRounds.length < roundsPerRank;
 
-            if (dodgeQueueRounds.length < sampleSize) {
-              dodgeQueueRounds.push(verified.dodgeQueue);
+            addChampionWinrateSamples(match, championLookup, championWinrates);
+            buildMatchesByBucket.set(bucket, (buildMatchesByBucket.get(bucket) ?? 0) + 1);
+
+            if (usedForPuzzleRound) {
+              bucketRounds.push(verified.guessElo);
+
+              if (dodgeQueueRounds.length < sampleSize) {
+                dodgeQueueRounds.push(verified.dodgeQueue);
+              }
             }
           } catch {
             continue;
@@ -197,7 +219,7 @@ export async function getVerifiedRankedMatchChallenges({
         : {
             guessEloRounds: [],
             dodgeQueueRounds: [],
-            championWinrateSamples: {},
+            championWinrateSamples,
             status: "unavailable",
             message: `Could not collect a balanced Guess the Elo set from Riot Match-V5. Needed ${roundsPerRank} per rank bucket; got ${formatRankDistribution(distribution)}.`
           };
@@ -239,12 +261,19 @@ function addChampionWinrateSamples(
       championName: champion.name,
       wins: 0,
       games: 0,
-      matchIds: new Set<string>()
+      matchIds: new Set<string>(),
+      gamesWithItems: []
     };
+    const itemIds = participantItemIds(participant);
 
     current.games += 1;
     current.wins += winningTeams.get(participant.teamId) ? 1 : 0;
     current.matchIds.add(match.metadata.matchId);
+    current.gamesWithItems.push({
+      win: Boolean(winningTeams.get(participant.teamId)),
+      matchId: match.metadata.matchId,
+      itemIds
+    });
     championWinrates.set(champion.id, current);
   }
 }
@@ -260,14 +289,37 @@ function toChampionWinrateSamples(championWinrates: Map<string, WinrateAccumulat
         games: stats.games,
         winRate: Math.round((stats.wins / stats.games) * 1000) / 10,
         sampleMatches: stats.matchIds.size,
+        inventorySamples: stats.gamesWithItems,
         source: "Riot Match-V5 ranked solo sample"
       }
     ])
   );
 }
 
+function participantItemIds(participant: RiotParticipantDto) {
+  return unique([
+    participant.item0,
+    participant.item1,
+    participant.item2,
+    participant.item3,
+    participant.item4,
+    participant.item5,
+    participant.item6
+  ]
+    .filter((id) => id > 0)
+    .map((id) => String(id)));
+}
+
+function unique<T>(values: T[]) {
+  return [...new Set(values)];
+}
+
 function createEmptyRankBucketMap() {
   return new Map<RankBucket, GuessEloRound[]>(RANK_BUCKETS.map((bucket) => [bucket, []]));
+}
+
+function createEmptyRankCountMap() {
+  return new Map<RankBucket, number>(RANK_BUCKETS.map((bucket) => [bucket, 0]));
 }
 
 function groupSourcesByBucket(sources: RankedSource[]) {
@@ -330,7 +382,7 @@ async function getRankedSources(platform: string, seed: string): Promise<RankedS
       `/lol/league/v4/entries/RANKED_SOLO_5x5/${plan.tier}/${plan.division}?page=1`
     );
 
-    for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, 8)) {
+    for (const entry of seededOrder(entries, `${seed}:${plan.bucket}`).slice(0, 4)) {
       const puuid = await resolveEntryPuuid(platform, entry);
 
       if (puuid) {
@@ -341,7 +393,7 @@ async function getRankedSources(platform: string, seed: string): Promise<RankedS
 
   const master = await riotFetch<RiotLeagueList>(platform, "/lol/league/v4/masterleagues/by-queue/RANKED_SOLO_5x5");
 
-  for (const entry of seededOrder(master.entries ?? [], `${seed}:Master+`).slice(0, 8)) {
+  for (const entry of seededOrder(master.entries ?? [], `${seed}:Master+`).slice(0, 4)) {
     const puuid = await resolveEntryPuuid(platform, entry);
 
     if (puuid) {

@@ -50,7 +50,7 @@ export function AppShell() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/challenges/daily", { cache: "no-store" });
+      const response = await fetch(`/api/challenges/daily?t=${Date.now()}`, { cache: "no-store" });
 
       if (!response.ok) {
         throw new Error("Daily load failed.");

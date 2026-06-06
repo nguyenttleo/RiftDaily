@@ -14,6 +14,8 @@ import type {
 
 import { getUtcDateKey, seededIndex } from "./daily";
 
+const MIN_BUILD_WINRATE_GAMES = 5;
+
 export async function generateExpandedDailyChallenges(
   version: string,
   salt: string,
@@ -53,27 +55,32 @@ function generateItemBuildChallenge(
   version: string,
   winrateSamples: Record<string, BuildWinrateStats>
 ): ItemBuildChallenge {
-  const sampledChampions = publicChampions.filter((champion) => winrateSamples[champion.id]?.games > 0);
+  const sampledChampions = publicChampions
+    .filter((champion) => (winrateSamples[champion.id]?.games ?? 0) >= MIN_BUILD_WINRATE_GAMES)
+    .sort((a, b) => (winrateSamples[b.id]?.games ?? 0) - (winrateSamples[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
+    .slice(0, 20);
   const championPool = sampledChampions.length > 0 ? sampledChampions : publicChampions;
   const champion = championPool[seededIndex(seed, championPool.length)];
   const enemyTeam = pickUnique(publicChampions, `${seed}:enemy`, 5, [champion.id]);
+  const sampleItemFrequency = buildItemFrequency(winrateSamples[champion.id]);
   const candidateItems = itemCatalog
     .filter((item) => item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket"))
     .map((item) => ({
       item,
-      score: scoreItemForMatchup(item, champion, enemyTeam)
+      score: scoreItemForMatchup(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12
     }))
     .sort((a, b) => b.score - a.score);
   const bootCandidates = itemCatalog
     .filter((item) => isBootUpgrade(item))
     .map((item) => ({
       item,
-      score: scoreBootsForMatchup(item, champion, enemyTeam)
+      score: scoreBootsForMatchup(item, champion, enemyTeam) + (sampleItemFrequency.get(item.id) ?? 0) * 12
     }))
     .sort((a, b) => b.score - a.score);
   const answerBuild = candidateItems.slice(0, 5).map((candidate) => candidate.item);
   const answer = answerBuild[0];
   const answerBoots = bootCandidates[0]?.item ?? itemCatalog.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
+  const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
   const possibleItems = candidateItems
     .filter((candidate) => candidate.score >= 6)
     .slice(0, 32)
@@ -95,7 +102,7 @@ function generateItemBuildChallenge(
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
     matchupNotes: buildMatchupNotes(champion, enemyTeam, answerBuild, answerBoots),
-    winrateStats: winrateSamples[champion.id],
+    winrateStats: withTargetBuildWinrate(winrateSamples[champion.id], targetItemIds),
     winrateSamples,
     catalogModel: {
       source: `Riot Data Dragon ${version} champion/item metadata`,
@@ -103,6 +110,59 @@ function generateItemBuildChallenge(
       targetItemCount: answerBuild.length
     }
   };
+}
+
+function buildItemFrequency(stats: BuildWinrateStats | undefined) {
+  const frequency = new Map<string, number>();
+
+  for (const game of stats?.inventorySamples ?? []) {
+    for (const itemId of game.itemIds) {
+      frequency.set(itemId, (frequency.get(itemId) ?? 0) + 1);
+    }
+  }
+
+  return frequency;
+}
+
+function withTargetBuildWinrate(stats: BuildWinrateStats | undefined, targetItemIds: string[]) {
+  if (!stats) {
+    return undefined;
+  }
+
+  const target = new Set(targetItemIds);
+  const samples = stats.inventorySamples ?? [];
+  let matchingGames: typeof samples = [];
+  let matchedItemCount = targetItemIds.length;
+
+  for (let threshold = targetItemIds.length; threshold >= 1; threshold -= 1) {
+    const games = samples.filter((game) => countTargetItems(game.itemIds, target) >= threshold);
+
+    if (games.length >= MIN_BUILD_WINRATE_GAMES) {
+      matchingGames = games;
+      matchedItemCount = threshold;
+      break;
+    }
+
+    if (threshold === targetItemIds.length) {
+      matchingGames = games;
+    }
+  }
+
+  const buildWins = matchingGames.filter((game) => game.win).length;
+
+  return {
+    ...stats,
+    targetItemIds,
+    buildWins,
+    buildGames: matchingGames.length,
+    buildWinRate: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? Math.round((buildWins / matchingGames.length) * 1000) / 10 : undefined,
+    buildSampleMatches: new Set(matchingGames.map((game) => game.matchId)).size,
+    buildMatchedItemCount: matchingGames.length >= MIN_BUILD_WINRATE_GAMES ? matchedItemCount : undefined
+  };
+}
+
+function countTargetItems(itemIds: string[], target: Set<string>) {
+  return itemIds.reduce((count, itemId) => count + (target.has(itemId) ? 1 : 0), 0);
 }
 
 function generateItemRecipeChallenge(date: string, seed: string, itemCatalog: GameItem[]): ItemRecipeChallenge {

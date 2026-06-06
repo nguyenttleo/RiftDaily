@@ -74,6 +74,17 @@ export interface BuildWinrateStats {
   games: number;
   winRate: number;
   sampleMatches: number;
+  buildWins?: number;
+  buildGames?: number;
+  buildWinRate?: number;
+  buildSampleMatches?: number;
+  targetItemIds?: string[];
+  buildMatchedItemCount?: number;
+  inventorySamples?: Array<{
+    win: boolean;
+    matchId: string;
+    itemIds: string[];
+  }>;
   source: string;
 }
 
