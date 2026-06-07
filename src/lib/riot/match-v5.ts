@@ -31,7 +31,7 @@ const MAX_MATCH_HISTORY_PAGES_PER_SOURCE = 5;
 const MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE = 20000;
 const MAX_ANALYSIS_MATCH_FETCH_BUDGET = 40000;
 const MAX_SOURCES_PER_RANK_BUCKET = 48;
-const RIOT_REQUEST_TIMEOUT_MS = 4500;
+const RIOT_REQUEST_TIMEOUT_MS = 8000;
 const RIOT_MIN_REQUEST_INTERVAL_MS = 140;
 const RIOT_MAX_RETRY_AFTER_MS = 5000;
 
@@ -1593,15 +1593,29 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
     const candidates: RankedEntryCandidate[] = [];
 
     for (const queuePlan of plan.queuePlans ?? []) {
-      candidates.push(...await getLeagueEntryPageCandidates(platform, queuePlan.tier, queuePlan.division));
+      try {
+        candidates.push(...await getLeagueEntryPageCandidates(platform, queuePlan.tier, queuePlan.division));
+      } catch {
+        continue;
+      }
     }
 
     for (const path of plan.apexLeaguePaths ?? []) {
-      candidates.push(...await getApexLeagueEntryCandidates(platform, path));
+      try {
+        candidates.push(...await getApexLeagueEntryCandidates(platform, path));
+      } catch {
+        continue;
+      }
     }
 
     for (const candidate of seededOrder(candidates, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
-      const puuid = await resolveEntryPuuid(platform, candidate.entry);
+      let puuid: string | null = null;
+
+      try {
+        puuid = await resolveEntryPuuid(platform, candidate.entry);
+      } catch {
+        continue;
+      }
 
       if (puuid) {
         sources.push({
@@ -1946,13 +1960,13 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
     const timeout = setTimeout(() => controller.abort(), RIOT_REQUEST_TIMEOUT_MS);
 
     try {
-    const response = await fetch(`https://${host}${path}`, {
-      headers: {
-        "X-Riot-Token": env.riotApiKey
-      },
-      next: { revalidate: 60 * 60 * 2 },
-      signal: controller.signal
-    });
+      const response = await fetch(`https://${host}${path}`, {
+        headers: {
+          "X-Riot-Token": env.riotApiKey
+        },
+        next: { revalidate: 60 * 60 * 2 },
+        signal: controller.signal
+      });
 
       if (response.status === 429) {
         const retryAfterMs = boundedRetryAfterMs(response, attempt);
@@ -1964,17 +1978,28 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
         }
       }
 
-    if (!response.ok) {
-      throw new Error(`Riot API ${path} failed with ${response.status}`);
-    }
+      if (!response.ok) {
+        throw new Error(`Riot API ${path} failed with ${response.status}`);
+      }
 
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timeout);
-  }
+      return (await response.json()) as T;
+    } catch (error) {
+      if (attempt < 2 && isRetryableRiotFetchError(error)) {
+        await sleep(RIOT_MIN_REQUEST_INTERVAL_MS * (attempt + 2));
+        continue;
+      }
+
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   throw new Error(`Riot API ${path} failed after retries`);
+}
+
+function isRetryableRiotFetchError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 async function waitForRiotRequestSlot() {
