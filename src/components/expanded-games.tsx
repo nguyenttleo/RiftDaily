@@ -2,10 +2,18 @@
 
 import { ArrowRight, CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { applyRankedResult, createInitialRankState, parseLeagueRankState, rankedStorageKey } from "@/game/scoring";
+import {
+  applyRankedResult,
+  calculateLpDelta,
+  createInitialRankState,
+  getRankPromotionDetail,
+  parseLeagueRankState,
+  rankPromotionEventName,
+  rankedStorageKey
+} from "@/game/scoring";
 import { cn } from "@/lib/utils";
 import type {
   ChampionMatchupChallenge,
@@ -24,18 +32,21 @@ import type {
 } from "@/types";
 
 const BUILD_MAX_GUESSES = 6;
+const BUILD_RELEVANT_ITEM_LIMIT = 24;
 const INFINITE_ROUNDS = 48;
 type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({
   challenge,
   items = [],
-  username = "Guest"
+  username = "Guest",
+  pageRail = false
 }: {
   challenge: ItemBuildChallenge;
   champions?: PublicChampion[];
   items?: GameItem[];
   username?: string;
+  pageRail?: boolean;
 }) {
   const generatedRounds = useMemo(() => createBuildRounds(challenge), [challenge]);
   const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, undefined, buildRoundFirstKey);
@@ -44,17 +55,21 @@ export function ItemBuildGame({
   const [selectedBoots, setSelectedBoots] = useState("");
   const [guesses, setGuesses] = useState<Array<{ items: string[]; boots: string }>>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [skipWarningOpen, setSkipWarningOpen] = useState(false);
+  const [matchDataExpanded, setMatchDataExpanded] = useState(false);
+  const [choiceShuffleSeed, setChoiceShuffleSeed] = useState(() => createClientShuffleSeed(username));
   const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
   const rawRound = rounds[roundIndex % rounds.length];
-  const round = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
+  const hydratedRound = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
+  const round = useMemo(() => normalizeBuildBootRoundForRole(hydratedRound), [hydratedRound]);
   const answerSet = useMemo(() => new Set(round.answerItemIds), [round.answerItemIds]);
   const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, round.answerBootsId));
   const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
   const ready = selectedItems.length === 5 && Boolean(selectedBoots);
-  const possibleItems = useMemo(() => uniqueItemsByName(round.possibleItems, new Set(round.answerItemIds)), [round.answerItemIds, round.possibleItems]);
-  const possibleBoots = useMemo(() => uniqueItemsByName(round.possibleBoots, new Set([round.answerBootsId])), [round.answerBootsId, round.possibleBoots]);
-  const randomizedPossibleItems = useMemo(() => seededShuffle(possibleItems, `${round.id}:possible-items`), [round.id, possibleItems]);
-  const randomizedPossibleBoots = useMemo(() => seededShuffle(possibleBoots, `${round.id}:possible-boots`), [round.id, possibleBoots]);
+  const possibleItems = useMemo(() => selectRelevantBuildItems(round, round.possibleItems), [round]);
+  const possibleBoots = useMemo(() => selectBuildBootChoicesForRole(round, round.possibleBoots), [round]);
+  const randomizedPossibleItems = useMemo(() => seededShuffle(possibleItems, `${choiceShuffleSeed}:${round.id}:possible-items`), [choiceShuffleSeed, round.id, possibleItems]);
+  const randomizedPossibleBoots = useMemo(() => seededShuffle(possibleBoots, `${choiceShuffleSeed}:${round.id}:possible-boots`), [choiceShuffleSeed, round.id, possibleBoots]);
   const lockedBuildResults = useMemo(() => {
     const results = new Map<string, ItemGuessResult>();
 
@@ -96,11 +111,9 @@ export function ItemBuildGame({
     }
   }
 
-  function reset() {
+  function clearCurrentGuess() {
     setSelectedItems([]);
     setSelectedBoots("");
-    setGuesses([]);
-    setModalOpen(false);
   }
 
   function nextBuild() {
@@ -109,6 +122,34 @@ export function ItemBuildGame({
     setSelectedBoots("");
     setGuesses([]);
     setModalOpen(false);
+    setSkipWarningOpen(false);
+    setMatchDataExpanded(false);
+    setChoiceShuffleSeed(createClientShuffleSeed(username));
+  }
+
+  function skipBuild() {
+    if (finished) {
+      return;
+    }
+
+    if (streak.current > 0) {
+      setSkipWarningOpen(true);
+      return;
+    }
+
+    confirmSkipBuild();
+  }
+
+  function confirmSkipBuild() {
+    recordStreak(false, {
+      performanceQuality: 0,
+      roundId: `${round.id}:skipped`,
+      metadata: {
+        champion: round.champion.name,
+        skipped: true
+      }
+    });
+    nextBuild();
   }
 
   function removeItem(id: string) {
@@ -158,144 +199,200 @@ export function ItemBuildGame({
     );
   }
 
-  return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
-      <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
-        <aside className="xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar">
-          <div className="relative grid w-full gap-2 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[radial-gradient(circle_at_22%_0%,rgba(200,155,60,.13),transparent_30%),linear-gradient(180deg,rgba(15,24,37,.96),rgba(6,11,18,.98))] p-2.5 shadow-[0_28px_90px_rgba(0,0,0,.42),inset_0_1px_0_rgba(255,255,255,.07)] sm:gap-3 sm:p-4 xl:rounded-lg">
-            <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/22 to-transparent" />
-            <div className="pointer-events-none absolute -right-20 top-20 h-44 w-44 rounded-full bg-[#c89b3c]/10 blur-3xl" />
-            <div className="hidden flex-wrap items-center gap-2 sm:flex">
-              <span className="text-[#c89b3c]">
-                <PackageSearch size={18} />
-              </span>
-              <h2 className="text-lg font-semibold sm:text-xl">Build</h2>
+  const leftRail = (
+    <aside
+      className={cn(
+        "min-w-0",
+        pageRail
+          ? "xl:sticky xl:top-2 xl:col-start-1 xl:row-start-1 xl:row-span-2 xl:h-[calc(100dvh-1rem)] xl:self-start xl:overflow-hidden"
+          : "xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar"
+      )}
+    >
+      <div
+        className={cn(
+          "relative grid w-full gap-2 rounded-xl border border-[#c89b3c]/24 bg-[radial-gradient(circle_at_22%_0%,rgba(200,155,60,.13),transparent_30%),linear-gradient(180deg,rgba(15,24,37,.96),rgba(6,11,18,.98))] p-2.5 shadow-[0_28px_90px_rgba(0,0,0,.42),inset_0_1px_0_rgba(255,255,255,.07)] sm:gap-3 sm:p-4 xl:rounded-lg",
+          pageRail ? "xl:h-full xl:content-start xl:overflow-y-auto xl:overflow-x-hidden xl:pr-2 rail-scrollbar" : "overflow-hidden"
+        )}
+      >
+        <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/22 to-transparent" />
+        <div className="pointer-events-none absolute -right-20 top-20 h-44 w-44 rounded-full bg-[#c89b3c]/10 blur-3xl" />
+        <div className="hidden flex-wrap items-center gap-2 sm:flex">
+          <span className="text-[#c89b3c]">
+            <PackageSearch size={18} />
+          </span>
+          <h2 className="text-lg font-semibold sm:text-xl">Guess the Build</h2>
+        </div>
+        <div className="hidden sm:block">
+          <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+        </div>
+        <BuildTargetCard
+          round={round}
+          revealedEnemyCount={revealedEnemyCount}
+          currentGuess={Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}
+          maxGuesses={BUILD_MAX_GUESSES}
+        />
+        <div className="grid gap-2">
+          <BuildTeamScout title="Ally Team" picks={round.allyTeam ?? []} targetPlayerName={round.targetPlayerName} />
+          <BuildTeamScout title="Enemy Intel" picks={round.enemyPlayers ?? []} revealCount={revealedEnemyCount} hidden />
+        </div>
+      </div>
+    </aside>
+  );
+
+  const gameContent = (
+    <div className="grid gap-3">
+      <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)] sm:p-3">
+        <div className="mb-1 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
+              Guess {round.targetPlayerName ?? "the Challenger winner"}&apos;s final build.
             </div>
-            <div className="hidden sm:block">
-              <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-            </div>
-            <BuildTargetCard round={round} />
-            <div className="relative hidden aspect-[21/9] min-h-36 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[#071018] shadow-[0_18px_46px_rgba(0,0,0,.32),inset_0_1px_0_rgba(255,255,255,.055)] sm:block sm:aspect-[16/10] sm:min-h-48 xl:aspect-[16/11] xl:min-h-56">
-              <div
-                className="absolute inset-0 bg-cover opacity-80"
-                style={{
-                  backgroundImage: `url(${round.champion.splashUrl})`,
-                  backgroundPosition: championSplashPosition(round.champion.name)
-                }}
+            <div className="mt-1 text-xs text-[color:var(--muted)] sm:text-sm">Missed guesses reveal enemy players one at a time.</div>
+          </div>
+        </div>
+        {Array.from({ length: BUILD_MAX_GUESSES }).map((_, index) => {
+          const guess = guesses[index];
+          const active = !guess && index === guesses.length && !finished;
+
+          return (
+            <BuildWordleRow
+              key={index}
+              guess={guess}
+              active={active}
+              selectedItems={selectedItems}
+              selectedBoots={selectedBoots}
+              possibleItems={randomizedPossibleItems}
+              possibleBoots={randomizedPossibleBoots}
+              answerSet={answerSet}
+              answerBootsId={round.answerBootsId}
+              onRemoveItem={removeItem}
+              onRemoveBoots={removeBoots}
+            />
+          );
+        })}
+      </div>
+
+      <div className="grid items-stretch gap-2 xl:grid-cols-[minmax(0,1fr)_13rem]">
+        <div className="flex h-full min-h-0 flex-col rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
+          <div className="mb-1.5 flex items-center justify-between gap-3">
+            <span className="font-display text-base font-extrabold tracking-tight text-[#c89b3c] sm:text-xl">Possible Items</span>
+          </div>
+          <div className="grid min-h-0 flex-1 grid-cols-3 content-stretch gap-2 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:px-1 sm:pb-4 sm:pt-2 md:auto-rows-fr md:grid-cols-4">
+            {randomizedPossibleItems.map((item) => (
+              <ItemChoiceCard
+                key={item.id}
+                item={item}
+                selected={selectedItems.includes(item.id)}
+                result={lockedBuildResults.get(item.id)}
+                disabled={finished || (!selectedItems.includes(item.id) && selectedItems.length >= 5)}
+                onClick={() => toggleItem(item.id)}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/26 to-transparent" />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-[radial-gradient(ellipse_at_center,rgba(200,155,60,.14),transparent_68%)]" />
-            </div>
-            <div className="grid gap-2">
-              <BuildTeamScout title="Ally Team" picks={round.allyTeam ?? []} targetPlayerName={round.targetPlayerName} />
-              <BuildTeamScout title="Enemy Intel" picks={round.enemyPlayers ?? []} revealCount={revealedEnemyCount} hidden />
-            </div>
+            ))}
           </div>
-        </aside>
-
-        <div className="grid gap-3">
-          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)] sm:p-3">
-            <div className="mb-1 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
-                  Guess {round.targetPlayerName ?? "the Challenger winner"}&apos;s final build.
-                </div>
-                <div className="mt-1 text-xs text-[color:var(--muted)] sm:text-sm">Missed guesses reveal enemy players one at a time.</div>
-              </div>
-              <div className="text-xs text-[color:var(--muted)]">Guess {Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}/{BUILD_MAX_GUESSES}</div>
-            </div>
-            {Array.from({ length: BUILD_MAX_GUESSES }).map((_, index) => {
-              const guess = guesses[index];
-              const active = !guess && index === guesses.length && !finished;
-
-              return (
-                <BuildWordleRow
-                  key={index}
-                  guess={guess}
-                  active={active}
-                  selectedItems={selectedItems}
-                  selectedBoots={selectedBoots}
-                  possibleItems={randomizedPossibleItems}
-                  possibleBoots={randomizedPossibleBoots}
-                  answerSet={answerSet}
-                  answerBootsId={round.answerBootsId}
-                  onRemoveItem={removeItem}
-                  onRemoveBoots={removeBoots}
-                />
-              );
-            })}
-          </div>
-
-          <div className="grid items-start gap-2 xl:grid-cols-[minmax(0,1fr)_13rem]">
-            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm uppercase text-[#c89b3c]">Possible Items</span>
-                <span className="text-xs text-[color:var(--muted)]">{possibleItems.length}</span>
-              </div>
-              <div className="grid grid-cols-3 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 md:grid-cols-4 2xl:grid-cols-6">
-                {randomizedPossibleItems.map((item) => (
-                  <ItemChoiceCard
-                    key={item.id}
-                    item={item}
-                    selected={selectedItems.includes(item.id)}
-                    result={lockedBuildResults.get(item.id)}
-                    disabled={finished || (!selectedItems.includes(item.id) && selectedItems.length >= 5)}
-                    onClick={() => toggleItem(item.id)}
-                  />
-                ))}
-              </div>
-            </div>
-            <div className="rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
-              <div className="mb-1.5 text-sm uppercase text-[#c89b3c]">Boots</div>
-              <div className="grid grid-cols-2 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 xl:grid-cols-1">
-                {randomizedPossibleBoots.map((item) => (
-                  <BootChoiceCard
-                    key={item.id}
-                    item={item}
-                    selected={selectedBoots === item.id}
-                    result={lockedBuildResults.get(item.id)}
-                    disabled={finished}
-                    onClick={() => chooseBoots(item.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="sticky bottom-2 z-20 grid gap-2 rounded-lg border border-white/10 bg-[#0b111b]/96 p-2 shadow-[0_18px_50px_rgba(0,0,0,.35)] backdrop-blur sm:grid-cols-[1fr_auto_auto] sm:items-center lg:static lg:rounded-sm lg:p-3 lg:shadow-none">
-            <div className="text-xs text-[color:var(--muted)] sm:text-sm">
-              {finished ? (solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES}.` : "No guesses left.") : `Selected: ${selectedItems.length}/5 items - ${selectedBoots ? "boots ready" : "choose boots"}`}
-            </div>
-            <Button type="button" variant="secondary" onClick={reset}>
-              Reset
-            </Button>
-            <Button
-              type="button"
-              onClick={submitBuild}
-              disabled={!ready || finished}
-              className={cn(ready && !finished && "shadow-[0_0_20px_rgba(245,197,66,.18)]")}
-            >
-              Lock Guess
-            </Button>
+        </div>
+        <div className="flex h-full flex-col rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
+          <div className="font-display mb-1.5 text-base font-extrabold tracking-tight text-[#c89b3c] sm:text-xl">Boots</div>
+          <div className="grid grid-cols-2 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 xl:min-h-0 xl:flex-1 xl:auto-rows-fr xl:grid-cols-1">
+            {randomizedPossibleBoots.map((item) => (
+              <BootChoiceCard
+                key={item.id}
+                item={item}
+                selected={selectedBoots === item.id}
+                result={lockedBuildResults.get(item.id)}
+                disabled={finished}
+                onClick={() => chooseBoots(item.id)}
+              />
+            ))}
           </div>
         </div>
       </div>
-      {modalOpen && (
-        <BuildWordleModal
-          round={round}
-          guesses={guesses}
-          solved={solved}
-          streak={streak}
-          onClose={() => setModalOpen(false)}
-          onReset={reset}
-          onNext={nextBuild}
-        />
-      )}
+
+      <div className="sticky bottom-2 z-20 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-[#0b111b]/96 p-2 shadow-[0_18px_50px_rgba(0,0,0,.35)] backdrop-blur lg:static lg:rounded-sm lg:p-3 lg:shadow-none">
+        {!finished && (
+          <Button type="button" variant="danger" onClick={skipBuild}>
+            Skip
+          </Button>
+        )}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {!finished && (
+            <Button type="button" variant="secondary" onClick={clearCurrentGuess} disabled={selectedItems.length === 0 && !selectedBoots}>
+              Clear Guess
+            </Button>
+          )}
+          {finished && round.sourceMatch && (
+            <MatchDataToggleButton expanded={matchDataExpanded} onClick={() => setMatchDataExpanded((current) => !current)} />
+          )}
+          <Button
+            type="button"
+            onClick={submitBuild}
+            disabled={!ready || finished}
+            className={cn(ready && !finished && "shadow-[0_0_20px_rgba(245,197,66,.18)]")}
+          >
+            Lock Guess
+          </Button>
+          {finished && (
+            <NextLobbyButton onClick={nextBuild} label="Next build" />
+          )}
+        </div>
+      </div>
+      {finished && matchDataExpanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
+    </div>
+  );
+
+  const modal = modalOpen ? (
+    <BuildWordleModal
+      round={round}
+      guesses={guesses}
+      solved={solved}
+      streak={streak}
+      onClose={() => setModalOpen(false)}
+      onNext={nextBuild}
+    />
+  ) : null;
+  const skipModal = skipWarningOpen ? (
+    <SkipBuildWarningModal
+      streak={streak.current}
+      onCancel={() => setSkipWarningOpen(false)}
+      onConfirm={confirmSkipBuild}
+    />
+  ) : null;
+
+  if (pageRail) {
+    return (
+      <>
+        {leftRail}
+        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
+          {gameContent}
+          {modal}
+          {skipModal}
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+      <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
+        {leftRail}
+        {gameContent}
+      </div>
+      {modal}
+      {skipModal}
     </section>
   );
 }
 
-function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
+function BuildTargetCard({
+  round,
+  revealedEnemyCount,
+  currentGuess,
+  maxGuesses
+}: {
+  round: ItemBuildChallenge;
+  revealedEnemyCount: number;
+  currentGuess: number;
+  maxGuesses: number;
+}) {
   const [liveLp, setLiveLp] = useState<number | null>(null);
   const [lpLoading, setLpLoading] = useState(false);
   const displayedLp = typeof round.targetPlayerLp === "number" ? round.targetPlayerLp : liveLp;
@@ -346,30 +443,53 @@ function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
   }, [round.sourceMatch?.platform, round.targetPlayerLp, round.targetPlayerName]);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-[#74ecff]/18 bg-[linear-gradient(135deg,rgba(10,22,34,.96),rgba(5,7,11,.92)_62%)] p-3 pr-4 shadow-[0_18px_50px_rgba(0,0,0,.30),inset_0_1px_0_rgba(255,255,255,.065)]">
-      <div className="relative grid grid-cols-[auto_minmax(0,1fr)_minmax(5.2rem,auto)] items-center gap-2.5 sm:gap-3">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-lg border border-[#c89b3c]/35 object-cover shadow-[0_10px_22px_rgba(0,0,0,.35)] sm:h-16 sm:w-16" />
-        <div className="min-w-0">
-          <div className="truncate font-display text-2xl font-bold leading-none text-white sm:text-[1.65rem]" title={round.champion.name}>{round.champion.name}</div>
-          <div className="mt-1 truncate text-xs font-semibold text-[#9fb7d5] sm:text-sm" title={round.targetPlayerName}>
+    <div className="relative min-h-[16rem] overflow-hidden rounded-xl border border-[#74ecff]/18 bg-[linear-gradient(135deg,rgba(10,22,34,.96),rgba(5,7,11,.92)_62%)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.30),inset_0_1px_0_rgba(255,255,255,.065)]">
+      <div
+        className="absolute inset-0 bg-cover opacity-[0.36]"
+        style={{
+          backgroundImage: `url(${round.champion.splashUrl})`,
+          backgroundPosition: championSplashPosition(round.champion.name)
+        }}
+      />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,7,11,.94),rgba(5,7,11,.78)_55%,rgba(5,7,11,.52)),radial-gradient(circle_at_82%_18%,rgba(116,236,255,.16),transparent_32%)]" />
+      <div className="relative grid gap-3">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-lg border border-[#c89b3c]/35 object-cover shadow-[0_10px_22px_rgba(0,0,0,.35)]" />
+          <div className="min-w-0">
+            <div className="font-display text-2xl font-bold leading-none text-white" title={round.champion.name}>{round.champion.name}</div>
+            {round.targetRole && (
+              <div className="mt-1 w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
+                {displayLaneLabel(round.targetRole)}
+              </div>
+            )}
+          </div>
+          <div className="grid min-w-[5rem] justify-items-center gap-1">
+            <RankEmblemMini rankTier="Challenger" />
+            {typeof displayedLp === "number" ? (
+              <div className="rounded-full border border-[#74ecff]/24 bg-[#061c27]/82 px-2.5 py-1 text-center font-display text-sm font-black leading-none text-[#d8fbff] shadow-[0_6px_16px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.08)]">
+                {displayedLp} LP
+              </div>
+            ) : lpLoading ? (
+              <div className="rounded-full border border-[#74ecff]/18 bg-[#061c27]/60 px-2.5 py-1 font-display text-[10px] font-black uppercase tracking-[0.08em] text-[#74ecff]/70">LP</div>
+            ) : null}
+          </div>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-[#050607]/72 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,.035)]">
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#74ecff]/72">Player</div>
+          <div className="mt-1 whitespace-normal break-words text-sm font-bold leading-snug text-[#d7e6ff] [overflow-wrap:anywhere]" title={round.targetPlayerName}>
             {round.targetPlayerName ?? "Verified Challenger"}
           </div>
-          {round.targetRole && (
-            <div className="mt-1 w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
-              {displayLaneLabel(round.targetRole)}
-            </div>
-          )}
         </div>
-        <div className="grid min-w-[5.2rem] justify-items-center gap-1.5 pr-1.5">
-          <RankEmblemMini rankTier="Challenger" />
-          {typeof displayedLp === "number" ? (
-            <div className="rounded-full border border-[#74ecff]/24 bg-[#061c27]/82 px-2.5 py-1 text-center font-display text-sm font-black leading-none text-[#d8fbff] shadow-[0_6px_16px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.08)]">
-              {displayedLp} LP
-            </div>
-          ) : lpLoading ? (
-            <div className="rounded-full border border-[#74ecff]/18 bg-[#061c27]/60 px-2.5 py-1 font-display text-[10px] font-black uppercase tracking-[0.08em] text-[#74ecff]/70">LP</div>
-          ) : null}
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-2">
+            <div className="font-display text-[10px] font-bold uppercase tracking-[0.1em] text-[#9fb7d5]">Enemy intel</div>
+            <div className="mt-1 font-display text-lg font-black leading-none text-[#f2d36b]">{revealedEnemyCount}/5</div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-2">
+            <div className="font-display text-[10px] font-bold uppercase tracking-[0.1em] text-[#9fb7d5]">Guess</div>
+            <div className="mt-1 font-display text-lg font-black leading-none text-white">{currentGuess}/{maxGuesses}</div>
+          </div>
         </div>
       </div>
     </div>
@@ -524,7 +644,6 @@ function BuildWordleModal({
   solved,
   streak,
   onClose,
-  onReset,
   onNext
 }: {
   round: ItemBuildChallenge;
@@ -532,7 +651,6 @@ function BuildWordleModal({
   solved: boolean;
   streak: { current: number; best: number; played: number };
   onClose: () => void;
-  onReset: () => void;
   onNext: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -601,19 +719,47 @@ function BuildWordleModal({
           <Button type="button" variant="secondary" onClick={onClose}>
             Close
           </Button>
-          <Button type="button" onClick={onReset}>
-            Replay
-          </Button>
           {round.sourceMatch && (
-            <Button type="button" variant={expanded ? "secondary" : "primary"} onClick={() => setExpanded((current) => !current)}>
-              {expanded ? "Hide match data" : "View match data"}
-            </Button>
+            <MatchDataToggleButton expanded={expanded} onClick={() => setExpanded((current) => !current)} />
           )}
           <Button type="button" onClick={onNext}>
             Next build
           </Button>
         </div>
         {expanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
+      </div>
+    </div>
+  );
+}
+
+function SkipBuildWarningModal({
+  streak,
+  onCancel,
+  onConfirm
+}: {
+  streak: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useBodyScrollLock();
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[radial-gradient(circle_at_50%_18%,rgba(239,68,68,.14),transparent_34%),rgba(0,0,0,.72)] p-4 backdrop-blur-md">
+      <div className="relative grid w-full max-w-md gap-4 rounded-3xl border border-red-300/35 bg-[linear-gradient(180deg,rgba(22,13,18,.98),rgba(5,8,13,.98))] p-4 shadow-[0_28px_90px_rgba(0,0,0,.68),inset_0_1px_0_rgba(255,255,255,.06)]">
+        <div>
+          <div className="font-display text-2xl font-extrabold text-red-100">Skip this build?</div>
+          <p className="mt-2 text-sm leading-6 text-[color:var(--muted)]">
+            Skipping will reset your Build streak from {streak} to 0 and move to the next round.
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Keep playing
+          </Button>
+          <Button type="button" variant="danger" onClick={onConfirm}>
+            Skip and reset streak
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -644,6 +790,15 @@ function buildRoundFirstKey(round: ItemBuildChallenge) {
   return round.champion.id;
 }
 
+function createClientShuffleSeed(username: string) {
+  const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+
+  return `${Date.now()}:${now}:${username}:${randomId}:${Math.random()}`;
+}
+
+const TIER_TWO_BOOT_IDS = new Set(["3006", "3008", "3009", "3020", "3047", "3111", "3158"]);
+
 function getBuildUnavailableReason(round: ItemBuildChallenge) {
   if (round.unavailableReason) {
     return round.unavailableReason;
@@ -664,13 +819,23 @@ function getBuildUnavailableReason(round: ItemBuildChallenge) {
 }
 
 function hydrateItemBuildRound(round: ItemBuildChallenge, itemCatalog: GameItem[]): ItemBuildChallenge {
-  if (round.possibleItems.length > 0 && round.possibleBoots.length > 0) {
-    return round;
-  }
-
   const itemById = new Map(itemCatalog.map((item) => [item.id, item]));
   const answerItems = round.answerItemIds.map((id) => itemById.get(id)).filter(Boolean) as GameItem[];
-  const answerBoots = itemById.get(round.answerBootsId);
+  const answerBoots = itemById.get(round.answerBootsId) ?? round.possibleBoots.find((item) => item.id === round.answerBootsId);
+  const possibleItems =
+    itemCatalog.length > 0 && answerItems.length === round.answerItemIds.length
+      ? selectRelevantBuildItems(round, uniqueItemsByName([...answerItems, ...itemCatalog.filter(isBuildCandidateChoice)], new Set(round.answerItemIds)))
+      : round.possibleItems;
+
+  if (round.possibleItems.length > 0 && round.possibleBoots.length > 0) {
+    const bootCatalog = itemCatalog.length > 0 ? itemCatalog.filter(isUpgradedBootsChoice) : [];
+
+    return {
+      ...round,
+      possibleItems,
+      possibleBoots: answerBoots ? uniqueItemsByName([answerBoots, ...round.possibleBoots, ...bootCatalog], new Set([round.answerBootsId])) : round.possibleBoots
+    };
+  }
 
   if (answerItems.length !== 5 || !answerBoots) {
     return round;
@@ -678,9 +843,453 @@ function hydrateItemBuildRound(round: ItemBuildChallenge, itemCatalog: GameItem[
 
   return {
     ...round,
-    possibleItems: uniqueItemsByName([...answerItems, ...itemCatalog.filter(isBuildCandidateChoice)], new Set(round.answerItemIds)).slice(0, 72),
+    possibleItems,
     possibleBoots: uniqueItemsByName([answerBoots, ...itemCatalog.filter(isUpgradedBootsChoice)], new Set([round.answerBootsId]))
   };
+}
+
+function normalizeBuildBootRoundForRole(round: ItemBuildChallenge): ItemBuildChallenge {
+  const answerBoots = round.possibleBoots.find((item) => item.id === round.answerBootsId);
+
+  if (!answerBoots) {
+    return {
+      ...round,
+      possibleBoots: selectBuildBootChoicesForRole(round, round.possibleBoots)
+    };
+  }
+
+  const isMid = isMidBuildRole(round);
+  const tierTwoReplacement = !isMid && isTierThreeBootChoice(answerBoots) ? findTierTwoBootReplacement(answerBoots, round.possibleBoots) : undefined;
+  const tierThreeReplacement = isMid && !isTierThreeBootChoice(answerBoots) ? findTierThreeBootReplacement(answerBoots, round.possibleBoots) : undefined;
+  const answerBootsId = tierTwoReplacement?.id ?? tierThreeReplacement?.id ?? round.answerBootsId;
+  const nextRound = answerBootsId === round.answerBootsId ? round : { ...round, answerBootsId };
+  const possibleBoots = selectBuildBootChoicesForRole(nextRound, round.possibleBoots);
+
+  if (nextRound === round && possibleBoots === round.possibleBoots) {
+    return round;
+  }
+
+  return {
+    ...nextRound,
+    possibleBoots
+  };
+}
+
+function selectBuildBootChoicesForRole(round: ItemBuildChallenge, sourceBoots: GameItem[]) {
+  const answerBoots = sourceBoots.find((item) => item.id === round.answerBootsId);
+  const isMid = isMidBuildRole(round);
+  const selectedBoots = sourceBoots.flatMap((item) => {
+    if (isMid) {
+      if (isTierThreeBootChoice(item)) {
+        return [item];
+      }
+
+      const tierThreeReplacement = findTierThreeBootReplacement(item, sourceBoots);
+      return tierThreeReplacement ? [tierThreeReplacement] : [];
+    }
+
+    if (isTierThreeBootChoice(item)) {
+      return [];
+    }
+
+    return [item];
+  });
+
+  return uniqueItemsByName(answerBoots ? [answerBoots, ...selectedBoots] : selectedBoots, new Set([round.answerBootsId]));
+}
+
+function isMidBuildRole(round: ItemBuildChallenge) {
+  return normalize(round.targetRole ?? "").includes("mid");
+}
+
+function isTierThreeBootChoice(item: GameItem) {
+  return (
+    item.purchasable &&
+    item.name !== "Boots" &&
+    item.into.length === 0 &&
+    item.from.some((id) => TIER_TWO_BOOT_IDS.has(id)) &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
+}
+
+function findTierTwoBootReplacement(tierThreeBoots: GameItem, sourceBoots: GameItem[]) {
+  return sourceBoots.find((item) => tierThreeBoots.from.includes(item.id) && isUpgradedBootsChoice(item) && !isTierThreeBootChoice(item));
+}
+
+function findTierThreeBootReplacement(tierTwoBoots: GameItem, sourceBoots: GameItem[]) {
+  return sourceBoots.find((item) => item.from.includes(tierTwoBoots.id) && isTierThreeBootChoice(item));
+}
+
+function selectRelevantBuildItems(round: ItemBuildChallenge, sourceItems: GameItem[]) {
+  const answerIds = new Set(round.answerItemIds);
+  const uniqueItems = uniqueItemsByName(sourceItems, answerIds).filter((item) => answerIds.has(item.id) || isBuildCandidateChoice(item));
+  const answerItems = round.answerItemIds
+    .map((id) => uniqueItems.find((item) => item.id === id))
+    .filter(Boolean) as GameItem[];
+
+  if (answerItems.length !== round.answerItemIds.length) {
+    return uniqueItems;
+  }
+
+  const profile = getChampionSpecificBuildProfile(round, answerItems);
+  const [minAnswerGold, maxAnswerGold] = answerGoldRange(answerItems);
+  const scoredDistractors = uniqueItems
+    .filter((item) => !answerIds.has(item.id))
+    .map((item) => ({
+      item,
+      looseScore: buildItemSimilarityScore(item, profile, minAnswerGold, maxAnswerGold),
+      score: buildItemRelevanceScore(item, profile, minAnswerGold, maxAnswerGold)
+    }));
+  const relevantDistractors = scoredDistractors
+    .filter(({ score }) => score >= 10)
+    .sort((a, b) => b.score - a.score || b.item.goldTotal - a.item.goldTotal || a.item.name.localeCompare(b.item.name))
+    .map(({ item }) => item);
+  const similarBackfill = scoredDistractors
+    .filter(({ score }) => score < 10)
+    .sort((a, b) => b.looseScore - a.looseScore || b.score - a.score || b.item.goldTotal - a.item.goldTotal || a.item.name.localeCompare(b.item.name))
+    .map(({ item }) => item);
+
+  return fillBuildItemPool(answerItems, [relevantDistractors, similarBackfill], answerIds);
+}
+
+interface ChampionSpecificBuildProfile {
+  answerTagCounts: Map<string, number>;
+  answerTags: Set<string>;
+  answerSignalTags: Set<string>;
+  primaryTags: Set<string>;
+  roleTags: Set<string>;
+  championResource: string;
+  hasAdCarryPattern: boolean;
+  hasAdCarryCorePattern: boolean;
+  hasApPattern: boolean;
+  hasApCorePattern: boolean;
+  hasSupportPattern: boolean;
+  hasSupportCorePattern: boolean;
+  hasDefensivePattern: boolean;
+  isJungleBuild: boolean;
+}
+
+const BUILD_LOW_SIGNAL_TAGS = new Set(["Active", "Aura", "Lane", "Slow", "Stealth", "Vision", "NonbootsMovement"]);
+const BUILD_PRIMARY_TAGS = new Set([
+  "AbilityHaste",
+  "Armor",
+  "ArmorPenetration",
+  "AttackSpeed",
+  "CooldownReduction",
+  "CriticalStrike",
+  "Damage",
+  "GoldPer",
+  "Health",
+  "LifeSteal",
+  "MagicPenetration",
+  "MagicResist",
+  "Mana",
+  "ManaRegen",
+  "OnHit",
+  "SpellBlock",
+  "SpellDamage",
+  "SpellVamp",
+  "Tenacity"
+]);
+const AD_CARRY_TAGS = new Set(["AttackSpeed", "CriticalStrike", "OnHit", "LifeSteal"]);
+const AD_CARRY_CORE_TAGS = new Set(["AttackSpeed", "CriticalStrike", "OnHit", "LifeSteal"]);
+const AP_TAGS = new Set(["Mana", "MagicPenetration", "SpellDamage", "SpellVamp"]);
+const AP_CORE_TAGS = new Set(["MagicPenetration", "SpellDamage", "SpellVamp"]);
+const SUPPORT_TAGS = new Set(["GoldPer", "ManaRegen", "HealAndShieldPower"]);
+const DEFENSIVE_TAGS = new Set(["Armor", "Health", "MagicResist", "SpellBlock", "Tenacity"]);
+const DEFENSIVE_IDENTITY_TAGS = new Set(["Armor", "MagicResist", "SpellBlock", "Tenacity"]);
+
+function getChampionSpecificBuildProfile(round: ItemBuildChallenge, answerItems: GameItem[]): ChampionSpecificBuildProfile {
+  const answerTagCounts = new Map<string, number>();
+
+  for (const item of answerItems) {
+    for (const tag of item.tags) {
+      answerTagCounts.set(tag, (answerTagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const answerTags = new Set(answerTagCounts.keys());
+  const answerSignalTags = new Set([...answerTags].filter((tag) => !BUILD_LOW_SIGNAL_TAGS.has(tag)));
+  const primaryTags = new Set(
+    [...answerTagCounts.entries()]
+      .filter(
+        ([tag, count]) =>
+          BUILD_PRIMARY_TAGS.has(tag) &&
+          !BUILD_LOW_SIGNAL_TAGS.has(tag) &&
+          (count >= 2 || !["Damage", "Health", "AbilityHaste", "CooldownReduction"].includes(tag))
+      )
+      .map(([tag]) => tag)
+  );
+
+  if (primaryTags.size === 0) {
+    for (const tag of answerTags) {
+      if (BUILD_PRIMARY_TAGS.has(tag)) {
+        primaryTags.add(tag);
+      }
+    }
+  }
+
+  const roleTags = getBuildRoleItemTags(round);
+  const roleText = normalize([...round.champion.roles, round.targetRole ?? ""].join(" "));
+  const isJungleBuild = roleText.includes("jungle") || answerTags.has("Jungle");
+
+  return {
+    answerTagCounts,
+    answerTags,
+    answerSignalTags,
+    championResource: normalize(round.champion.resource),
+    hasAdCarryPattern: hasAny(answerTags, AD_CARRY_TAGS) || roleText.includes("marksman") || roleText.includes("bottom") || roleText.includes("bot"),
+    hasAdCarryCorePattern: hasAny(answerSignalTags, AD_CARRY_CORE_TAGS) && (roleText.includes("marksman") || roleText.includes("bottom") || roleText.includes("bot") || hasAny(answerTags, AD_CARRY_TAGS)),
+    hasApCorePattern: hasAny(answerSignalTags, AP_CORE_TAGS),
+    hasApPattern: hasAny(answerTags, AP_TAGS) || roleText.includes("mage"),
+    hasDefensivePattern: hasAny(answerTags, DEFENSIVE_IDENTITY_TAGS) || countOverlap(answerSignalTags, DEFENSIVE_TAGS) >= 2,
+    hasSupportPattern: hasAny(answerTags, SUPPORT_TAGS) || roleText.includes("support") || roleText.includes("utility"),
+    hasSupportCorePattern: hasAny(answerSignalTags, SUPPORT_TAGS),
+    isJungleBuild,
+    primaryTags,
+    roleTags
+  };
+}
+
+function buildItemRelevanceScore(item: GameItem, profile: ChampionSpecificBuildProfile, minAnswerGold: number, maxAnswerGold: number) {
+  if (!isChampionItemArchetypeCompatible(item, profile)) {
+    return 0;
+  }
+
+  let score = 0;
+  let primaryOverlap = 0;
+  let weightedAnswerOverlap = 0;
+
+  for (const tag of item.tags) {
+    if (profile.primaryTags.has(tag)) {
+      primaryOverlap += 1;
+      score += 7 * (profile.answerTagCounts.get(tag) ?? 1);
+    }
+
+    if (profile.answerSignalTags.has(tag)) {
+      const tagWeight = profile.answerTagCounts.get(tag) ?? 1;
+      weightedAnswerOverlap += tagWeight;
+      score += 3 * tagWeight;
+    }
+
+    if (profile.roleTags.has(tag) && profile.answerSignalTags.has(tag)) {
+      score += 1;
+    }
+  }
+
+  if (primaryOverlap === 0 && weightedAnswerOverlap < 2) {
+    return 0;
+  }
+
+  if (item.goldTotal >= minAnswerGold - 600 && item.goldTotal <= maxAnswerGold + 600) {
+    score += 2;
+  }
+
+  if (item.goldTotal >= 2400) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function buildItemSimilarityScore(item: GameItem, profile: ChampionSpecificBuildProfile, minAnswerGold: number, maxAnswerGold: number) {
+  const tags = new Set(item.tags);
+  let score = 0;
+
+  for (const tag of item.tags) {
+    if (profile.primaryTags.has(tag)) {
+      score += 5 * (profile.answerTagCounts.get(tag) ?? 1);
+    } else if (profile.answerSignalTags.has(tag)) {
+      score += 2 * (profile.answerTagCounts.get(tag) ?? 1);
+    }
+
+    if (profile.roleTags.has(tag)) {
+      score += 1;
+    }
+  }
+
+  if (profile.hasAdCarryCorePattern && isMarksmanBuildChoice(tags)) {
+    score += 6;
+  }
+
+  if (profile.hasApCorePattern && hasAny(tags, AP_TAGS)) {
+    score += 6;
+  }
+
+  if (profile.hasSupportCorePattern && hasAny(tags, SUPPORT_TAGS)) {
+    score += 6;
+  }
+
+  if (profile.hasDefensivePattern && hasAny(tags, DEFENSIVE_TAGS)) {
+    score += 3;
+  }
+
+  if (tags.has("Jungle") && !profile.isJungleBuild) {
+    score -= 20;
+  }
+
+  if (item.goldTotal >= minAnswerGold - 700 && item.goldTotal <= maxAnswerGold + 700) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function fillBuildItemPool(answerItems: GameItem[], candidateGroups: GameItem[][], preferredIds: Set<string>) {
+  const targetCount = Math.max(BUILD_RELEVANT_ITEM_LIMIT, answerItems.length);
+  const selected: GameItem[] = [];
+  const selectedNames = new Set<string>();
+
+  for (const item of answerItems) {
+    const key = itemNameKeyForUi(item);
+    if (!selectedNames.has(key)) {
+      selected.push(item);
+      selectedNames.add(key);
+    }
+  }
+
+  for (const candidates of candidateGroups) {
+    for (const item of candidates) {
+      if (selected.length >= targetCount) {
+        break;
+      }
+
+      const key = itemNameKeyForUi(item);
+      if (!selectedNames.has(key)) {
+        selected.push(item);
+        selectedNames.add(key);
+      }
+    }
+  }
+
+  return uniqueItemsByName(selected.slice(0, targetCount), preferredIds);
+}
+
+function isChampionItemArchetypeCompatible(item: GameItem, profile: ChampionSpecificBuildProfile) {
+  const tags = new Set(item.tags);
+
+  if (tags.has("Jungle") && !profile.isJungleBuild) {
+    return false;
+  }
+
+  if (hasAny(tags, SUPPORT_TAGS) && !profile.hasSupportPattern) {
+    return false;
+  }
+
+  if (profile.hasSupportCorePattern && !hasAny(tags, SUPPORT_TAGS) && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  if (hasAny(tags, AP_TAGS) && !profile.hasApPattern) {
+    return false;
+  }
+
+  if (
+    profile.hasApCorePattern &&
+    !hasAny(tags, AP_TAGS) &&
+    !(profile.hasDefensivePattern && hasAny(tags, DEFENSIVE_IDENTITY_TAGS) && countOverlap(tags, profile.primaryTags) > 0)
+  ) {
+    return false;
+  }
+
+  if (tags.has("Mana") && profile.championResource && !profile.championResource.includes("mana") && !profile.answerTags.has("Mana")) {
+    return false;
+  }
+
+  if (hasAny(tags, AD_CARRY_TAGS) && !profile.hasAdCarryPattern && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  if (
+    profile.hasAdCarryCorePattern &&
+    !isMarksmanBuildChoice(tags)
+  ) {
+    return false;
+  }
+
+  if (hasAny(tags, DEFENSIVE_TAGS) && !profile.hasDefensivePattern && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function isMarksmanBuildChoice(tags: Set<string>) {
+  if (tags.has("CriticalStrike")) {
+    return true;
+  }
+
+  if (tags.has("Damage") && hasAny(tags, DEFENSIVE_IDENTITY_TAGS) && !tags.has("Health") && !tags.has("CooldownReduction") && !tags.has("AbilityHaste")) {
+    return true;
+  }
+
+  if ((tags.has("AttackSpeed") || tags.has("OnHit") || tags.has("LifeSteal")) && !tags.has("Health") && !tags.has("CooldownReduction") && !tags.has("AbilityHaste")) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasAny(values: Set<string>, candidates: Set<string>) {
+  for (const value of candidates) {
+    if (values.has(value)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function countOverlap(left: Set<string>, right: Set<string>) {
+  let count = 0;
+
+  for (const value of left) {
+    if (right.has(value)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function answerGoldRange(answerItems: GameItem[]) {
+  const totals = answerItems.map((item) => item.goldTotal);
+  return [Math.min(...totals), Math.max(...totals)] as const;
+}
+
+function getBuildRoleItemTags(round: ItemBuildChallenge) {
+  const roleTags = new Set<string>();
+  const sourceRoles = [...round.champion.roles, round.targetRole ?? ""].map((role) => normalize(role));
+  const add = (...tags: string[]) => tags.forEach((tag) => roleTags.add(tag));
+
+  for (const role of sourceRoles) {
+    if (role.includes("marksman") || role.includes("bottom") || role.includes("bot")) {
+      add("Damage", "CriticalStrike", "AttackSpeed", "ArmorPenetration", "LifeSteal", "OnHit");
+    }
+
+    if (role.includes("mage") || role.includes("mid")) {
+      add("SpellDamage", "Mana", "MagicPenetration", "CooldownReduction");
+    }
+
+    if (role.includes("assassin")) {
+      add("Damage", "ArmorPenetration", "CooldownReduction", "NonbootsMovement");
+    }
+
+    if (role.includes("fighter") || role.includes("jungle")) {
+      add("Damage", "Health", "ArmorPenetration", "AttackSpeed", "LifeSteal", "CooldownReduction");
+    }
+
+    if (role.includes("tank") || role.includes("top")) {
+      add("Health", "Armor", "SpellBlock", "CooldownReduction", "NonbootsMovement");
+    }
+
+    if (role.includes("support") || role.includes("utility")) {
+      add("Health", "ManaRegen", "GoldPer", "HealAndShieldPower", "CooldownReduction", "Armor", "SpellBlock");
+    }
+  }
+
+  return roleTags;
 }
 
 function isBuildCandidateChoice(item: GameItem) {
@@ -700,7 +1309,7 @@ function isUpgradedBootsChoice(item: GameItem) {
     item.purchasable &&
     item.name !== "Boots" &&
     item.goldTotal >= 900 &&
-    item.tags.includes("Boots") &&
+    (item.tags.includes("Boots") || item.from.some((id) => TIER_TWO_BOOT_IDS.has(id))) &&
     !item.tags.includes("Consumable") &&
     !item.tags.includes("Trinket")
   );
@@ -725,7 +1334,17 @@ function itemNameKeyForUi(item: GameItem) {
   return item.name.trim().toLowerCase();
 }
 
-export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = "Guest" }: { challenge: ItemRecipeChallenge; items?: GameItem[]; username?: string }) {
+export function ItemRecipeGame({
+  challenge,
+  items: itemCatalog = [],
+  username = "Guest",
+  pageRail = false
+}: {
+  challenge: ItemRecipeChallenge;
+  items?: GameItem[];
+  username?: string;
+  pageRail?: boolean;
+}) {
   const generatedRounds = useMemo(() => createRecipeRounds(challenge, itemCatalog), [challenge, itemCatalog]);
   const rounds = useRandomizedRounds(generatedRounds, "item-recipe", username);
   const [roundIndex, setRoundIndex] = useState(0);
@@ -736,7 +1355,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   const correct = submitted && answer === round.missingComponentId;
   const selected = round.allComponents.find((item) => item.id === answer);
   const componentChoices = useMemo(() => uniqueItemsByName(round.allComponents, new Set([round.missingComponentId])), [round.allComponents, round.missingComponentId]);
-  const randomizedComponents = useMemo(() => seededShuffle(componentChoices, `${round.id}:components`), [round.id, componentChoices]);
+  const orderedComponents = useMemo(() => sortRecipeComponents(componentChoices), [componentChoices]);
 
   function submitRecipe() {
     if (!answer || submitted) {
@@ -761,113 +1380,143 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
     setSubmitted(false);
   }
 
+  const leftRail = (
+    <aside
+      className={cn(
+        "min-w-0",
+        pageRail
+          ? "xl:sticky xl:top-2 xl:col-start-1 xl:row-start-1 xl:row-span-2 xl:h-[calc(100dvh-1rem)] xl:self-start xl:overflow-hidden"
+          : "xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar"
+      )}
+    >
+      <div
+        className={cn(
+          "grid w-full gap-2 rounded-xl border border-[#3c3421] bg-[radial-gradient(circle_at_18%_0%,rgba(200,155,60,.12),transparent_30%),linear-gradient(180deg,rgba(11,17,27,.97),rgba(5,7,11,.96))] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.34),inset_0_1px_0_rgba(255,255,255,.055)] sm:gap-3 sm:p-4 xl:rounded-lg",
+          pageRail && "xl:h-full xl:content-start xl:overflow-y-auto xl:overflow-x-hidden xl:pr-2 rail-scrollbar"
+        )}
+      >
+        <div className="hidden flex-wrap items-center gap-2 sm:flex">
+          <span className="text-[#c89b3c]">
+            <Split size={18} />
+          </span>
+          <h2 className="text-lg font-semibold sm:text-xl">Guess the Recipe</h2>
+        </div>
+        <div className="hidden sm:block">
+          <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+        </div>
+        <div className="grid justify-items-center gap-2 rounded-sm border border-white/10 bg-[#050607]/75 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:p-3">
+          <ItemShopNode item={round.resultItem} size="large" />
+        </div>
+        <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#111722] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.035)] sm:gap-3 sm:p-3">
+          <div className="mx-auto h-5 w-px bg-[#3c3421] sm:h-8" />
+          <div className="grid grid-cols-4 items-start gap-2 sm:grid-cols-3 sm:gap-3">
+            {round.knownComponents.map((item) => (
+              <ItemShopNode key={item.id} item={item} />
+            ))}
+            <MissingRecipeNode item={selected} submitted={submitted} correct={correct} />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          {submitted && (
+            <div className="text-sm text-[color:var(--muted)]">
+              {correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" disabled={!answer || submitted} onClick={() => { setAnswer(""); setSubmitted(false); }}>
+              Clear
+            </Button>
+            <Button type="button" onClick={submitRecipe} disabled={!answer || submitted}>
+              Lock
+            </Button>
+            {submitted && (
+              <Button type="button" variant="secondary" onClick={nextRecipe}>
+                Next
+              </Button>
+            )}
+            <ResultPill submitted={submitted} correct={correct} answer={getItemName(round.allComponents, round.missingComponentId)} />
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+
+  const gameContent = (
+    <div className="grid gap-3 pb-10">
+      <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-4">
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="font-display text-base font-extrabold text-white sm:text-xl">Find the missing component.</div>
+          </div>
+          <div className="text-xs text-[color:var(--muted)]">{componentChoices.length}</div>
+        </div>
+        <div className="grid grid-cols-3 content-start gap-1.5 px-0.5 pb-4 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-5 sm:pt-2 md:grid-cols-4 2xl:grid-cols-6">
+          {orderedComponents.map((item) => {
+            const result: ItemGuessResult | undefined = submitted
+              ? item.id === round.missingComponentId
+                ? "correct"
+                : item.id === answer
+                  ? "wrong"
+                  : undefined
+              : undefined;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={submitted}
+                onClick={() => {
+                  if (!submitted) {
+                    setAnswer(item.id);
+                  }
+                }}
+                className={cn(
+                  "relative grid min-h-20 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
+                  result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+                  result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
+                  !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
+                  submitted && !result && "opacity-55"
+                )}
+                title={`${item.name} - ${item.goldTotal}g`}
+              >
+                {result === "correct" && (
+                  <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
+                    <CheckCircle2 size={13} />
+                  </span>
+                )}
+                {result === "wrong" && (
+                  <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+                    <XCircle size={13} />
+                  </span>
+                )}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-14 sm:w-14" />
+                <span className="line-clamp-2 text-center text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
+                <span className={cn("text-[10px] sm:text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (pageRail) {
+    return (
+      <>
+        {leftRail}
+        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
+          {gameContent}
+        </section>
+      </>
+    );
+  }
+
   return (
     <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
-        <aside className="xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar">
-          <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
-            <div className="hidden flex-wrap items-center gap-2 sm:flex">
-              <span className="text-[#c89b3c]">
-                <Split size={18} />
-              </span>
-              <h2 className="text-lg font-semibold sm:text-xl">Recipe</h2>
-            </div>
-            <div className="hidden sm:block">
-              <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
-            </div>
-            <div className="grid justify-items-center gap-2 rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
-              <ItemShopNode item={round.resultItem} size="large" />
-            </div>
-            <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:gap-3 sm:p-3">
-              <div className="mx-auto h-5 w-px bg-[#3c3421] sm:h-8" />
-              <div className="grid grid-cols-4 items-start gap-2 sm:grid-cols-3 sm:gap-3">
-                {round.knownComponents.map((item) => (
-                  <ItemShopNode key={item.id} item={item} />
-                ))}
-                <MissingRecipeNode item={selected} submitted={submitted} correct={correct} />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              {submitted && (
-                <div className="text-sm text-[color:var(--muted)]">
-                  {correct ? "Correct component." : `Correct answer: ${getItemName(round.allComponents, round.missingComponentId)}`}
-                </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="secondary" disabled={!answer || submitted} onClick={() => { setAnswer(""); setSubmitted(false); }}>
-                  Clear
-                </Button>
-                <Button type="button" onClick={submitRecipe} disabled={!answer || submitted}>
-                  Lock
-                </Button>
-                {submitted && (
-                  <Button type="button" variant="secondary" onClick={nextRecipe}>
-                    Next
-                  </Button>
-                )}
-                <ResultPill submitted={submitted} correct={correct} answer={getItemName(round.allComponents, round.missingComponentId)} />
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <div className="grid gap-3 pb-10">
-          <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-4">
-            <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <div className="font-display text-base font-extrabold text-white sm:text-xl">Find the missing component.</div>
-              </div>
-              <div className="text-xs text-[color:var(--muted)]">{componentChoices.length}</div>
-            </div>
-            <div className="grid grid-cols-3 content-start gap-1.5 px-0.5 pb-4 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-5 sm:pt-2 md:grid-cols-4 2xl:grid-cols-6">
-              {randomizedComponents.map((item) => {
-                const result: ItemGuessResult | undefined = submitted
-                  ? item.id === round.missingComponentId
-                    ? "correct"
-                    : item.id === answer
-                      ? "wrong"
-                      : undefined
-                  : undefined;
-
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    disabled={submitted}
-                    onClick={() => {
-                      if (!submitted) {
-                        setAnswer(item.id);
-                      }
-                    }}
-                    className={cn(
-                      "relative grid min-h-20 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
-                      result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-                      result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
-                      !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
-                      submitted && !result && "opacity-55"
-                    )}
-                    title={`${item.name} - ${item.goldTotal}g`}
-                  >
-                    {result === "correct" && (
-                      <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
-                        <CheckCircle2 size={13} />
-                      </span>
-                    )}
-                    {result === "wrong" && (
-                      <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
-                        <XCircle size={13} />
-                      </span>
-                    )}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-14 sm:w-14" />
-                    <span className="line-clamp-2 text-center text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
-                    <span className={cn("text-[10px] sm:text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        {leftRail}
+        {gameContent}
       </div>
     </section>
   );
@@ -935,7 +1584,7 @@ function ItemChoiceCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "relative grid min-h-14 content-center justify-items-center gap-0.5 rounded-sm border bg-[#111722] p-1 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-16 sm:gap-1 sm:p-1.5",
+        "relative grid h-full min-h-[6.25rem] content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-[7.35rem] sm:gap-1.5 sm:p-2 xl:min-h-[8rem]",
         result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
         result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
         !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
@@ -960,8 +1609,8 @@ function ItemChoiceCard({
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
-      <span className="line-clamp-2 text-[9px] font-semibold leading-tight sm:text-[11px]">{item.name}</span>
+      <img src={item.imageUrl} alt="" className="h-11 w-11 object-contain sm:h-14 sm:w-14 xl:h-16 xl:w-16" />
+      <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-[13px]">{item.name}</span>
     </button>
   );
 }
@@ -985,7 +1634,7 @@ function BootChoiceCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "relative grid grid-cols-[1.75rem_1fr] items-center gap-1.5 rounded-sm border bg-[#111722] p-1.5 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:grid-cols-[2rem_1fr] sm:gap-2 sm:p-2",
+        "relative grid h-full min-h-[5.5rem] grid-cols-[2.5rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-[6.25rem] sm:grid-cols-[3rem_1fr] sm:gap-2.5 sm:p-2.5 xl:min-h-[6.6rem]",
         result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
         result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
         !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
@@ -1010,8 +1659,8 @@ function BootChoiceCard({
         </span>
       )}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
-      <span className="truncate text-[11px] font-semibold sm:text-xs">{item.name}</span>
+      <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-12 sm:w-12" />
+      <span className="min-w-0 whitespace-normal break-words text-xs font-semibold leading-tight sm:text-sm">{item.name}</span>
     </button>
   );
 }
@@ -1076,7 +1725,11 @@ function useRandomizedRounds<T extends { id: string }>(
   priorityForRound?: (round: T) => number,
   avoidFirstKey?: (round: T) => string | undefined
 ) {
-  const [loadSeed] = useState(() => `${Date.now()}:${Math.random()}`);
+  const [loadSeed] = useState(() => {
+    const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+
+    return `${Date.now()}:${performance.now()}:${username}:${randomId}:${Math.random()}`;
+  });
   const storageKey = `rift-daily:last-first-round:${gameKey}:${normalize(username || "guest")}`;
   const firstKeyStorageKey = `rift-daily:last-first-round-key:${gameKey}:${normalize(username || "guest")}`;
   const orderedRounds = useMemo(() => {
@@ -1190,6 +1843,11 @@ interface RankedRecordOptions {
 function usePersonalModeStreak(gameKey: string, username: string) {
   const storageKey = `rift-daily:${gameKey}:${normalize(username || "guest")}`;
   const [streak, setStreak] = useState({ current: 0, best: 0, played: 0, wins: 0 });
+  const streakRef = useRef(streak);
+
+  useEffect(() => {
+    streakRef.current = streak;
+  }, [streak]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(storageKey);
@@ -1197,48 +1855,60 @@ function usePersonalModeStreak(gameKey: string, username: string) {
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as { current: number; best: number; played: number; wins?: number };
-        setStreak({ ...parsed, wins: parsed.wins ?? 0 });
+        const next = { ...parsed, wins: parsed.wins ?? 0 };
+        streakRef.current = next;
+        setStreak(next);
       } catch {
-        setStreak({ current: 0, best: 0, played: 0, wins: 0 });
+        const fallback = { current: 0, best: 0, played: 0, wins: 0 };
+        streakRef.current = fallback;
+        setStreak(fallback);
       }
     } else {
-      setStreak({ current: 0, best: 0, played: 0, wins: 0 });
+      const fallback = { current: 0, best: 0, played: 0, wins: 0 };
+      streakRef.current = fallback;
+      setStreak(fallback);
     }
   }, [storageKey]);
 
   function record(correct: boolean, options: RankedRecordOptions = {}) {
     const performanceQuality = Math.max(0, Math.min(1, options.performanceQuality ?? (correct ? 0.75 : 0.25)));
     const roundId = options.roundId ?? `${gameKey}:${Date.now()}`;
+    const lpDelta = calculateLpDelta({ won: correct });
+    const current = streakRef.current;
+    const nextCurrent = correct ? current.current + 1 : 0;
+    const next = {
+      current: nextCurrent,
+      best: Math.max(current.best, nextCurrent),
+      played: current.played + 1,
+      wins: current.wins + (correct ? 1 : 0)
+    };
 
-    setStreak((current) => {
-      const nextCurrent = correct ? current.current + 1 : 0;
-      const next = {
-        current: nextCurrent,
-        best: Math.max(current.best, nextCurrent),
-        played: current.played + 1,
-        wins: current.wins + (correct ? 1 : 0)
-      };
-      window.localStorage.setItem(storageKey, JSON.stringify(next));
-      updateLocalRankState(username, correct, performanceQuality);
-      window.dispatchEvent(new Event("rift-daily:streak-updated"));
-      return next;
-    });
+    streakRef.current = next;
+    setStreak(next);
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
+    updateLocalRankState(username, correct, performanceQuality, lpDelta);
+    window.dispatchEvent(new Event("rift-daily:streak-updated"));
 
-    void persistRankedResult(gameKey, username, correct, performanceQuality, roundId, options.metadata);
+    void persistRankedResult(gameKey, username, correct, performanceQuality, lpDelta, roundId, options.metadata);
   }
 
   return [streak, record] as const;
 }
 
-function updateLocalRankState(username: string, won: boolean, performanceQuality: number) {
+function updateLocalRankState(username: string, won: boolean, performanceQuality: number, lpDelta: number) {
   if (typeof window === "undefined") {
     return;
   }
 
   const key = rankedStorageKey(username);
   const current = parseLeagueRankState(window.localStorage.getItem(key)) ?? createInitialRankState();
-  const next = applyRankedResult(current, { won, performanceQuality });
+  const next = applyRankedResult(current, { won, performanceQuality, lpDelta });
+  const promotion = getRankPromotionDetail(current, next);
   window.localStorage.setItem(key, JSON.stringify(next));
+
+  if (promotion) {
+    window.dispatchEvent(new CustomEvent(rankPromotionEventName, { detail: promotion }));
+  }
 }
 
 async function persistRankedResult(
@@ -1246,6 +1916,7 @@ async function persistRankedResult(
   username: string,
   won: boolean,
   performanceQuality: number,
+  lpDelta: number,
   roundId: string,
   metadata?: Record<string, unknown>
 ) {
@@ -1264,6 +1935,7 @@ async function persistRankedResult(
         roundId,
         won,
         performanceQuality,
+        lpDelta,
         metadata
       })
     });
@@ -1323,6 +1995,10 @@ function createGeneratedRecipeRound(base: ItemRecipeChallenge, itemCatalog: Game
     options: [missing, ...distractors].sort((a, b) => a.name.localeCompare(b.name)),
     allComponents
   };
+}
+
+function sortRecipeComponents(items: GameItem[]) {
+  return [...items].sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
 }
 
 function findItem(itemCatalog: GameItem[], id: string) {
@@ -1405,18 +2081,19 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
   }
 
   return (
-    <PuzzleFrame icon={<Swords size={18} />} title="Champion Matchup">
+    <PuzzleFrame
+      icon={<Swords size={18} />}
+      title="Who Wins More?"
+      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+    >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-        <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
-          <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+        <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
           <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:gap-3 sm:p-3 lg:min-h-[28rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
             <MatchupChampionCard side="left" pick={round.left} revealed={submitted} selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
             <div className="grid place-items-center">
-              <div className="grid h-14 w-14 place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display text-lg font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)] lg:h-20 lg:w-20 lg:text-2xl">
-                VS
-              </div>
+              <MatchupVsMark />
             </div>
             <MatchupChampionCard side="right" pick={round.right} revealed={submitted} selected={answer === "right"} submitted={submitted} correctSide={round.answerSide === "right"} />
           </div>
@@ -1528,6 +2205,19 @@ function MatchupChampionCard({
   );
 }
 
+function MatchupVsMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "grid place-items-center rounded-full border border-[#3c3421] bg-[#111722] font-display font-black text-[#c89b3c] shadow-[0_0_28px_rgba(200,155,60,.16)]",
+        compact ? "h-12 w-12 text-base md:h-14 md:w-14 md:text-lg xl:h-16 xl:w-16 xl:text-xl" : "h-14 w-14 text-lg lg:h-20 lg:w-20 lg:text-2xl"
+      )}
+    >
+      VS
+    </div>
+  );
+}
+
 function MatchupRevealLine({ pick }: { pick: ChampionMatchupRound["left"] }) {
   return (
     <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-3">
@@ -1550,6 +2240,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [resultModalOpen, setResultModalOpen] = useState(false);
+  const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("guess-elo", username);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerTier;
@@ -1579,15 +2270,19 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
     setAnswer("");
     setSubmitted(false);
     setResultModalOpen(false);
+    setMatchDataExpanded(false);
   }
 
   return (
-    <PuzzleFrame icon={<UsersRound size={18} />} title="Guess the Elo">
+    <PuzzleFrame
+      icon={<UsersRound size={18} />}
+      title="Guess the ELO"
+      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+    >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
-        <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
         <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-3 lg:min-h-0 lg:grid-rows-2">
           <EloTeamRow side="Blue Team" lanes={round.lanes} />
           <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
@@ -1618,10 +2313,14 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
               Result
             </Button>
           )}
+          {submitted && round.sourceMatch && (
+            <MatchDataToggleButton expanded={matchDataExpanded} onClick={() => setMatchDataExpanded((current) => !current)} />
+          )}
           {submitted && (
             <NextLobbyButton onClick={nextRound} />
           )}
         </div>
+        {submitted && matchDataExpanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
         {submitted && resultModalOpen && (
           <VerifiedAnswerModal
             correct={correct}
@@ -1738,9 +2437,7 @@ function VerifiedAnswerModal({
             Close
           </Button>
           {sourceMatch && (
-            <Button type="button" variant={expanded ? "secondary" : "primary"} onClick={() => setExpanded((current) => !current)}>
-              {expanded ? "Hide match data" : "View match data"}
-            </Button>
+            <MatchDataToggleButton expanded={expanded} onClick={() => setExpanded((current) => !current)} />
           )}
           <NextLobbyButton onClick={onNext} label={nextLabel} />
         </div>
@@ -1897,6 +2594,23 @@ function ResultStat({
       </div>
       {detail && <div className="mt-1 text-xs text-[color:var(--muted)]">{detail}</div>}
     </div>
+  );
+}
+
+function MatchDataToggleButton({ expanded, onClick }: { expanded: boolean; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant={expanded ? "secondary" : "primary"}
+      onClick={onClick}
+      className={cn(
+        "min-h-11 rounded-xl px-4 font-display text-sm font-black shadow-[0_10px_28px_rgba(0,0,0,.20)]",
+        !expanded && "border-[#c89b3c]/70 bg-[linear-gradient(180deg,#f5c542,#c9932e)] text-[#090d14] hover:bg-[linear-gradient(180deg,#ffe27a,#d6a039)]",
+        expanded && "border-[#74ecff]/30 bg-[#0d1a25] text-[#d8fbff] hover:border-[#74ecff]/55 hover:bg-[#132334]"
+      )}
+    >
+      {expanded ? "Hide match data" : "View match data"}
+    </Button>
   );
 }
 
@@ -2118,11 +2832,45 @@ function compactNumber(value: number) {
   return Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
+const ELO_TEAM_ART = {
+  blue: "https://raw.communitydragon.org/latest/game/assets/characters/sru_orderminionmelee/skins/base/orderminion_melee_tx_cm.png",
+  red: "https://raw.communitydragon.org/latest/game/assets/characters/sru_chaosminionmelee/skins/base/chaosminion_melee_tx_cm.png"
+} as const;
+
+const DRAFT_TEAM_ART = {
+  blue: "https://raw.communitydragon.org/latest/game/assets/characters/nexus/hud/nexus_blue_square.png",
+  red: "https://raw.communitydragon.org/latest/game/assets/characters/nexus/hud/nexus_red_square.png"
+} as const;
+
 function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] }) {
+  const teamTone = side.toLowerCase().includes("blue") ? "blue" : "red";
+  const sideWords = side.split(" ");
+
   return (
-    <div className="grid grid-cols-2 gap-1.5 sm:min-h-0 sm:grid-cols-[4.5rem_repeat(5,minmax(0,1fr))] sm:gap-2">
-      <div className="font-display col-span-2 grid min-h-8 place-items-center rounded-sm border border-[#26313f] bg-[#0b111b] text-center text-[11px] font-bold uppercase tracking-[0.08em] text-[#c89b3c] sm:col-span-1 sm:min-h-0 sm:text-xs">
-        {side}
+    <div className="grid grid-cols-2 gap-1.5 sm:min-h-0 sm:grid-cols-[5rem_repeat(5,minmax(0,1fr))] sm:gap-2">
+      <div
+        data-elo-team-label={teamTone}
+        className={cn(
+          "font-display relative col-span-2 min-h-14 overflow-hidden rounded-sm border text-center text-[11px] font-black uppercase tracking-[0.08em] text-[#f4d27a] sm:col-span-1 sm:min-h-0 sm:text-xs",
+          teamTone === "blue" ? "border-[#60a5fa]/35 bg-[#061528]" : "border-[#f87171]/35 bg-[#1c0b0c]"
+        )}
+        style={{
+          backgroundImage: `url(${ELO_TEAM_ART[teamTone]})`,
+          backgroundPosition: "center",
+          backgroundSize: "cover"
+        }}
+      >
+        <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.68)_52%,rgba(5,6,7,.2))]" />
+        <div className={cn("absolute inset-0", teamTone === "blue" ? "bg-blue-500/12" : "bg-red-500/12")} />
+        <div className="relative grid h-full min-h-14 place-items-center px-1 py-2 sm:min-h-full">
+          <span className="leading-tight drop-shadow-[0_2px_8px_rgba(0,0,0,.9)]">
+            {sideWords.map((word) => (
+              <span key={word} className="block">
+                {word}
+              </span>
+            ))}
+          </span>
+        </div>
       </div>
       {lanes.map((lane) => (
         <div key={`${side}:${lane.role}`} className="relative min-h-24 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-0">
@@ -2158,6 +2906,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [resultModalOpen, setResultModalOpen] = useState(false);
+  const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("dodge-queue", username);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answer;
@@ -2186,15 +2935,19 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
     setAnswer("");
     setSubmitted(false);
     setResultModalOpen(false);
+    setMatchDataExpanded(false);
   }
 
   return (
-    <PuzzleFrame icon={<CircleSlash size={18} />} title="Dodge or Queue">
+    <PuzzleFrame
+      icon={<CircleSlash size={18} />}
+      title="Dodge or Queue"
+      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+    >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto_auto] lg:gap-4">
-        <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
+      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
@@ -2240,10 +2993,14 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
               Result
             </Button>
           )}
+          {submitted && round.sourceMatch && (
+            <MatchDataToggleButton expanded={matchDataExpanded} onClick={() => setMatchDataExpanded((current) => !current)} />
+          )}
           {submitted && (
             <NextLobbyButton onClick={nextLobby} />
           )}
         </div>
+        {submitted && matchDataExpanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
         {submitted && resultModalOpen && (
           <VerifiedAnswerModal
             correct={correct}
@@ -2267,13 +3024,28 @@ function createDodgeQueueRounds(base: DodgeQueueChallenge): DodgeQueueRound[] {
   return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
-function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
+function PuzzleFrame({
+  icon,
+  title,
+  kicker,
+  headerAccessory,
+  children
+}: {
+  icon: ReactNode;
+  title: string;
+  kicker?: string;
+  headerAccessory?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[#c89b3c]">{icon}</span>
-        <h2 className="text-lg font-semibold sm:text-xl">{title}</h2>
-        {kicker && <span className="text-xs text-[color:var(--muted)] sm:text-sm">{kicker}</span>}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[#c89b3c]">{icon}</span>
+          <h2 className="truncate text-lg font-semibold sm:text-xl">{title}</h2>
+          {kicker && <span className="text-xs text-[color:var(--muted)] sm:text-sm">{kicker}</span>}
+        </div>
+        {headerAccessory ? <div className="flex min-w-0 shrink-0">{headerAccessory}</div> : null}
       </div>
       {children}
     </section>
@@ -2336,7 +3108,7 @@ function DraftScreen({
     <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} />
       <div className="grid place-items-center text-center">
-        <div className="rounded-full border border-[#3c3421] px-3 py-1.5 text-sm font-bold text-[#c89b3c] md:px-4 md:py-3 md:text-xl">VS</div>
+        <MatchupVsMark compact />
       </div>
       <DraftTeam side="red" name={redName} picks={redPicks} bans={redBans} hiddenLabel={hiddenLabel} />
     </div>
@@ -2358,23 +3130,46 @@ function DraftTeam({
 }) {
   return (
     <div className="grid gap-1.5 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
-      <div className={cn("flex items-center gap-2", side === "red" ? "justify-end" : "justify-start")}>
+      <div className={cn("flex items-center gap-4 sm:gap-5", side === "red" ? "justify-end" : "justify-start")}>
         {side === "red" && <BanCluster bans={bans} />}
-        <div className={cn("truncate text-base font-bold text-[#c89b3c] sm:text-lg", side === "red" && "text-right")}>{name}</div>
+        <DraftTeamNamePlate side={side} name={name} />
         {side === "blue" && <BanCluster bans={bans} />}
       </div>
       <div className="grid gap-1.5 md:min-h-0 md:grid-rows-5 md:gap-2">
         {Array.from({ length: 5 }).map((_, index) => (
-          <DraftPickCard key={index} pick={picks[index]} hiddenLabel={hiddenLabel} />
+          <DraftPickCard key={index} side={side} pick={picks[index]} hiddenLabel={hiddenLabel} />
         ))}
       </div>
     </div>
   );
 }
 
+function DraftTeamNamePlate({ side, name }: { side: "blue" | "red"; name: string }) {
+  const teamTone = side === "blue" ? "blue" : "red";
+
+  return (
+    <div
+      className={cn(
+        "font-display relative grid min-h-10 w-[8.5rem] shrink-0 place-items-center overflow-hidden rounded-sm border text-center text-sm font-black uppercase tracking-[0.08em] text-[#f4d27a] sm:min-h-11 sm:w-[10rem] sm:text-base xl:w-[11rem]",
+        teamTone === "blue" ? "border-[#60a5fa]/35 bg-[#061528]" : "border-[#f87171]/35 bg-[#1c0b0c]"
+      )}
+      style={{
+        backgroundImage: `url(${DRAFT_TEAM_ART[teamTone]})`,
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+        backgroundSize: "58% auto"
+      }}
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,.12),transparent_52%),linear-gradient(90deg,rgba(5,6,7,.96),rgba(5,6,7,.68)_48%,rgba(5,6,7,.96))]" />
+      <div className={cn("absolute inset-0", teamTone === "blue" ? "bg-blue-500/16" : "bg-red-500/16")} />
+      <span className="relative whitespace-nowrap leading-none drop-shadow-[0_2px_8px_rgba(0,0,0,.95)]">{name}</span>
+    </div>
+  );
+}
+
 function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
   return (
-    <div className="flex shrink-0 items-center gap-0.5">
+    <div className="flex shrink-0 items-center gap-1">
       {Array.from({ length: 5 }).map((_, index) => (
         <BanIcon key={index} pick={bans[index]} />
       ))}
@@ -2382,7 +3177,9 @@ function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
   );
 }
 
-function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: string }) {
+function DraftPickCard({ side, pick, hiddenLabel }: { side: "blue" | "red"; pick?: OptionItem; hiddenLabel: string }) {
+  const mirrored = side === "blue";
+
   return (
     <div className="relative min-h-20 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:min-h-24">
       {pick?.splashUrl && (
@@ -2394,10 +3191,27 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
           }}
         />
       )}
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,6,7,.96)_0%,rgba(5,6,7,.72)_42%,rgba(5,6,7,.38)_100%)]" />
-      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-[#c89b3c]/45 via-transparent to-transparent" />
+      <div
+        className={cn(
+          "absolute inset-0",
+          mirrored
+            ? "bg-[linear-gradient(270deg,rgba(5,6,7,.96)_0%,rgba(5,6,7,.72)_42%,rgba(5,6,7,.38)_100%)]"
+            : "bg-[linear-gradient(90deg,rgba(5,6,7,.96)_0%,rgba(5,6,7,.72)_42%,rgba(5,6,7,.38)_100%)]"
+        )}
+      />
+      <div className={cn("absolute inset-x-0 bottom-0 h-px", mirrored ? "bg-gradient-to-l from-[#c89b3c]/45 via-transparent to-transparent" : "bg-gradient-to-r from-[#c89b3c]/45 via-transparent to-transparent")} />
 
-      <div className="relative grid h-full min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-2 p-2 sm:min-h-24 sm:grid-cols-[4rem_minmax(0,1fr)_auto] sm:gap-3 sm:p-2.5">
+      <div
+        className={cn(
+          "relative grid h-full min-h-20 items-center gap-2 p-2 sm:min-h-24 sm:gap-3 sm:p-2.5",
+          mirrored
+            ? "grid-cols-[auto_minmax(0,1fr)_3.25rem] sm:grid-cols-[auto_minmax(0,1fr)_4rem]"
+            : "grid-cols-[3.25rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_auto]"
+        )}
+      >
+        {mirrored && (pick?.spells ? <DraftSpellStack spells={pick.spells} align="left" /> : <DraftSpellSpacer align="left" />)}
+
+        {!mirrored && (
         <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-16 sm:w-16">
           {pick?.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -2406,9 +3220,10 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
             <div className="grid h-full w-full place-items-center text-sm text-[#c89b3c]">?</div>
           )}
         </div>
+        )}
 
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <div className={cn("min-w-0", mirrored && "text-right")}>
+          <div className={cn("flex min-w-0 flex-wrap items-center gap-1.5", mirrored ? "justify-end" : "justify-start")}>
             <span className="rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
               {displayLaneLabel(pick?.sublabel)}
             </span>
@@ -2421,19 +3236,38 @@ function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: 
           )}
         </div>
 
-        {pick?.spells && (
-          <div className="grid justify-items-end gap-1">
-            <div className="flex gap-1">
-              {pick.spells.map((spell) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] bg-[#050607] shadow-[0_8px_18px_rgba(0,0,0,.32)] sm:h-7 sm:w-7" />
-              ))}
-            </div>
+        {mirrored ? (
+          <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-16 sm:w-16">
+            {pick?.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="grid h-full w-full place-items-center text-sm text-[#c89b3c]">?</div>
+            )}
           </div>
+        ) : (
+          pick?.spells ? <DraftSpellStack spells={pick.spells} align="right" /> : <DraftSpellSpacer align="right" />
         )}
       </div>
     </div>
   );
+}
+
+function DraftSpellStack({ spells, align }: { spells: SummonerSpellRef[]; align: "left" | "right" }) {
+  return (
+    <div className={cn("grid gap-1", align === "right" ? "justify-items-end" : "justify-items-start")}>
+      <div className="grid gap-1">
+        {spells.map((spell) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] bg-[#050607] shadow-[0_8px_18px_rgba(0,0,0,.32)] sm:h-7 sm:w-7" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DraftSpellSpacer({ align }: { align: "left" | "right" }) {
+  return <div aria-hidden="true" className={cn("h-[3.25rem] w-6 sm:h-[3.75rem] sm:w-7", align === "right" ? "justify-self-end" : "justify-self-start")} />;
 }
 
 function BanIcon({ pick }: { pick?: OptionItem }) {

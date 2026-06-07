@@ -1,19 +1,6 @@
 "use client";
 
 import { motion } from "framer-motion";
-import {
-  CircleSlash,
-  Crosshair,
-  Home,
-  Loader2,
-  PackageSearch,
-  RefreshCcw,
-  Split,
-  Swords,
-  Trophy,
-  UsersRound,
-} from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -26,27 +13,35 @@ import {
   ItemRecipeGame
 } from "@/components/expanded-games";
 import { LeaderboardPanel } from "@/components/leaderboard-panel";
+import { NexusLoader } from "@/components/nexus-loader";
+import { PromotionModal } from "@/components/promotion-modal";
 import { TrainerPage } from "@/components/trainer-page";
-import { Button } from "@/components/ui/button";
 import {
   createInitialRankState,
   nextRankProgress,
   normalizeRankState,
   parseLeagueRankState,
+  rankPromotionEventName,
   rankedStorageKey,
+  type RankPromotionEventDetail,
   type LeagueRankState
 } from "@/game/scoring";
 import { cn } from "@/lib/utils";
+import { RiftCommandBar, type PlayMode } from "@/components/rift-command-bar";
 import type { DailyChallengeResponse, LeaderboardEntry, UserStats } from "@/types";
 
-type View =
-  | "item-build"
-  | "item-recipe"
-  | "guess-elo"
-  | "champion-matchup"
-  | "dodge-queue"
-  | "trainer"
-  | "leaderboard";
+type View = PlayMode;
+
+const defaultView: View = "item-build";
+const viewModes = new Set<View>([
+  "item-build",
+  "item-recipe",
+  "guess-elo",
+  "champion-matchup",
+  "dodge-queue",
+  "trainer",
+  "leaderboard"
+]);
 
 const guestStats: UserStats = {
   username: "Guest",
@@ -70,11 +65,12 @@ const guestStats: UserStats = {
 export function AppShell() {
   const [daily, setDaily] = useState<DailyChallengeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [view, setView] = useState<View>("item-build");
+  const [view, setView] = useState<View>(defaultView);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dataRecoveryAttempts, setDataRecoveryAttempts] = useState(0);
   const [message, setMessage] = useState("");
+  const [promotion, setPromotion] = useState<RankPromotionEventDetail | null>(null);
 
   const loadDaily = useCallback(async (options: { recovery?: boolean } = {}) => {
     setMessage("");
@@ -128,6 +124,23 @@ export function AppShell() {
   }, [loadDaily, loadLeaderboard]);
 
   useEffect(() => {
+    const syncViewFromUrl = () => {
+      const nextView = viewFromSearch(window.location.search);
+
+      if (nextView) {
+        setView(nextView);
+      }
+    };
+
+    syncViewFromUrl();
+    window.addEventListener("popstate", syncViewFromUrl);
+
+    return () => {
+      window.removeEventListener("popstate", syncViewFromUrl);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!daily || !hasRecoverableDataGapForView(daily, view) || dataRecoveryAttempts >= 4 || refreshing) {
       return;
     }
@@ -144,6 +157,14 @@ export function AppShell() {
   const displayStats = useRankedStats(daily?.stats ?? guestStats);
   const rankState = rankStateFromStats(displayStats);
   const rankProgress = nextRankProgress(rankState);
+  const usesLeftRail = view === "item-build" || view === "item-recipe";
+  const selectView = useCallback((nextView: View) => {
+    setView(nextView);
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", nextView);
+    window.history.replaceState(null, "", url);
+  }, []);
 
   useEffect(() => {
     const syncStats = () => {
@@ -157,13 +178,26 @@ export function AppShell() {
     };
   }, [loadLeaderboard, loadStats]);
 
+  useEffect(() => {
+    const handlePromotion = (event: Event) => {
+      const detail = (event as CustomEvent<RankPromotionEventDetail>).detail;
+
+      if (detail?.toRank) {
+        setPromotion(detail);
+      }
+    };
+
+    window.addEventListener(rankPromotionEventName, handlePromotion);
+    return () => {
+      window.removeEventListener(rankPromotionEventName, handlePromotion);
+    };
+  }, []);
+
   if (loading) {
     return (
-      <main className="grid min-h-screen place-items-center px-4">
-        <div className="flex items-center gap-3 rounded-md border border-[color:var(--line)] bg-[color:var(--panel)] p-4 text-[color:var(--muted)]">
-          <Loader2 className="animate-spin" size={18} />
-          Loading Rift Daily
-        </div>
+      <main className="grid min-h-screen place-items-center overflow-hidden bg-[#050607] px-4">
+        <NexusLoader />
+        {promotion && <PromotionModal key={`${promotion.toRank}:${promotion.lp}:${promotion.lpChange ?? 0}`} promotion={promotion} onClose={() => setPromotion(null)} />}
       </main>
     );
   }
@@ -178,38 +212,28 @@ export function AppShell() {
 
   return (
     <main className="grid min-h-dvh items-start overflow-x-clip bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
-      <section className="grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 sm:gap-3 sm:p-4 lg:grid-rows-[auto_minmax(0,1fr)]">
-        <nav className="sticky top-0 z-30 flex min-h-12 flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border border-[color:var(--line)] bg-[#080a0d]/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_14px_40px_rgba(0,0,0,.32)] backdrop-blur fine-scrollbar sm:min-h-14 sm:gap-2 sm:px-3 sm:py-2 lg:static">
-          <Link
-            href="/"
-            className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border border-[#2b2f38] bg-[#111722] px-2.5 text-xs font-semibold text-[#8c95a3] transition hover:border-[#c89b3c] hover:text-[color:var(--foreground)] sm:min-h-10 sm:gap-2 sm:px-3.5 sm:text-sm"
-          >
-            <Home size={15} />
-            <span className="hidden min-[390px]:inline">Home</span>
-          </Link>
-          <TabButton active={view === "item-build"} onClick={() => setView("item-build")} icon={<PackageSearch size={16} />} label="Build" />
-          <TabButton active={view === "item-recipe"} onClick={() => setView("item-recipe")} icon={<Split size={16} />} label="Recipe" />
-          <TabButton active={view === "guess-elo"} onClick={() => setView("guess-elo")} icon={<UsersRound size={16} />} label="Elo" />
-          <TabButton active={view === "champion-matchup"} onClick={() => setView("champion-matchup")} icon={<Swords size={16} />} label="Matchup" />
-          <TabButton active={view === "dodge-queue"} onClick={() => setView("dodge-queue")} icon={<CircleSlash size={16} />} label="Lobby" />
-          <TabButton active={view === "trainer"} onClick={() => setView("trainer")} icon={<Crosshair size={16} />} label="Trainer" />
-          <TabButton active={view === "leaderboard"} onClick={() => setView("leaderboard")} icon={<Trophy size={16} />} label="Leaderboard" />
-          <Button
-            type="button"
-            variant="ghost"
-            className="ml-auto min-h-9 shrink-0 px-2.5 sm:min-h-10 sm:px-3.5"
-            onClick={() => {
-              setDataRecoveryAttempts(0);
-              void loadDaily();
-              void loadLeaderboard();
-            }}
-            title="Refresh"
-            icon={<RefreshCcw size={16} />}
-            disabled={refreshing}
-          >
-            <span className="hidden sm:inline">{refreshing ? "Syncing" : "Refresh"}</span>
-          </Button>
-        </nav>
+      <section
+        className={cn(
+          "grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 transition-[grid-template-columns,gap] duration-300 ease-out sm:gap-3 sm:p-4",
+          usesLeftRail
+            ? "xl:grid-cols-[minmax(18rem,21rem)_minmax(0,1fr)] xl:grid-rows-[auto_minmax(0,1fr)] xl:items-start"
+            : "lg:grid-rows-[auto_minmax(0,1fr)]"
+        )}
+      >
+        <motion.div
+          layout
+          transition={{ layout: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
+          className={cn("min-w-0 transition-[grid-column,grid-row] duration-300 ease-out", usesLeftRail && "xl:col-start-2 xl:row-start-1")}
+        >
+          <RiftCommandBar
+            activeMode={view}
+            brandVariant="sleek"
+            onModeSelect={selectView}
+            position="sticky"
+            showCta={false}
+            className="transition-[box-shadow,filter] duration-200 ease-out"
+          />
+        </motion.div>
 
         <MobileHub
           daily={daily}
@@ -224,11 +248,14 @@ export function AppShell() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18 }}
-          className={cn("min-h-0 overflow-visible", view !== "item-build" && view !== "item-recipe" && "lg:overflow-hidden")}
+          className={cn(
+            "min-h-0 overflow-visible",
+            usesLeftRail ? "grid gap-2 sm:gap-3 xl:contents" : "lg:overflow-hidden"
+          )}
         >
 
-        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} champions={daily.champions} items={daily.items} username={displayStats.username} />}
-        {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={displayStats.username} />}
+        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} champions={daily.champions} items={daily.items} username={displayStats.username} pageRail />}
+        {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={displayStats.username} pageRail />}
         {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={displayStats.username} />}
         {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={displayStats.username} />}
         {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={displayStats.username} />}
@@ -251,7 +278,7 @@ export function AppShell() {
       <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.14),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
         <div className="relative">
-          <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>
+          <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Stats</h1>
           <div className="mt-1 text-[11px] text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
         </div>
         <div className="relative flex min-h-0 flex-col gap-2 overflow-y-auto pr-1 pb-1 fine-scrollbar">
@@ -270,6 +297,7 @@ export function AppShell() {
           />
         </div>
       </aside>
+      {promotion && <PromotionModal key={`${promotion.toRank}:${promotion.lp}:${promotion.lpChange ?? 0}`} promotion={promotion} onClose={() => setPromotion(null)} />}
     </main>
   );
 }
@@ -318,24 +346,6 @@ function MobileProgressStat({ label, value }: { label: string; value: string }) 
       <div className="font-display truncate text-lg font-bold leading-none">{value}</div>
       <div className="mt-0.5 truncate text-[9px] uppercase tracking-[0.06em] text-[color:var(--muted)]">{label}</div>
     </div>
-  );
-}
-
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-semibold transition sm:min-h-10 sm:gap-2 sm:px-3.5 sm:text-sm",
-        active
-          ? "border-[#c89b3c] bg-[#c89b3c] text-[#071018]"
-          : "border-[#2b2f38] bg-[#111722] text-[#8c95a3] hover:border-[#c89b3c] hover:text-[color:var(--foreground)]"
-      )}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }
 
@@ -668,13 +678,18 @@ function currentGameLabel(view: View) {
     "item-build": "Item Build Puzzle",
     "item-recipe": "Item Recipe Puzzle",
     "guess-elo": "Guess the Elo",
-    "champion-matchup": "Champion Matchup",
+    "champion-matchup": "Who Wins More?",
     "dodge-queue": "Dodge or Queue",
     trainer: "Rift Trainer",
     leaderboard: "Leaderboard"
   };
 
   return labels[view];
+}
+
+function viewFromSearch(search: string): View | null {
+  const mode = new URLSearchParams(search).get("mode") as View | null;
+  return mode && viewModes.has(mode) ? mode : null;
 }
 
 function hasRecoverableDataGap(daily: DailyChallengeResponse) {

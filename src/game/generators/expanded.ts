@@ -24,6 +24,9 @@ type VerifiedBuildTarget = {
   possibleBoots: GameItem[];
 };
 
+const BUILD_RELEVANT_ITEM_LIMIT = 24;
+const TIER_TWO_BOOT_IDS = new Set(["3006", "3008", "3009", "3020", "3047", "3111", "3158"]);
+
 export async function generateExpandedDailyChallenges(
   version: string,
   salt: string,
@@ -210,26 +213,88 @@ function selectVerifiedBuildTarget(round: VerifiedBuildRound, itemCatalog: GameI
     return undefined;
   }
 
-  const possibleItems = uniqueItemsByName([
-    ...selected.answerBuild,
-    ...itemCatalog.filter(isBuildCandidateItem)
-  ]).slice(0, 72);
-  const possibleBoots = uniqueItemsByName([
+  const possibleItems = selectChampionRelevantBuildItems(round, selected.answerBuild, itemCatalog);
+  const bootSelection = selectBuildBootsForRole(round.role, selected.answerBoots, [
     selected.answerBoots,
     ...itemCatalog.filter(isBootUpgrade)
   ]);
 
-  if (possibleItems.length < 5 || possibleBoots.length === 0 || round.allyTeam.length < 5 || round.enemyTeam.length < 5) {
+  if (!bootSelection || possibleItems.length < 5 || bootSelection.possibleBoots.length === 0 || round.allyTeam.length < 5 || round.enemyTeam.length < 5) {
     return undefined;
   }
 
   return {
     source: round,
     answerBuild: selected.answerBuild,
-    answerBoots: selected.answerBoots,
+    answerBoots: bootSelection.answerBoots,
     possibleItems,
+    possibleBoots: bootSelection.possibleBoots
+  };
+}
+
+function selectBuildBootsForRole(role: string | undefined, answerBoots: GameItem, sourceBoots: GameItem[]) {
+  const uniqueBoots = uniqueItemsByName(sourceBoots);
+  const isMid = isMidBuildRole(role);
+  let effectiveAnswer = answerBoots;
+
+  if (isMid && !isTierThreeBootUpgrade(answerBoots)) {
+    effectiveAnswer = findTierThreeBootReplacement(answerBoots, uniqueBoots) ?? answerBoots;
+  }
+
+  if (!isMid && isTierThreeBootUpgrade(effectiveAnswer)) {
+    const tierTwoReplacement = findTierTwoBootReplacement(answerBoots, uniqueBoots);
+
+    if (!tierTwoReplacement) {
+      return null;
+    }
+
+    effectiveAnswer = tierTwoReplacement;
+  }
+
+  const possibleBoots = uniqueItemsByName([effectiveAnswer, ...uniqueBoots.flatMap((item) => {
+    if (isMid) {
+      if (isTierThreeBootUpgrade(item)) {
+        return [item];
+      }
+
+      const tierThreeReplacement = findTierThreeBootReplacement(item, uniqueBoots);
+      return tierThreeReplacement ? [tierThreeReplacement] : [];
+    }
+
+    if (isTierThreeBootUpgrade(item)) {
+      return [];
+    }
+
+    return [item];
+  })]);
+
+  return {
+    answerBoots: effectiveAnswer,
     possibleBoots
   };
+}
+
+function isMidBuildRole(role: string | undefined) {
+  return role?.trim().toLowerCase().includes("mid") ?? false;
+}
+
+function isTierThreeBootUpgrade(item: GameItem) {
+  return (
+    item.purchasable &&
+    item.name !== "Boots" &&
+    item.into.length === 0 &&
+    item.from.some((id) => TIER_TWO_BOOT_IDS.has(id)) &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
+}
+
+function findTierTwoBootReplacement(tierThreeBoots: GameItem, sourceBoots: GameItem[]) {
+  return sourceBoots.find((item) => tierThreeBoots.from.includes(item.id) && isBootUpgrade(item) && !isTierThreeBootUpgrade(item));
+}
+
+function findTierThreeBootReplacement(tierTwoBoots: GameItem, sourceBoots: GameItem[]) {
+  return sourceBoots.find((item) => item.from.includes(tierTwoBoots.id) && isTierThreeBootUpgrade(item));
 }
 
 function itemNameKey(item: GameItem) {
@@ -238,6 +303,373 @@ function itemNameKey(item: GameItem) {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values.filter(Boolean))];
+}
+
+type VerifiedBuildItemProfile = {
+  answerTagCounts: Map<string, number>;
+  answerTags: Set<string>;
+  answerSignalTags: Set<string>;
+  primaryTags: Set<string>;
+  roleTags: Set<string>;
+  championResource: string;
+  hasAdCarryPattern: boolean;
+  hasAdCarryCorePattern: boolean;
+  hasApPattern: boolean;
+  hasApCorePattern: boolean;
+  hasSupportPattern: boolean;
+  hasSupportCorePattern: boolean;
+  hasDefensivePattern: boolean;
+  isJungleBuild: boolean;
+};
+
+const BUILD_LOW_SIGNAL_TAGS = new Set(["Active", "Aura", "Lane", "Slow", "Stealth", "Vision", "NonbootsMovement"]);
+const BUILD_PRIMARY_TAGS = new Set([
+  "AbilityHaste",
+  "Armor",
+  "ArmorPenetration",
+  "AttackSpeed",
+  "CooldownReduction",
+  "CriticalStrike",
+  "Damage",
+  "GoldPer",
+  "Health",
+  "LifeSteal",
+  "MagicPenetration",
+  "MagicResist",
+  "Mana",
+  "ManaRegen",
+  "OnHit",
+  "SpellBlock",
+  "SpellDamage",
+  "SpellVamp",
+  "Tenacity"
+]);
+const AD_CARRY_TAGS = new Set(["AttackSpeed", "CriticalStrike", "OnHit", "LifeSteal"]);
+const AD_CARRY_CORE_TAGS = new Set(["AttackSpeed", "CriticalStrike", "OnHit", "LifeSteal"]);
+const AP_TAGS = new Set(["Mana", "MagicPenetration", "SpellDamage", "SpellVamp"]);
+const AP_CORE_TAGS = new Set(["MagicPenetration", "SpellDamage", "SpellVamp"]);
+const SUPPORT_TAGS = new Set(["GoldPer", "ManaRegen", "HealAndShieldPower"]);
+const DEFENSIVE_TAGS = new Set(["Armor", "Health", "MagicResist", "SpellBlock", "Tenacity"]);
+const DEFENSIVE_IDENTITY_TAGS = new Set(["Armor", "MagicResist", "SpellBlock", "Tenacity"]);
+
+function selectChampionRelevantBuildItems(round: VerifiedBuildRound, answerBuild: GameItem[], itemCatalog: GameItem[]) {
+  const answerIds = new Set(answerBuild.map((item) => item.id));
+  const uniqueItems = uniqueItemsByName([...answerBuild, ...itemCatalog.filter(isBuildCandidateItem)]);
+  const profile = getVerifiedBuildItemProfile(round, answerBuild);
+  const [minAnswerGold, maxAnswerGold] = answerGoldRange(answerBuild);
+  const scoredDistractors = uniqueItems
+    .filter((item) => !answerIds.has(item.id))
+    .map((item) => ({
+      item,
+      looseScore: verifiedBuildItemSimilarityScore(item, profile, minAnswerGold, maxAnswerGold),
+      score: verifiedBuildItemRelevanceScore(item, profile, minAnswerGold, maxAnswerGold)
+    }));
+  const relevantDistractors = scoredDistractors
+    .filter(({ score }) => score >= 10)
+    .sort((a, b) => b.score - a.score || b.item.goldTotal - a.item.goldTotal || a.item.name.localeCompare(b.item.name))
+    .map(({ item }) => item);
+  const similarBackfill = scoredDistractors
+    .filter(({ score }) => score < 10)
+    .sort((a, b) => b.looseScore - a.looseScore || b.score - a.score || b.item.goldTotal - a.item.goldTotal || a.item.name.localeCompare(b.item.name))
+    .map(({ item }) => item);
+
+  return fillVerifiedBuildItemPool(answerBuild, [relevantDistractors, similarBackfill]);
+}
+
+function getVerifiedBuildItemProfile(round: VerifiedBuildRound, answerItems: GameItem[]): VerifiedBuildItemProfile {
+  const answerTagCounts = new Map<string, number>();
+
+  for (const item of answerItems) {
+    for (const tag of item.tags) {
+      answerTagCounts.set(tag, (answerTagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const answerTags = new Set(answerTagCounts.keys());
+  const answerSignalTags = new Set([...answerTags].filter((tag) => !BUILD_LOW_SIGNAL_TAGS.has(tag)));
+  const primaryTags = new Set(
+    [...answerTagCounts.entries()]
+      .filter(
+        ([tag, count]) =>
+          BUILD_PRIMARY_TAGS.has(tag) &&
+          !BUILD_LOW_SIGNAL_TAGS.has(tag) &&
+          (count >= 2 || !["Damage", "Health", "AbilityHaste", "CooldownReduction"].includes(tag))
+      )
+      .map(([tag]) => tag)
+  );
+
+  if (primaryTags.size === 0) {
+    for (const tag of answerTags) {
+      if (BUILD_PRIMARY_TAGS.has(tag) && !BUILD_LOW_SIGNAL_TAGS.has(tag)) {
+        primaryTags.add(tag);
+      }
+    }
+  }
+
+  const roleTags = getBuildRoleItemTags(round);
+  const roleText = normalizeBuildText([round.champion.roles.join(" "), round.role].join(" "));
+  const isJungleBuild = roleText.includes("jungle") || answerTags.has("Jungle");
+
+  return {
+    answerTagCounts,
+    answerSignalTags,
+    answerTags,
+    championResource: normalizeBuildText(round.champion.resource),
+    hasAdCarryPattern: hasAny(answerTags, AD_CARRY_TAGS) || roleText.includes("marksman") || roleText.includes("bottom") || roleText.includes("bot"),
+    hasAdCarryCorePattern: hasAny(answerSignalTags, AD_CARRY_CORE_TAGS) && (roleText.includes("marksman") || roleText.includes("bottom") || roleText.includes("bot") || hasAny(answerTags, AD_CARRY_TAGS)),
+    hasApCorePattern: hasAny(answerSignalTags, AP_CORE_TAGS),
+    hasApPattern: hasAny(answerTags, AP_TAGS) || roleText.includes("mage"),
+    hasDefensivePattern: hasAny(answerTags, DEFENSIVE_IDENTITY_TAGS) || countOverlap(answerSignalTags, DEFENSIVE_TAGS) >= 2,
+    hasSupportPattern: hasAny(answerTags, SUPPORT_TAGS) || roleText.includes("support") || roleText.includes("utility"),
+    hasSupportCorePattern: hasAny(answerSignalTags, SUPPORT_TAGS),
+    isJungleBuild,
+    primaryTags,
+    roleTags
+  };
+}
+
+function verifiedBuildItemRelevanceScore(item: GameItem, profile: VerifiedBuildItemProfile, minAnswerGold: number, maxAnswerGold: number) {
+  if (!isVerifiedBuildItemArchetypeCompatible(item, profile)) {
+    return 0;
+  }
+
+  let score = 0;
+  let primaryOverlap = 0;
+  let weightedAnswerOverlap = 0;
+
+  for (const tag of item.tags) {
+    if (profile.primaryTags.has(tag)) {
+      primaryOverlap += 1;
+      score += 7 * (profile.answerTagCounts.get(tag) ?? 1);
+    }
+
+    if (profile.answerSignalTags.has(tag)) {
+      const tagWeight = profile.answerTagCounts.get(tag) ?? 1;
+      weightedAnswerOverlap += tagWeight;
+      score += 3 * tagWeight;
+    }
+
+    if (profile.roleTags.has(tag) && profile.answerSignalTags.has(tag)) {
+      score += 1;
+    }
+  }
+
+  if (primaryOverlap === 0 && weightedAnswerOverlap < 2) {
+    return 0;
+  }
+
+  if (item.goldTotal >= minAnswerGold - 600 && item.goldTotal <= maxAnswerGold + 600) {
+    score += 2;
+  }
+
+  if (item.goldTotal >= 2400) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function verifiedBuildItemSimilarityScore(item: GameItem, profile: VerifiedBuildItemProfile, minAnswerGold: number, maxAnswerGold: number) {
+  const tags = new Set(item.tags);
+  let score = 0;
+
+  for (const tag of item.tags) {
+    if (profile.primaryTags.has(tag)) {
+      score += 5 * (profile.answerTagCounts.get(tag) ?? 1);
+    } else if (profile.answerSignalTags.has(tag)) {
+      score += 2 * (profile.answerTagCounts.get(tag) ?? 1);
+    }
+
+    if (profile.roleTags.has(tag)) {
+      score += 1;
+    }
+  }
+
+  if (profile.hasAdCarryCorePattern && isMarksmanBuildChoice(tags)) {
+    score += 6;
+  }
+
+  if (profile.hasApCorePattern && hasAny(tags, AP_TAGS)) {
+    score += 6;
+  }
+
+  if (profile.hasSupportCorePattern && hasAny(tags, SUPPORT_TAGS)) {
+    score += 6;
+  }
+
+  if (profile.hasDefensivePattern && hasAny(tags, DEFENSIVE_TAGS)) {
+    score += 3;
+  }
+
+  if (tags.has("Jungle") && !profile.isJungleBuild) {
+    score -= 20;
+  }
+
+  if (item.goldTotal >= minAnswerGold - 700 && item.goldTotal <= maxAnswerGold + 700) {
+    score += 2;
+  }
+
+  return score;
+}
+
+function fillVerifiedBuildItemPool(answerItems: GameItem[], candidateGroups: GameItem[][]) {
+  const targetCount = Math.max(BUILD_RELEVANT_ITEM_LIMIT, answerItems.length);
+  const selected: GameItem[] = [];
+  const selectedNames = new Set<string>();
+
+  for (const item of answerItems) {
+    const key = itemNameKey(item);
+    if (!selectedNames.has(key)) {
+      selected.push(item);
+      selectedNames.add(key);
+    }
+  }
+
+  for (const candidates of candidateGroups) {
+    for (const item of candidates) {
+      if (selected.length >= targetCount) {
+        break;
+      }
+
+      const key = itemNameKey(item);
+      if (!selectedNames.has(key)) {
+        selected.push(item);
+        selectedNames.add(key);
+      }
+    }
+  }
+
+  return selected.slice(0, targetCount);
+}
+
+function isVerifiedBuildItemArchetypeCompatible(item: GameItem, profile: VerifiedBuildItemProfile) {
+  const tags = new Set(item.tags);
+
+  if (tags.has("Jungle") && !profile.isJungleBuild) {
+    return false;
+  }
+
+  if (hasAny(tags, SUPPORT_TAGS) && !profile.hasSupportPattern) {
+    return false;
+  }
+
+  if (profile.hasSupportCorePattern && !hasAny(tags, SUPPORT_TAGS) && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  if (hasAny(tags, AP_TAGS) && !profile.hasApPattern) {
+    return false;
+  }
+
+  if (
+    profile.hasApCorePattern &&
+    !hasAny(tags, AP_TAGS) &&
+    !(profile.hasDefensivePattern && hasAny(tags, DEFENSIVE_IDENTITY_TAGS) && countOverlap(tags, profile.primaryTags) > 0)
+  ) {
+    return false;
+  }
+
+  if (tags.has("Mana") && profile.championResource && !profile.championResource.includes("mana") && !profile.answerTags.has("Mana")) {
+    return false;
+  }
+
+  if (hasAny(tags, AD_CARRY_TAGS) && !profile.hasAdCarryPattern && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  if (
+    profile.hasAdCarryCorePattern &&
+    !isMarksmanBuildChoice(tags)
+  ) {
+    return false;
+  }
+
+  if (hasAny(tags, DEFENSIVE_TAGS) && !profile.hasDefensivePattern && countOverlap(tags, profile.primaryTags) === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function isMarksmanBuildChoice(tags: Set<string>) {
+  if (tags.has("CriticalStrike")) {
+    return true;
+  }
+
+  if (tags.has("Damage") && hasAny(tags, DEFENSIVE_IDENTITY_TAGS) && !tags.has("Health") && !tags.has("CooldownReduction") && !tags.has("AbilityHaste")) {
+    return true;
+  }
+
+  if ((tags.has("AttackSpeed") || tags.has("OnHit") || tags.has("LifeSteal")) && !tags.has("Health") && !tags.has("CooldownReduction") && !tags.has("AbilityHaste")) {
+    return true;
+  }
+
+  return false;
+}
+
+function getBuildRoleItemTags(round: VerifiedBuildRound) {
+  const roleTags = new Set<string>();
+  const sourceRoles = [round.champion.roles.join(" "), round.role].map((role) => normalizeBuildText(role));
+  const add = (...tags: string[]) => tags.forEach((tag) => roleTags.add(tag));
+
+  for (const role of sourceRoles) {
+    if (role.includes("marksman") || role.includes("bottom") || role.includes("bot")) {
+      add("Damage", "CriticalStrike", "AttackSpeed", "ArmorPenetration", "LifeSteal", "OnHit");
+    }
+
+    if (role.includes("mage") || role.includes("mid")) {
+      add("SpellDamage", "Mana", "MagicPenetration", "CooldownReduction");
+    }
+
+    if (role.includes("assassin")) {
+      add("Damage", "ArmorPenetration", "CooldownReduction", "NonbootsMovement");
+    }
+
+    if (role.includes("fighter") || role.includes("jungle")) {
+      add("Damage", "Health", "ArmorPenetration", "AttackSpeed", "LifeSteal", "CooldownReduction");
+    }
+
+    if (role.includes("tank") || role.includes("top")) {
+      add("Health", "Armor", "SpellBlock", "CooldownReduction", "NonbootsMovement");
+    }
+
+    if (role.includes("support") || role.includes("utility")) {
+      add("Health", "ManaRegen", "GoldPer", "HealAndShieldPower", "CooldownReduction", "Armor", "SpellBlock");
+    }
+  }
+
+  return roleTags;
+}
+
+function answerGoldRange(answerItems: GameItem[]) {
+  const totals = answerItems.map((item) => item.goldTotal);
+  return [Math.min(...totals), Math.max(...totals)] as const;
+}
+
+function hasAny(values: Set<string>, candidates: Set<string>) {
+  for (const value of candidates) {
+    if (values.has(value)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function countOverlap(left: Set<string>, right: Set<string>) {
+  let count = 0;
+
+  for (const value of left) {
+    if (right.has(value)) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function normalizeBuildText(value: string | undefined) {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function isBuildCandidateItem(item: GameItem) {
@@ -386,7 +818,14 @@ function generateSkillshotDodgeChallenge(date: string): SkillshotDodgeChallenge 
 }
 
 function isBootUpgrade(item: GameItem) {
-  return item.purchasable && item.name !== "Boots" && item.tags.includes("Boots") && item.goldTotal >= 900 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket");
+  return (
+    item.purchasable &&
+    item.name !== "Boots" &&
+    item.goldTotal >= 900 &&
+    (item.tags.includes("Boots") || item.from.some((id) => TIER_TWO_BOOT_IDS.has(id))) &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
 }
 
 function getItemById(itemCatalog: GameItem[], id: string) {

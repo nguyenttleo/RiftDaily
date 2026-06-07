@@ -12,7 +12,23 @@ const resultSchema = z.object({
   roundId: z.string().min(2).max(256),
   won: z.boolean(),
   performanceQuality: z.number().min(0).max(1),
+  lpDelta: z.number().int().min(-20).max(30).optional(),
   metadata: z.record(z.unknown()).optional()
+}).superRefine((value, context) => {
+  if (typeof value.lpDelta !== "number") {
+    return;
+  }
+
+  const validWinDelta = value.won && value.lpDelta >= 20 && value.lpDelta <= 30;
+  const validLossDelta = !value.won && value.lpDelta <= -10 && value.lpDelta >= -20;
+
+  if (!validWinDelta && !validLossDelta) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["lpDelta"],
+      message: "LP delta must be +20 to +30 for wins or -10 to -20 for losses."
+    });
+  }
 });
 
 export async function POST(request: Request) {

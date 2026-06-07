@@ -4,7 +4,15 @@ import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { applyRankedResult, createInitialRankState, parseLeagueRankState, rankedStorageKey } from "@/game/scoring";
+import {
+  applyRankedResult,
+  calculateLpDelta,
+  createInitialRankState,
+  getRankPromotionDetail,
+  parseLeagueRankState,
+  rankPromotionEventName,
+  rankedStorageKey
+} from "@/game/scoring";
 import type { SkillshotDodgeChallenge } from "@/types";
 
 interface TrainerPageProps {
@@ -336,7 +344,7 @@ function TrainerHeader({
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="grid gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
         <h2 className="text-base font-semibold sm:text-lg">{title}</h2>
         <TrainerStreakBar round={round} current={streak.current} best={streak.best} />
       </div>
@@ -386,6 +394,11 @@ interface TrainerRankedRecordOptions {
 function useTrainerModeStreak(mode: string, username: string) {
   const storageKey = `rift-daily:mode-streak:${mode}:${username}`;
   const [streak, setStreak] = useState<TrainerModeStreak>({ current: 0, best: 0, played: 0, wins: 0 });
+  const streakRef = useRef(streak);
+
+  useEffect(() => {
+    streakRef.current = streak;
+  }, [streak]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -399,14 +412,18 @@ function useTrainerModeStreak(mode: string, username: string) {
 
     try {
       const parsed = JSON.parse(raw) as Partial<TrainerModeStreak>;
-      setStreak({
+      const next = {
         current: parsed.current ?? 0,
         best: parsed.best ?? 0,
         played: parsed.played ?? 0,
         wins: parsed.wins ?? 0
-      });
+      };
+      streakRef.current = next;
+      setStreak(next);
     } catch {
       window.localStorage.removeItem(storageKey);
+      streakRef.current = { current: 0, best: 0, played: 0, wins: 0 };
+      setStreak(streakRef.current);
     }
   }, [storageKey]);
 
@@ -414,26 +431,26 @@ function useTrainerModeStreak(mode: string, username: string) {
     (success: boolean, options: TrainerRankedRecordOptions = {}) => {
       const performanceQuality = Math.max(0, Math.min(1, options.performanceQuality ?? (success ? 1 : 0.25)));
       const roundId = options.roundId ?? `${mode}:${Date.now()}`;
+      const lpDelta = calculateLpDelta({ won: success });
+      const current = streakRef.current;
+      const nextCurrent = success ? current.current + 1 : 0;
+      const next = {
+        current: nextCurrent,
+        best: Math.max(current.best, nextCurrent),
+        played: current.played + 1,
+        wins: current.wins + (success ? 1 : 0)
+      };
 
-      setStreak((current) => {
-        const nextCurrent = success ? current.current + 1 : 0;
-        const next = {
-          current: nextCurrent,
-          best: Math.max(current.best, nextCurrent),
-          played: current.played + 1,
-          wins: current.wins + (success ? 1 : 0)
-        };
+      streakRef.current = next;
+      setStreak(next);
 
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(storageKey, JSON.stringify(next));
-          updateTrainerLocalRankState(username, success, performanceQuality);
-          window.dispatchEvent(new Event("rift-daily:streak-updated"));
-        }
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, JSON.stringify(next));
+        updateTrainerLocalRankState(username, success, performanceQuality, lpDelta);
+        window.dispatchEvent(new Event("rift-daily:streak-updated"));
+      }
 
-        return next;
-      });
-
-      void persistTrainerRankedResult(mode, username, success, performanceQuality, roundId, options.metadata);
+      void persistTrainerRankedResult(mode, username, success, performanceQuality, lpDelta, roundId, options.metadata);
     },
     [mode, storageKey, username]
   );
@@ -441,15 +458,20 @@ function useTrainerModeStreak(mode: string, username: string) {
   return [streak, record] as const;
 }
 
-function updateTrainerLocalRankState(username: string, won: boolean, performanceQuality: number) {
+function updateTrainerLocalRankState(username: string, won: boolean, performanceQuality: number, lpDelta: number) {
   if (typeof window === "undefined") {
     return;
   }
 
   const key = rankedStorageKey(username);
   const current = parseLeagueRankState(window.localStorage.getItem(key)) ?? createInitialRankState();
-  const next = applyRankedResult(current, { won, performanceQuality });
+  const next = applyRankedResult(current, { won, performanceQuality, lpDelta });
+  const promotion = getRankPromotionDetail(current, next);
   window.localStorage.setItem(key, JSON.stringify(next));
+
+  if (promotion) {
+    window.dispatchEvent(new CustomEvent(rankPromotionEventName, { detail: promotion }));
+  }
 }
 
 async function persistTrainerRankedResult(
@@ -457,6 +479,7 @@ async function persistTrainerRankedResult(
   username: string,
   won: boolean,
   performanceQuality: number,
+  lpDelta: number,
   roundId: string,
   metadata?: Record<string, unknown>
 ) {
@@ -475,6 +498,7 @@ async function persistTrainerRankedResult(
         roundId,
         won,
         performanceQuality,
+        lpDelta,
         metadata
       })
     });

@@ -20,6 +20,14 @@ frontend:
         - printf "RIOT_MATCH_HISTORY_PAGES_PER_SOURCE=%s\n" "$RIOT_MATCH_HISTORY_PAGES_PER_SOURCE" >> .env.production
         - printf "NEXT_PUBLIC_CREATOR_GITHUB_URL=%s\n" "$NEXT_PUBLIC_CREATOR_GITHUB_URL" >> .env.production
         - printf "NEXT_PUBLIC_CREATOR_LINKEDIN_URL=%s\n" "$NEXT_PUBLIC_CREATOR_LINKEDIN_URL" >> .env.production
+        - printf "SUGGESTION_EMAIL_ENABLED=%s\n" "$SUGGESTION_EMAIL_ENABLED" >> .env.production
+        - printf "SUGGESTION_EMAIL_TO=%s\n" "$SUGGESTION_EMAIL_TO" >> .env.production
+        - printf "SUGGESTION_EMAIL_FROM=%s\n" "$SUGGESTION_EMAIL_FROM" >> .env.production
+        - printf "SES_SMTP_HOST=%s\n" "$SES_SMTP_HOST" >> .env.production
+        - printf "SES_SMTP_PORT=%s\n" "$SES_SMTP_PORT" >> .env.production
+        - printf "SES_SMTP_SECURE=%s\n" "$SES_SMTP_SECURE" >> .env.production
+        - printf "SES_SMTP_USER=%s\n" "$SES_SMTP_USER" >> .env.production
+        - printf "SES_SMTP_PASSWORD=%s\n" "$SES_SMTP_PASSWORD" >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next

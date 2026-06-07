@@ -4,6 +4,7 @@ import {
   createInitialRankState,
   displayRankName,
   normalizeRankState,
+  rankSortValue,
   rankFromProgress,
   type LeagueRankState
 } from "@/game/scoring";
@@ -86,7 +87,24 @@ export interface RecordRankedGameResultInput {
   roundId: string;
   won: boolean;
   performanceQuality: number;
+  lpDelta?: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface LocalModeProgressInput {
+  gameKey: string;
+  currentStreak: number;
+  bestStreak: number;
+  gamesPlayed: number;
+  wins: number;
+}
+
+export interface ClaimLocalProgressInput {
+  userId: string;
+  claimId: string;
+  modes: LocalModeProgressInput[];
+  rankState?: LeagueRankState | null;
+  payload?: Record<string, unknown>;
 }
 
 interface RankStateRow {
@@ -99,6 +117,7 @@ interface RankStateRow {
 }
 
 let rankSchemaReady = false;
+let localProgressClaimSchemaReady = false;
 
 export async function findUserByEmail(email: string): Promise<UserRow | null> {
   if (!isDatabaseConfigured()) {
@@ -292,7 +311,8 @@ export async function recordRankedGameResult(input: RecordRankedGameResultInput)
     const before = rankStateFromRow(rankResult.rows[0]);
     const after = applyRankedResult(before, {
       won: input.won,
-      performanceQuality: input.performanceQuality
+      performanceQuality: input.performanceQuality,
+      lpDelta: input.lpDelta
     });
     const lpDelta = after.lastLpChange ?? 0;
 
@@ -359,6 +379,87 @@ export async function recordRankedGameResult(input: RecordRankedGameResultInput)
     );
 
     return { rankState: after, lpDelta };
+  });
+}
+
+export async function claimLocalProgress(input: ClaimLocalProgressInput): Promise<{ persisted: boolean; claimed: boolean }> {
+  if (!isDatabaseConfigured()) {
+    return { persisted: false, claimed: false };
+  }
+
+  const modes = input.modes.map(normalizeLocalModeProgress).filter((mode) => mode.gamesPlayed > 0 || mode.bestStreak > 0 || mode.currentStreak > 0);
+  const rankState = input.rankState ? normalizeRankState(input.rankState) : null;
+  const hasRankProgress = Boolean(rankState && (rankState.gamesPlayed > 0 || rankState.tier !== "Unranked" || rankState.lp > 0));
+
+  if (modes.length === 0 && !hasRankProgress) {
+    return { persisted: true, claimed: false };
+  }
+
+  await ensureRankSchema();
+  await ensureLocalProgressClaimSchema();
+
+  return withTransaction(async (client) => {
+    const claim = await client.query<{ claim_id: string }>(
+      `insert into local_progress_claims (user_id, claim_id, payload)
+       values ($1, $2, $3::jsonb)
+       on conflict (user_id, claim_id) do nothing
+       returning claim_id`,
+      [input.userId, input.claimId, JSON.stringify(input.payload ?? {})]
+    );
+
+    if (claim.rows.length === 0) {
+      return { persisted: true, claimed: false };
+    }
+
+    for (const mode of modes) {
+      await client.query(
+        `insert into game_mode_stats (user_id, game_key, current_streak, best_streak, games_played, wins, updated_at)
+         values ($1, $2, $3, $4, $5, $6, now())
+         on conflict (user_id, game_key)
+         do update set
+           current_streak = greatest(game_mode_stats.current_streak, excluded.current_streak),
+           best_streak = greatest(game_mode_stats.best_streak, excluded.best_streak, excluded.current_streak),
+           games_played = game_mode_stats.games_played + excluded.games_played,
+           wins = game_mode_stats.wins + excluded.wins,
+           updated_at = now()`,
+        [input.userId, mode.gameKey, mode.currentStreak, mode.bestStreak, mode.gamesPlayed, mode.wins]
+      );
+    }
+
+    if (hasRankProgress && rankState) {
+      const rankResult = await client.query<RankStateRow>(
+        `select tier, division, lp, last_lp_change, games_played, wins
+         from user_rank_state
+         where user_id = $1
+         for update`,
+        [input.userId]
+      );
+      const existing = rankStateFromRow(rankResult.rows[0]);
+      const stronger = rankSortValue(rankState) >= rankSortValue(existing) ? rankState : existing;
+      const merged: LeagueRankState = normalizeRankState({
+        ...stronger,
+        gamesPlayed: existing.gamesPlayed + rankState.gamesPlayed,
+        wins: existing.wins + rankState.wins,
+        lastLpChange: stronger.lastLpChange ?? rankState.lastLpChange ?? existing.lastLpChange
+      });
+
+      await client.query(
+        `insert into user_rank_state (user_id, tier, division, lp, last_lp_change, games_played, wins, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7, now())
+         on conflict (user_id)
+         do update set
+           tier = excluded.tier,
+           division = excluded.division,
+           lp = excluded.lp,
+           last_lp_change = excluded.last_lp_change,
+           games_played = excluded.games_played,
+           wins = excluded.wins,
+           updated_at = now()`,
+        [input.userId, merged.tier, merged.division, merged.lp, merged.lastLpChange, merged.gamesPlayed, merged.wins]
+      );
+    }
+
+    return { persisted: true, claimed: true };
   });
 }
 
@@ -439,8 +540,20 @@ export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
     return [];
   }
 
+  await ensureRankSchema();
+
   const result = await query<StatsRow & { username: string }>(
-    `select
+    `with mode_stats as (
+       select
+         user_id,
+         max(current_streak) as current_streak,
+         max(best_streak) as max_streak,
+         sum(games_played) as games_played,
+         sum(wins) as wins
+       from game_mode_stats
+       group by user_id
+     )
+     select
         u.username,
         coalesce(s.current_streak, 0) as current_streak,
         coalesce(s.max_streak, 0) as max_streak,
@@ -449,15 +562,27 @@ export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
         coalesce(s.win_rate, 0) as win_rate,
         coalesce(s.perfect_solves, 0) as perfect_solves,
         s.fastest_solve_ms,
-        coalesce(s.favorite_role, 'Unclaimed') as favorite_role
+        coalesce(s.favorite_role, 'Unclaimed') as favorite_role,
+        coalesce(ms.current_streak, 0) as mode_current_streak,
+        coalesce(ms.max_streak, 0) as mode_max_streak,
+        coalesce(ms.games_played, 0) as mode_games_played,
+        coalesce(ms.wins, 0) as mode_wins
       from users u
       left join user_stats s on s.user_id = u.id
-      order by coalesce(s.current_streak, 0) desc,
+      left join mode_stats ms on ms.user_id = u.id
+      where coalesce(s.games_played, 0) + coalesce(ms.games_played, 0) > 0
+      order by greatest(coalesce(s.current_streak, 0), coalesce(ms.current_streak, 0)) desc,
+               greatest(coalesce(s.max_streak, 0), coalesce(ms.max_streak, 0)) desc,
                coalesce(s.perfect_solves, 0) desc,
+               case
+                 when coalesce(s.games_played, 0) + coalesce(ms.games_played, 0) > 0
+                 then (coalesce(s.wins, 0) + coalesce(ms.wins, 0))::numeric / (coalesce(s.games_played, 0) + coalesce(ms.games_played, 0))
+                 else 0
+               end desc,
                s.fastest_solve_ms asc nulls last,
                u.username asc
       limit $1`,
-    [limit]
+    [Math.max(1, Math.min(50, Math.round(limit)))]
   );
 
   return result.rows.map((row, index) => {
@@ -656,6 +781,25 @@ async function ensureRankSchema(): Promise<void> {
   rankSchemaReady = true;
 }
 
+async function ensureLocalProgressClaimSchema(): Promise<void> {
+  if (localProgressClaimSchemaReady || !isDatabaseConfigured()) {
+    return;
+  }
+
+  await query(
+    `create table if not exists local_progress_claims (
+      user_id uuid not null references users(id) on delete cascade,
+      claim_id text not null,
+      payload jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      primary key (user_id, claim_id)
+    )`
+  );
+  await query("create index if not exists local_progress_claims_created_idx on local_progress_claims (created_at desc)");
+
+  localProgressClaimSchemaReady = true;
+}
+
 function rankStateFromRow(row?: RankStateRow): LeagueRankState {
   if (!row) {
     return createInitialRankState();
@@ -669,6 +813,21 @@ function rankStateFromRow(row?: RankStateRow): LeagueRankState {
     gamesPlayed: row.games_played ?? 0,
     wins: row.wins ?? 0
   });
+}
+
+function normalizeLocalModeProgress(mode: LocalModeProgressInput): LocalModeProgressInput {
+  const gamesPlayed = Math.max(0, Math.round(Number(mode.gamesPlayed ?? 0)));
+  const wins = Math.max(0, Math.min(gamesPlayed, Math.round(Number(mode.wins ?? 0))));
+  const currentStreak = Math.max(0, Math.round(Number(mode.currentStreak ?? 0)));
+  const bestStreak = Math.max(currentStreak, Math.round(Number(mode.bestStreak ?? 0)));
+
+  return {
+    gameKey: String(mode.gameKey).slice(0, 64),
+    currentStreak,
+    bestStreak,
+    gamesPlayed,
+    wins
+  };
 }
 
 function calculateCurrentStreak(sortedDateKeys: string[]): number {

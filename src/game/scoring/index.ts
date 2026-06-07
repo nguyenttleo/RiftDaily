@@ -49,7 +49,19 @@ export interface LeagueRankState {
 export interface RankedResultInput {
   won: boolean;
   performanceQuality?: number;
+  lpDelta?: number;
 }
+
+export interface RankPromotionEventDetail {
+  fromRank: string;
+  toRank: string;
+  tier: LeagueRankName;
+  division: LeagueRankDivision | null;
+  lp: number;
+  lpChange: number | null;
+}
+
+export const rankPromotionEventName = "rift-daily:rank-promoted";
 
 const rankThresholds = [
   { rank: "Challenger", points: 700 },
@@ -67,6 +79,8 @@ const rankThresholds = [
 const divisionTiers = ["Iron", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond"] as const;
 const leagueRankDivisions: LeagueRankDivision[] = ["IV", "III", "II", "I"];
 const MASTER_PROMOTION_LP = 500;
+const WIN_LP_RANGE = { min: 20, max: 30 } as const;
+const LOSS_LP_RANGE = { min: 10, max: 20 } as const;
 
 export function rankPointsFromProgress(progress: RankProgressInput): number {
   if (progress.gamesPlayed <= 0 && progress.maxStreak <= 0) {
@@ -114,13 +128,15 @@ export function createInitialRankState(progress?: RankProgressInput): LeagueRank
 }
 
 export function calculateLpDelta(result: RankedResultInput): number {
-  const quality = normalizePerformanceQuality(result.performanceQuality ?? (result.won ? 0.65 : 0.35));
-
-  if (result.won) {
-    return 10 + Math.round(quality * 20);
+  if (typeof result.lpDelta === "number") {
+    return normalizeLpDelta(result.lpDelta, result.won);
   }
 
-  return -(10 + Math.round((1 - quality) * 20));
+  if (result.won) {
+    return randomIntInclusive(WIN_LP_RANGE.min, WIN_LP_RANGE.max);
+  }
+
+  return -randomIntInclusive(LOSS_LP_RANGE.min, LOSS_LP_RANGE.max);
 }
 
 export function applyRankedResult(state: LeagueRankState, result: RankedResultInput): LeagueRankState {
@@ -271,12 +287,43 @@ export function displayRankName(state: Pick<LeagueRankState, "tier" | "division"
   return hasDivisions(state.tier) ? `${state.tier} ${state.division ?? "IV"}` : state.tier;
 }
 
-function normalizePerformanceQuality(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0.5;
+export function getRankPromotionDetail(before: LeagueRankState, after: LeagueRankState): RankPromotionEventDetail | null {
+  const current = normalizeRankState(before);
+  const next = normalizeRankState(after);
+  const lpGained = typeof next.lastLpChange === "number" && next.lastLpChange > 0;
+
+  if (!lpGained || rankStep(next) <= rankStep(current)) {
+    return null;
   }
 
-  return Math.max(0, Math.min(1, value));
+  return {
+    fromRank: displayRankName(current),
+    toRank: displayRankName(next),
+    tier: next.tier,
+    division: next.division,
+    lp: next.lp,
+    lpChange: next.lastLpChange
+  };
+}
+
+export function rankSortValue(state: LeagueRankState): number {
+  const normalized = normalizeRankState(state);
+
+  return rankStep(normalized) * 10000 + normalized.lp;
+}
+
+function randomIntInclusive(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function normalizeLpDelta(value: number, won: boolean): number {
+  const rounded = Math.round(value);
+
+  if (won) {
+    return Math.max(WIN_LP_RANGE.min, Math.min(WIN_LP_RANGE.max, Math.abs(rounded)));
+  }
+
+  return -Math.max(LOSS_LP_RANGE.min, Math.min(LOSS_LP_RANGE.max, Math.abs(rounded)));
 }
 
 function normalizeRankName(value?: string): LeagueRankName {
@@ -315,6 +362,29 @@ function promotionThreshold(tier: LeagueRankName): number {
   }
 
   return 100;
+}
+
+function rankStep(state: Pick<LeagueRankState, "tier" | "division">): number {
+  if (state.tier === "Unranked") {
+    return 0;
+  }
+
+  if (hasDivisions(state.tier)) {
+    const tierIndex = leagueRankTiers.indexOf(state.tier);
+    const divisionIndex = leagueRankDivisions.indexOf(state.division ?? "IV");
+
+    return 1 + tierIndex * leagueRankDivisions.length + Math.max(0, divisionIndex);
+  }
+
+  if (state.tier === "Master") {
+    return 1 + divisionTiers.length * leagueRankDivisions.length;
+  }
+
+  if (state.tier === "Grandmaster") {
+    return 2 + divisionTiers.length * leagueRankDivisions.length;
+  }
+
+  return 3 + divisionTiers.length * leagueRankDivisions.length;
 }
 
 function promoteRank(tier: LeagueRankName, division: LeagueRankDivision | null): Pick<LeagueRankState, "tier" | "division"> | null {

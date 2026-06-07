@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   const parsed = RegisterSchema.safeParse(await request.json());
 
   if (!parsed.success) {
-    return NextResponse.json({ error: "Check the username, email, and password." }, { status: 400 });
+    return NextResponse.json({ error: "Check the display name, email, and password." }, { status: 400 });
   }
 
   const existingUser = await findUserByEmail(parsed.data.email);

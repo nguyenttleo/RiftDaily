@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 
+const suggestionEmail = "leo@playriftdaily.io";
 const suggestionTypes = [
   "New game mode",
   "Puzzle correction",
@@ -23,18 +24,23 @@ export function SuggestionForm() {
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [detail, setDetail] = useState("");
+  const emailHref = buildSuggestionEmailHref({ name, contact, type, message });
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("sending");
     setDetail("");
-
     const response = await fetch("/api/suggestions", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, contact, type, message, page: "suggest" })
     });
-    const body = (await response.json().catch(() => ({}))) as { persisted?: boolean; error?: string };
+    const body = (await response.json().catch(() => ({}))) as {
+      persisted?: boolean;
+      emailed?: boolean;
+      emailReason?: string;
+      error?: string;
+    };
 
     if (!response.ok) {
       setStatus("error");
@@ -43,12 +49,30 @@ export function SuggestionForm() {
     }
 
     setStatus("sent");
-    setDetail(body.persisted ? "Saved to the suggestion table." : "Captured locally. Add a Supabase DB URL to persist it.");
+    if (body.emailed) {
+      setDetail(body.persisted ? "Saved and emailed to Leo." : "Emailed to Leo.");
+    } else {
+      setDetail(body.persisted ? "Saved. Email is not configured, so use Email if needed." : "Submitted locally. Use Email if needed.");
+    }
     setMessage("");
   }
 
   return (
-    <form onSubmit={submit} className="grid gap-4 rounded-lg border border-white/10 bg-[#111827] p-4 sm:p-5">
+    <>
+      <div className="fixed bottom-4 right-4 z-50 grid w-[min(calc(100vw-2rem),17rem)] gap-3 rounded-lg border border-[#c89b3c]/30 bg-[#0b111b]/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,.45),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-md">
+        <div>
+          <div className="font-display text-sm font-bold text-[#f8fafc]">Email suggestions</div>
+          <div className="mt-1 text-xs leading-snug text-[#94a3b8]">Send feedback directly to the developer.</div>
+        </div>
+        <a
+          href={emailHref}
+          className="font-display inline-flex min-h-9 items-center justify-center rounded-md border border-[#c89b3c]/45 px-4 text-sm font-bold text-[#f5c542] transition hover:border-[#f5c542] hover:bg-[#f5c542]/10"
+        >
+          Email
+        </a>
+      </div>
+
+      <form onSubmit={submit} className="grid gap-4 rounded-lg border border-white/10 bg-[#111827] p-4 sm:p-5">
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-2 text-sm text-[#94a3b8]">
           Name
@@ -100,6 +124,20 @@ export function SuggestionForm() {
           <span className={status === "error" ? "text-sm text-red-200" : "text-sm text-[#f5c542]"}>{detail}</span>
         )}
       </div>
-    </form>
+      </form>
+    </>
   );
+}
+
+function buildSuggestionEmailHref(input: { name: string; contact: string; type: string; message: string }) {
+  const body = [
+    `Type: ${input.type}`,
+    input.name.trim() ? `Name: ${input.name.trim()}` : "Name: ",
+    input.contact.trim() ? `Contact: ${input.contact.trim()}` : "Contact: ",
+    "",
+    "Suggestion:",
+    input.message.trim()
+  ].join("\n");
+
+  return `mailto:${suggestionEmail}?subject=${encodeURIComponent(`Rift Daily suggestion: ${input.type}`)}&body=${encodeURIComponent(body)}`;
 }

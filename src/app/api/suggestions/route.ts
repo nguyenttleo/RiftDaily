@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { createSuggestion } from "@/db/repositories";
 import { authOptions } from "@/lib/auth/options";
+import { sendSuggestionEmail } from "@/lib/email/suggestions";
 
 export const runtime = "nodejs";
 
@@ -31,6 +32,19 @@ export async function POST(request: Request) {
     message: parsed.data.message,
     page: parsed.data.page || undefined
   });
+  const email = await sendSuggestionEmail({
+    name: parsed.data.name || undefined,
+    contact: parsed.data.contact || undefined,
+    type: parsed.data.type,
+    message: parsed.data.message,
+    page: parsed.data.page || undefined,
+    userEmail: session?.user?.email ?? null
+  });
 
-  return NextResponse.json({ ok: true, persisted: result.persisted });
+  return NextResponse.json({
+    ok: true,
+    persisted: result.persisted,
+    emailed: email.sent,
+    emailReason: email.sent ? undefined : email.reason
+  });
 }
