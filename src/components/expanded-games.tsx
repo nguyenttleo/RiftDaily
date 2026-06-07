@@ -346,14 +346,13 @@ function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
   }, [round.sourceMatch?.platform, round.targetPlayerLp, round.targetPlayerName]);
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-[#74ecff]/18 bg-[linear-gradient(135deg,rgba(10,22,34,.96),rgba(5,7,11,.92)_62%)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.30),inset_0_1px_0_rgba(255,255,255,.065)]">
-      <div className="pointer-events-none absolute -right-14 -top-16 h-36 w-36 rounded-full bg-[#74ecff]/12 blur-3xl" />
-      <div className="relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+    <div className="relative overflow-hidden rounded-xl border border-[#74ecff]/18 bg-[linear-gradient(135deg,rgba(10,22,34,.96),rgba(5,7,11,.92)_62%)] p-3 pr-4 shadow-[0_18px_50px_rgba(0,0,0,.30),inset_0_1px_0_rgba(255,255,255,.065)]">
+      <div className="relative grid grid-cols-[auto_minmax(0,1fr)_minmax(5.2rem,auto)] items-center gap-2.5 sm:gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-lg border border-[#c89b3c]/35 object-cover shadow-[0_10px_22px_rgba(0,0,0,.35)] sm:h-16 sm:w-16" />
         <div className="min-w-0">
-          <div className="font-display text-2xl font-bold leading-none text-white sm:text-3xl">{round.champion.name}</div>
-          <div className="mt-1 truncate text-sm font-semibold text-[#9fb7d5]" title={round.targetPlayerName}>
+          <div className="truncate font-display text-2xl font-bold leading-none text-white sm:text-[1.65rem]" title={round.champion.name}>{round.champion.name}</div>
+          <div className="mt-1 truncate text-xs font-semibold text-[#9fb7d5] sm:text-sm" title={round.targetPlayerName}>
             {round.targetPlayerName ?? "Verified Challenger"}
           </div>
           {round.targetRole && (
@@ -362,14 +361,14 @@ function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
             </div>
           )}
         </div>
-        <div className="grid min-w-[4.75rem] justify-items-center gap-0.5">
+        <div className="grid min-w-[5.2rem] justify-items-center gap-1.5 pr-1.5">
           <RankEmblemMini rankTier="Challenger" />
           {typeof displayedLp === "number" ? (
-            <div className="font-display text-sm font-black leading-none text-[#74ecff] drop-shadow-[0_0_12px_rgba(116,236,255,.2)]">
+            <div className="rounded-full border border-[#74ecff]/24 bg-[#061c27]/82 px-2.5 py-1 text-center font-display text-sm font-black leading-none text-[#d8fbff] shadow-[0_6px_16px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.08)]">
               {displayedLp} LP
             </div>
           ) : lpLoading ? (
-            <div className="font-display text-[10px] font-black uppercase tracking-[0.08em] text-[#74ecff]/70">LP</div>
+            <div className="rounded-full border border-[#74ecff]/18 bg-[#061c27]/60 px-2.5 py-1 font-display text-[10px] font-black uppercase tracking-[0.08em] text-[#74ecff]/70">LP</div>
           ) : null}
         </div>
       </div>
@@ -379,14 +378,15 @@ function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
 
 function RankEmblemMini({ rankTier }: { rankTier: string }) {
   return (
-    <span className="relative -my-3 h-16 w-20 shrink-0 bg-transparent">
+    <span className="relative h-[4.35rem] w-[5.35rem] shrink-0 bg-transparent">
+      <span className="pointer-events-none absolute left-1/2 top-[43%] h-14 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(ellipse_at_center,rgba(116,236,255,.18)_0%,rgba(116,236,255,.085)_44%,rgba(116,236,255,.025)_66%,transparent_82%)] blur-md" />
       <span className="absolute inset-0 overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={rankEmblemUrl(rankTier)}
           alt=""
           className="pointer-events-none absolute left-1/2 top-1/2 max-w-none object-contain opacity-100 saturate-125"
-          style={{ width: "24rem", maxWidth: "none", transform: "translate(-50%, -50%)" }}
+          style={{ width: "22rem", maxWidth: "none", transform: "translate(-50%, -50%)" }}
         />
       </span>
     </span>
