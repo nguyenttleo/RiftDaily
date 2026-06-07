@@ -3,6 +3,164 @@ import type { Champion, GameItem, PublicChampion, SummonerSpellRef } from "@/typ
 
 const DATA_DRAGON_BASE = "https://ddragon.leagueoflegends.com";
 const FALLBACK_VERSION = "16.11.1";
+const SUMMONERS_RIFT_MAP_ID = "11";
+const NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS = new Set([
+  "1035",
+  "1039",
+  "1040",
+  "1090",
+  "1091",
+  "1092",
+  "1093",
+  "1094",
+  "1104",
+  "1111",
+  "1200",
+  "1201",
+  "1202",
+  "1203",
+  "1204",
+  "1205",
+  "1206",
+  "1207",
+  "1208",
+  "1209",
+  "1210",
+  "1211",
+  "1220",
+  "1221",
+  "1222",
+  "1504",
+  "2002",
+  "2008",
+  "2015",
+  "2049",
+  "2050",
+  "2056",
+  "2142",
+  "2143",
+  "2144",
+  "2145",
+  "2146",
+  "2147",
+  "2161",
+  "2162",
+  "2163",
+  "3001",
+  "3005",
+  "3012",
+  "3023",
+  "3039",
+  "3095",
+  "3105",
+  "3128",
+  "3131",
+  "3193",
+  "3348",
+  "3349",
+  "3398",
+  "3399",
+  "3430",
+  "3513",
+  "3850",
+  "3851",
+  "3853",
+  "3854",
+  "3855",
+  "3857",
+  "3858",
+  "3859",
+  "3860",
+  "3862",
+  "3863",
+  "3864",
+  "4003",
+  "4004",
+  "4010",
+  "4011",
+  "4012",
+  "4013",
+  "4014",
+  "4015",
+  "4016",
+  "4017",
+  "4402",
+  "4403",
+  "4638",
+  "4643",
+  "4644",
+  "6029",
+  "6032",
+  "6035",
+  "6630",
+  "6632",
+  "6656",
+  "6667",
+  "6671",
+  "6677",
+  "6691",
+  "6700",
+  "6702",
+  "9168",
+  "9171",
+  "9172",
+  "9173",
+  "9174",
+  "9175",
+  "9176",
+  "9177",
+  "9178",
+  "9179",
+  "9180",
+  "9181",
+  "9183",
+  "9184",
+  "9185",
+  "9187",
+  "9188",
+  "9189",
+  "9190",
+  "9192",
+  "9193",
+  "9271",
+  "9272",
+  "9273",
+  "9274",
+  "9275",
+  "9276",
+  "9277",
+  "9278",
+  "9279",
+  "9280",
+  "9281",
+  "9283",
+  "9284",
+  "9285",
+  "9287",
+  "9288",
+  "9289",
+  "9290",
+  "9292",
+  "9293",
+  "9300",
+  "9301",
+  "9302",
+  "9303",
+  "9304",
+  "9305",
+  "9306",
+  "9307",
+  "9308",
+  "9400",
+  "9401",
+  "9402",
+  "9403",
+  "9404",
+  "9405",
+  "9406",
+  "9407",
+  "9408"
+]);
 
 let cachedVersion: string | null = null;
 
@@ -219,7 +377,7 @@ export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
     const payload = await fetchRiotItemPayload(resolvedVersion);
 
     return Object.entries(payload.data)
-      .filter(([, item]) => item.maps?.["11"] !== false)
+      .filter(([id, item]) => isSummonersRiftRiotItem(id, item))
       .map(([id, item]) => ({
         id,
         name: item.name,
@@ -229,15 +387,26 @@ export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
         purchasable: item.gold?.purchasable ?? false,
         from: item.from ?? [],
         into: item.into ?? [],
+        maps: item.maps,
         imageUrl: `${DATA_DRAGON_BASE}/cdn/${resolvedVersion}/img/item/${item.image?.full ?? `${id}.png`}`
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch {
-    return items.map((item) => ({
-      ...item,
-      imageUrl: `${DATA_DRAGON_BASE}/cdn/${resolvedVersion}/img/item/${item.id}.png`
-    }));
+    return items
+      .filter(isSummonersRiftFallbackItem)
+      .map((item) => ({
+        ...item,
+        imageUrl: `${DATA_DRAGON_BASE}/cdn/${resolvedVersion}/img/item/${item.id}.png`
+      }));
   }
+}
+
+function isSummonersRiftRiotItem(id: string, item: RiotItemPayload["data"][string]) {
+  return id.length <= 4 && item.maps?.[SUMMONERS_RIFT_MAP_ID] === true;
+}
+
+function isSummonersRiftFallbackItem(item: GameItem) {
+  return item.id.length <= 4 && !NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS.has(item.id);
 }
 
 function stripHtml(value: string) {

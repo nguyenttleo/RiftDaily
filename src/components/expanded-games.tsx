@@ -26,8 +26,15 @@ import type {
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
 const MIN_BUILD_WINRATE_GAMES = 5;
-const POSITIVE_BUILD_ITEM_BOOST = 1200;
 type ItemGuessResult = "correct" | "wrong";
+type VerifiedBuildTargetForUi = {
+  answerBuild: GameItem[];
+  answerBoots: GameItem;
+  enemyChampionIds: string[];
+  possibleItems: GameItem[];
+  possibleBoots: GameItem[];
+  stats: NonNullable<ItemBuildChallenge["winrateStats"]>;
+};
 
 export function ItemBuildGame({
   challenge,
@@ -41,7 +48,7 @@ export function ItemBuildGame({
   username?: string;
 }) {
   const generatedRounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
-  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, buildRoundPriority);
+  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, buildRoundPriority, buildRoundFirstKey);
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
@@ -70,6 +77,7 @@ export function ItemBuildGame({
 
     return results;
   }, [answerSet, round.answerBootsId, guesses]);
+  const unavailableReason = getBuildUnavailableReason(round);
 
   function toggleItem(id: string) {
     if (finished) {
@@ -149,10 +157,18 @@ export function ItemBuildGame({
     }
   }
 
+  if (unavailableReason) {
+    return (
+      <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+        <VerifiedDataUnavailable reason={unavailableReason} />
+      </section>
+    );
+  }
+
   return (
     <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
-        <aside className="xl:sticky xl:top-4 xl:self-start">
+        <aside className="xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar">
           <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
             <div className="hidden flex-wrap items-center gap-2 sm:flex">
               <span className="text-[#c89b3c]">
@@ -509,72 +525,8 @@ function WinrateMiniStat({
   );
 }
 
-function withTargetBuildWinrateForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, targetItemIds: string[]) {
-  if (!stats) {
-    return undefined;
-  }
-
-  const samples = stats.inventorySamples ?? [];
-  const targetIds = uniqueStringsForUi(targetItemIds);
-  let selected:
-    | {
-        games: typeof samples;
-        wins: number;
-        winRate: number;
-        matchedItemCount: number;
-      }
-    | undefined;
-
-  for (let size = targetIds.length; size >= 1; size -= 1) {
-    let bestAtSize: typeof selected;
-
-    for (const subset of combinationsForUi(targetIds, size)) {
-      const games = samples.filter((game) => subset.every((itemId) => game.itemIds.includes(itemId)));
-
-      if (games.length < MIN_BUILD_WINRATE_GAMES) {
-        continue;
-      }
-
-      const wins = games.filter((game) => game.win).length;
-      const winRate = Math.round((wins / games.length) * 1000) / 10;
-
-      if (winRate < stats.winRate) {
-        continue;
-      }
-
-      if (
-        !bestAtSize ||
-        winRate - stats.winRate > bestAtSize.winRate - stats.winRate ||
-        (winRate === bestAtSize.winRate && games.length > bestAtSize.games.length)
-      ) {
-        bestAtSize = {
-          games,
-          wins,
-          winRate,
-          matchedItemCount: size
-        };
-      }
-    }
-
-    if (bestAtSize) {
-      selected = bestAtSize;
-      break;
-    }
-  }
-
-  return {
-    ...stats,
-    targetItemIds,
-    buildWins: selected?.wins ?? stats.wins,
-    buildGames: selected?.games.length ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.games : undefined),
-    buildWinRate: selected?.winRate ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.winRate : undefined),
-    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.sampleMatches : undefined,
-    buildMatchedItemCount: selected?.matchedItemCount ?? 0
-  };
-}
-
 function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
-  if (champions.length < 6 || itemCatalog.length < 20) {
+  if (!isPlayableVerifiedBuildRoundForUi(base) || champions.length < 6 || itemCatalog.length < 20) {
     return [base];
   }
 
@@ -582,7 +534,11 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 
   for (let index = 1; index <= INFINITE_ROUNDS; index += 1) {
     const previousChampionId = rounds[rounds.length - 1]?.champion.id;
-    rounds.push(createGeneratedBuildRound(base, champions, itemCatalog, index, previousChampionId));
+    const generated = createGeneratedBuildRound(base, champions, itemCatalog, index, previousChampionId);
+
+    if (generated) {
+      rounds.push(generated);
+    }
   }
 
   return rounds;
@@ -591,62 +547,76 @@ function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[]
 function buildRoundPriority(round: ItemBuildChallenge) {
   const stats = round.winrateStats;
 
-  if (!stats?.buildGames || typeof stats.buildWinRate !== "number") {
+  if (!stats?.games || stats.games < MIN_BUILD_WINRATE_GAMES) {
     return 0;
   }
 
-  const matchedItemBonus = stats.buildMatchedItemCount ?? 0;
-  return 1000 + stats.buildGames * 10 + matchedItemBonus;
-}
-
-function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge {
-  const seed = `${base.date}:item-build-infinite:${round}`;
-  const sampledChampions = champions
-    .filter((champion) => hasVerifiedBuildChampionSampleForUi(base.winrateSamples?.[champion.id]))
-    .sort((a, b) => (base.winrateSamples?.[b.id]?.games ?? 0) - (base.winrateSamples?.[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
-    .slice(0, 20);
-  const championPool = sampledChampions.length > 0 ? sampledChampions : champions;
-  const champion = pickBuildChampion(championPool, `${seed}:champion`, previousChampionId);
-  const enemyTeam = pickUiUnique(champions, `${seed}:enemy`, 5, [champion.id]);
-  const sampleItemFrequency = buildItemFrequencyForUi(base.winrateSamples?.[champion.id]);
-  const positiveItemSamples = buildPositiveItemSamplesForUi(base.winrateSamples?.[champion.id]);
-  const candidateItems = itemCatalog
-    .filter(isBuildCandidateItemForUi)
-    .map((item) => ({ item, score: scoreBuildItemForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
-    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
-  const uniqueCandidateItems = uniqueScoredItemsByNameForUi(candidateItems);
-  const bootCandidates = itemCatalog
-    .filter((item) => isBuildBootUpgrade(item))
-    .map((item) => ({ item, score: scoreBuildBootsForVerifiedTags(item, champion, enemyTeam) + sampleItemScoreForUi(item.id, sampleItemFrequency, positiveItemSamples) }))
-    .sort((a, b) => b.score - a.score || a.item.name.localeCompare(b.item.name));
-  const uniqueBootCandidates = uniqueScoredItemsByNameForUi(bootCandidates);
-
-  if (uniqueCandidateItems.length < 5 || uniqueBootCandidates.length === 0) {
-    return base;
+  if (!stats.buildGames || typeof stats.buildWinRate !== "number") {
+    return 1;
   }
 
-  const answerBuild = uniqueCandidateItems.slice(0, 5).map((candidate) => candidate.item);
-  const answerBoots = uniqueBootCandidates[0].item;
-  const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
-  const possibleItems = uniqueCandidateItems.slice(0, 36).map((candidate) => candidate.item);
-  const possibleBoots = uniqueBootCandidates.map((candidate) => candidate.item);
+  return (stats.buildMatchedItemCount ?? 0) >= 4 ? 3 : 2;
+}
+
+function buildRoundFirstKey(round: ItemBuildChallenge) {
+  return round.champion.id;
+}
+
+function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge | undefined {
+  const seed = `${base.date}:item-build-infinite:${round}`;
+  const playable = champions
+    .map((champion) => ({
+      champion,
+      target: selectVerifiedBuildTargetForUi(base.winrateSamples?.[champion.id], itemCatalog)
+    }))
+    .filter((entry): entry is { champion: PublicChampion; target: VerifiedBuildTargetForUi } => Boolean(entry.target))
+    .sort(
+      (a, b) =>
+        (b.target.stats.buildGames ?? 0) - (a.target.stats.buildGames ?? 0) ||
+        b.target.stats.buildWinRate! - a.target.stats.buildWinRate! ||
+        a.champion.name.localeCompare(b.champion.name)
+    );
+
+  if (playable.length === 0) {
+    return undefined;
+  }
+
+  const champion = pickBuildChampion(playable.map((entry) => entry.champion), `${seed}:champion`, previousChampionId);
+  const target = playable.find((entry) => entry.champion.id === champion.id)?.target;
+
+  if (!target) {
+    return undefined;
+  }
+
+  const enemyTeam = target.enemyChampionIds
+    .map((championId) => champions.find((candidate) => candidate.id === championId))
+    .filter(Boolean) as PublicChampion[];
+
+  if (enemyTeam.length < 5) {
+    return undefined;
+  }
+
+  const answerBuild = target.answerBuild;
+  const answerBoots = target.answerBoots;
+  const possibleItems = target.possibleItems;
+  const possibleBoots = target.possibleBoots;
 
   return {
     ...base,
     id: `${base.date}:item-build:${round}`,
     champion,
     enemyTeam,
-    candidates: uniqueCandidateItems.slice(0, 4).map((candidate) => candidate.item),
+    candidates: answerBuild.slice(0, 4),
     possibleItems,
     possibleBoots,
     answerItemId: answerBuild[0].id,
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
-    winrateStats: withTargetBuildWinrateForUi(base.winrateSamples?.[champion.id], targetItemIds),
+    winrateStats: target.stats,
     winrateSamples: base.winrateSamples,
     matchupNotes: [
       `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
-      "Answer is generated from Riot Data Dragon item tags, champion tags, item costs, and purchasability flags."
+      "Answer is generated from Riot Match-V5 inventory samples."
     ],
     catalogModel: {
       ...base.catalogModel,
@@ -654,6 +624,196 @@ function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicCh
       targetItemCount: answerBuild.length
     }
   };
+}
+
+function getBuildUnavailableReason(round: ItemBuildChallenge) {
+  if (round.unavailableReason) {
+    return round.unavailableReason;
+  }
+
+  if (!isPlayableVerifiedBuildRoundForUi(round)) {
+    return `Build needs ${MIN_BUILD_WINRATE_GAMES}+ Riot Match-V5 games with the same completed five-item plus boots inventory and a real enemy team. Keep warming the live cache.`;
+  }
+
+  return "";
+}
+
+function isPlayableVerifiedBuildRoundForUi(round: ItemBuildChallenge) {
+  const stats = round.winrateStats;
+
+  return Boolean(
+    stats &&
+      stats.games >= MIN_BUILD_WINRATE_GAMES &&
+      (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES &&
+      typeof stats.buildWinRate === "number" &&
+      stats.buildWinRate >= stats.winRate &&
+      (stats.buildMatchedItemCount ?? 0) >= 6 &&
+      round.enemyTeam.length >= 5 &&
+      round.answerItemIds.length === 5 &&
+      Boolean(round.answerBootsId) &&
+      round.possibleItems.length >= 5 &&
+      round.possibleBoots.length > 0
+  );
+}
+
+function selectVerifiedBuildTargetForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, itemCatalog: GameItem[]): VerifiedBuildTargetForUi | undefined {
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES || !stats.inventorySamples?.length) {
+    return undefined;
+  }
+
+  const itemById = new Map(itemCatalog.map((item) => [item.id, item]));
+  const itemCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
+  const bootCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
+  const buildGroups = new Map<
+    string,
+    {
+      answerBuild: GameItem[];
+      answerBoots: GameItem;
+      wins: number;
+      games: number;
+      matchIds: Set<string>;
+      enemyChampionIds: string[];
+    }
+  >();
+
+  for (const sample of stats.inventorySamples) {
+    for (const itemId of uniqueStringsForUi(sample.itemIds)) {
+      const item = itemById.get(itemId);
+
+      if (!item) {
+        continue;
+      }
+
+      if (isBuildCandidateItemForUi(item)) {
+        incrementObservedItemForUi(itemCounts, item, sample.win);
+      } else if (isBuildBootUpgrade(item)) {
+        incrementObservedItemForUi(bootCounts, item, sample.win);
+      }
+    }
+
+    if ((sample.enemyChampionIds?.length ?? 0) < 5) {
+      continue;
+    }
+
+    const sampledBuild = buildTargetFromInventoryForUi(sample.itemIds, itemById);
+
+    if (!sampledBuild) {
+      continue;
+    }
+
+    const key = buildGroupKeyForUi(sampledBuild.answerBuild, sampledBuild.answerBoots);
+    const current = buildGroups.get(key) ?? {
+      ...sampledBuild,
+      wins: 0,
+      games: 0,
+      matchIds: new Set<string>(),
+      enemyChampionIds: sample.enemyChampionIds!.slice(0, 5)
+    };
+
+    current.games += 1;
+    current.wins += sample.win ? 1 : 0;
+    current.matchIds.add(sample.matchId);
+    buildGroups.set(key, current);
+  }
+
+  const selected = [...buildGroups.values()]
+    .map((group) => ({
+      ...group,
+      winRate: Math.round((group.wins / group.games) * 1000) / 10
+    }))
+    .filter((group) => group.games >= MIN_BUILD_WINRATE_GAMES && group.enemyChampionIds.length >= 5 && group.winRate >= stats.winRate)
+    .sort((a, b) => b.winRate - a.winRate || b.games - a.games || a.answerBuild[0].name.localeCompare(b.answerBuild[0].name))[0];
+
+  if (!selected) {
+    return undefined;
+  }
+
+  const possibleItems = includeRequiredItemsForUi(rankedObservedItemsForUi(itemCounts), selected.answerBuild).slice(0, 36);
+  const possibleBoots = includeRequiredItemsForUi(rankedObservedItemsForUi(bootCounts), [selected.answerBoots]);
+
+  if (possibleItems.length < 5 || possibleBoots.length === 0) {
+    return undefined;
+  }
+
+  const targetItemIds = [...selected.answerBuild.map((item) => item.id), selected.answerBoots.id];
+
+  return {
+    answerBuild: selected.answerBuild,
+    answerBoots: selected.answerBoots,
+    enemyChampionIds: selected.enemyChampionIds,
+    possibleItems,
+    possibleBoots,
+    stats: {
+      ...stats,
+      targetItemIds,
+      buildWins: selected.wins,
+      buildGames: selected.games,
+      buildWinRate: selected.winRate,
+      buildSampleMatches: selected.matchIds.size,
+      buildMatchedItemCount: targetItemIds.length
+    }
+  };
+}
+
+function buildTargetFromInventoryForUi(itemIds: string[], itemById: Map<string, GameItem>) {
+  const items = uniqueStringsForUi(itemIds)
+    .map((itemId) => itemById.get(itemId))
+    .filter(Boolean) as GameItem[];
+  const answerBoots = items.filter(isBuildBootUpgrade).sort((a, b) => b.goldTotal - a.goldTotal || a.name.localeCompare(b.name))[0];
+
+  if (!answerBoots) {
+    return undefined;
+  }
+
+  const answerBuild = uniqueGameItemsByNameForUi(items.filter(isBuildCandidateItemForUi)).slice(0, 5);
+
+  if (answerBuild.length !== 5) {
+    return undefined;
+  }
+
+  return {
+    answerBuild,
+    answerBoots
+  };
+}
+
+function buildGroupKeyForUi(answerBuild: GameItem[], answerBoots: GameItem) {
+  return `${answerBuild.map((item) => item.id).sort().join("+")}:${answerBoots.id}`;
+}
+
+function incrementObservedItemForUi(target: Map<string, { item: GameItem; games: number; wins: number }>, item: GameItem, win: boolean) {
+  const current = target.get(item.id) ?? { item, games: 0, wins: 0 };
+  current.games += 1;
+  current.wins += win ? 1 : 0;
+  target.set(item.id, current);
+}
+
+function rankedObservedItemsForUi(target: Map<string, { item: GameItem; games: number; wins: number }>) {
+  return uniqueGameItemsByNameForUi(
+    [...target.values()]
+      .sort((a, b) => b.games - a.games || b.wins - a.wins || a.item.name.localeCompare(b.item.name))
+      .map((entry) => entry.item)
+  );
+}
+
+function includeRequiredItemsForUi(items: GameItem[], required: GameItem[]) {
+  return uniqueGameItemsByNameForUi([...required, ...items]);
+}
+
+function uniqueGameItemsByNameForUi(items: GameItem[]) {
+  const seen = new Set<string>();
+  const uniqueItems: GameItem[] = [];
+
+  for (const item of items) {
+    const key = normalize(item.name);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueItems.push(item);
+    }
+  }
+
+  return uniqueItems;
 }
 
 function pickBuildChampion(championPool: PublicChampion[], seed: string, previousChampionId?: string) {
@@ -668,81 +828,6 @@ function pickBuildChampion(championPool: PublicChampion[], seed: string, previou
   }
 
   return championPool[start];
-}
-
-function buildItemFrequencyForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
-  const frequency = new Map<string, number>();
-
-  for (const game of stats?.inventorySamples ?? []) {
-    for (const itemId of game.itemIds) {
-      frequency.set(itemId, (frequency.get(itemId) ?? 0) + 1);
-    }
-  }
-
-  return frequency;
-}
-
-function hasVerifiedBuildChampionSampleForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
-  return Boolean(stats && stats.games >= MIN_BUILD_WINRATE_GAMES);
-}
-
-function buildPositiveItemSamplesForUi(stats: ItemBuildChallenge["winrateStats"] | undefined) {
-  const samples = new Map<string, { wins: number; games: number; winRate: number; lift: number }>();
-
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return samples;
-  }
-
-  const raw = new Map<string, { wins: number; games: number }>();
-
-  for (const game of stats.inventorySamples ?? []) {
-    for (const itemId of uniqueStringsForUi(game.itemIds)) {
-      const current = raw.get(itemId) ?? { wins: 0, games: 0 };
-      current.games += 1;
-      current.wins += game.win ? 1 : 0;
-      raw.set(itemId, current);
-    }
-  }
-
-  for (const [itemId, itemStats] of raw) {
-    if (itemStats.games < MIN_BUILD_WINRATE_GAMES) {
-      continue;
-    }
-
-    const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
-
-    if (winRate >= stats.winRate) {
-      samples.set(itemId, {
-        ...itemStats,
-        winRate,
-        lift: winRate - stats.winRate
-      });
-    }
-  }
-
-  return samples;
-}
-
-function sampleItemScoreForUi(itemId: string, frequency: Map<string, number>, positiveSamples: Map<string, { games: number; lift: number }>) {
-  const positive = positiveSamples.get(itemId);
-
-  return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
-}
-
-function uniqueScoredItemsByNameForUi<T extends { item: GameItem }>(items: T[]) {
-  const seen = new Set<string>();
-  const uniqueEntries: T[] = [];
-
-  for (const entry of items) {
-    const key = itemNameKeyForUi(entry.item);
-
-    if (!seen.has(key)) {
-      seen.add(key);
-      uniqueEntries.push(entry);
-    }
-  }
-
-  return uniqueEntries;
 }
 
 function uniqueItemsByName(items: GameItem[], preferredIds = new Set<string>()) {
@@ -764,61 +849,12 @@ function itemNameKeyForUi(item: GameItem) {
   return item.name.trim().toLowerCase();
 }
 
-function combinationsForUi(values: string[], size: number) {
-  const result: string[][] = [];
-
-  function visit(start: number, picked: string[]) {
-    if (picked.length === size) {
-      result.push(picked);
-      return;
-    }
-
-    for (let index = start; index < values.length; index += 1) {
-      visit(index + 1, [...picked, values[index]]);
-    }
-  }
-
-  visit(0, []);
-  return result;
-}
-
 function uniqueStringsForUi(values: string[]) {
   return [...new Set(values.filter(Boolean))];
 }
 
 function isBuildCandidateItemForUi(item: GameItem) {
   return item.purchasable && item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket") && !item.tags.includes("Boots");
-}
-
-function scoreBuildItemForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {
-  const enemyTanks = enemyTeam.filter((enemy) => enemy.roles.includes("Tank")).length;
-  const enemyAssassins = enemyTeam.filter((enemy) => enemy.roles.includes("Assassin")).length;
-  const wantsAp = champion.roles.includes("Mage");
-  const wantsAd = champion.roles.some((role) => ["Marksman", "Fighter", "Assassin"].includes(role));
-  let score = item.goldTotal / 1000;
-
-  if (wantsAp && item.tags.includes("SpellDamage")) score += 8;
-  if (wantsAd && item.tags.includes("Damage")) score += 8;
-  if (champion.roles.includes("Tank") && item.tags.some((tag) => ["Health", "Armor", "SpellBlock"].includes(tag))) score += 8;
-  if (enemyTanks >= 2 && item.tags.some((tag) => ["ArmorPenetration", "MagicPenetration", "AttackSpeed"].includes(tag))) score += 5;
-  if (enemyAssassins >= 2 && item.tags.some((tag) => ["Armor", "Health"].includes(tag))) score += 4;
-  if (item.tags.includes("Boots")) score -= 8;
-
-  return score;
-}
-
-function scoreBuildBootsForVerifiedTags(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]) {
-  const enemyPhysical = enemyTeam.filter((enemy) => enemy.roles.some((role) => ["Marksman", "Fighter", "Assassin"].includes(role))).length;
-  const enemyMagic = enemyTeam.filter((enemy) => enemy.roles.some((role) => ["Mage", "Support"].includes(role))).length;
-  let score = item.goldTotal / 100;
-
-  if (champion.roles.includes("Marksman") && item.tags.includes("AttackSpeed")) score += 20;
-  if (champion.roles.includes("Mage") && item.tags.some((tag) => ["MagicPenetration", "CooldownReduction"].includes(tag))) score += 18;
-  if (champion.roles.includes("Tank") && item.tags.includes("Armor")) score += 14;
-  if (enemyPhysical >= 3 && item.tags.includes("Armor")) score += 12;
-  if (enemyMagic >= 3 && item.tags.some((tag) => ["SpellBlock", "Tenacity"].includes(tag))) score += 12;
-
-  return score;
 }
 
 function isBuildBootUpgrade(item: GameItem) {
@@ -864,7 +900,7 @@ export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = 
   return (
     <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
-        <aside className="xl:sticky xl:top-4 xl:self-start">
+        <aside className="xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar">
           <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
             <div className="hidden flex-wrap items-center gap-2 sm:flex">
               <span className="text-[#c89b3c]">
@@ -1154,14 +1190,14 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
 
 function InfiniteStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
   return (
-    <div className="flex flex-wrap gap-2 text-xs text-[color:var(--muted)]">
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+    <div className="flex flex-wrap gap-2.5 text-sm text-[color:var(--muted)]">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 leading-none">
         Round <b className="relative top-px font-display leading-none text-[#f5c542]">{round}</b>
       </span>
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 leading-none">
         Streak <b className="relative top-px font-display leading-none text-white">{current}</b>
       </span>
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 leading-none">
         Best <b className="relative top-px font-display leading-none text-white">{best}</b>
       </span>
     </div>
@@ -1173,10 +1209,12 @@ function useRandomizedRounds<T extends { id: string }>(
   gameKey: string,
   username: string,
   avoidTripleKey?: (round: T) => string | undefined,
-  priorityForRound?: (round: T) => number
+  priorityForRound?: (round: T) => number,
+  avoidFirstKey?: (round: T) => string | undefined
 ) {
   const [loadSeed] = useState(() => `${Date.now()}:${Math.random()}`);
   const storageKey = `rift-daily:last-first-round:${gameKey}:${normalize(username || "guest")}`;
+  const firstKeyStorageKey = `rift-daily:last-first-round-key:${gameKey}:${normalize(username || "guest")}`;
   const orderedRounds = useMemo(() => {
     if (rounds.length <= 1) {
       return rounds;
@@ -1190,21 +1228,36 @@ function useRandomizedRounds<T extends { id: string }>(
     });
 
     if (priorityForRound) {
-      randomized.sort((a, b) => priorityForRound(b) - priorityForRound(a));
+      randomized.sort((a, b) => {
+        const aScore = weightedRoundScore(a, priorityForRound, loadSeed);
+        const bScore = weightedRoundScore(b, priorityForRound, loadSeed);
+
+        return bScore - aScore || a.id.localeCompare(b.id);
+      });
     }
 
     const lastFirstRoundId = typeof window === "undefined" ? "" : window.localStorage.getItem(storageKey);
+    const lastFirstRoundKey = typeof window === "undefined" ? "" : window.localStorage.getItem(firstKeyStorageKey);
 
     if (avoidTripleKey) {
       return orderRoundsAvoidingTripleKey(randomized, avoidTripleKey, lastFirstRoundId ?? "");
     }
 
-    if (lastFirstRoundId && randomized[0]?.id === lastFirstRoundId) {
+    const firstRoundRepeatsId = lastFirstRoundId && randomized[0]?.id === lastFirstRoundId;
+    const firstRoundRepeatsKey = lastFirstRoundKey && avoidFirstKey && avoidFirstKey(randomized[0]) === lastFirstRoundKey;
+
+    if (firstRoundRepeatsId || firstRoundRepeatsKey) {
       const currentPriority = priorityForRound ? priorityForRound(randomized[0]) : 0;
       const samePrioritySwapIndex = randomized.findIndex(
-        (round) => round.id !== lastFirstRoundId && (!priorityForRound || priorityForRound(round) === currentPriority)
+        (round) =>
+          round.id !== lastFirstRoundId &&
+          (!avoidFirstKey || avoidFirstKey(round) !== lastFirstRoundKey) &&
+          (!priorityForRound || priorityForRound(round) === currentPriority)
       );
-      const swapIndex = samePrioritySwapIndex > 0 ? samePrioritySwapIndex : randomized.findIndex((round) => round.id !== lastFirstRoundId);
+      const swapIndex =
+        samePrioritySwapIndex > 0
+          ? samePrioritySwapIndex
+          : randomized.findIndex((round) => round.id !== lastFirstRoundId && (!avoidFirstKey || avoidFirstKey(round) !== lastFirstRoundKey));
 
       if (swapIndex > 0) {
         [randomized[0], randomized[swapIndex]] = [randomized[swapIndex], randomized[0]];
@@ -1212,17 +1265,29 @@ function useRandomizedRounds<T extends { id: string }>(
     }
 
     return randomized;
-  }, [avoidTripleKey, loadSeed, priorityForRound, rounds, storageKey]);
+  }, [avoidFirstKey, avoidTripleKey, firstKeyStorageKey, loadSeed, priorityForRound, rounds, storageKey]);
 
   useEffect(() => {
     const firstRound = orderedRounds[0];
 
     if (firstRound) {
       window.localStorage.setItem(storageKey, firstRound.id);
+      const firstKey = avoidFirstKey?.(firstRound);
+
+      if (firstKey) {
+        window.localStorage.setItem(firstKeyStorageKey, firstKey);
+      }
     }
-  }, [orderedRounds, storageKey]);
+  }, [avoidFirstKey, firstKeyStorageKey, orderedRounds, storageKey]);
 
   return orderedRounds;
+}
+
+function weightedRoundScore<T extends { id: string }>(round: T, priorityForRound: (round: T) => number, seed: string) {
+  const randomScore = hashString(`${seed}:weighted-round:${round.id}`) % 1000;
+  const priorityScore = Math.max(0, priorityForRound(round)) * 120;
+
+  return randomScore + priorityScore;
 }
 
 function orderRoundsAvoidingTripleKey<T extends { id: string }>(rounds: T[], keyForRound: (round: T) => string | undefined, blockedFirstRoundId: string) {
@@ -1671,14 +1736,14 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
               onClick={() => choose(option)}
               disabled={submitted}
               className={cn(
-                "group relative isolate min-h-12 min-w-0 overflow-hidden rounded-sm border bg-[#111722] p-1 text-left transition hover:border-[#c89b3c] hover:shadow-[0_0_22px_rgba(200,155,60,.16)] disabled:cursor-default sm:min-h-16 sm:p-1.5",
-                answer === option && option === round.answerTier && "border-green-400/70 bg-green-500/18 ring-1 ring-green-300/35",
-                answer === option && option !== round.answerTier && "border-red-400/70 bg-red-500/16 ring-1 ring-red-300/30",
-                answer !== option && submitted && option === round.answerTier && "border-green-400/70 bg-green-500/18",
-                !submitted && answer !== option && "border-[#26313f]"
+                "group min-w-0 rounded-lg text-left transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c89b3c]/55 disabled:cursor-default sm:rounded-xl",
+                !submitted && "hover:-translate-y-0.5 hover:ring-2 hover:ring-[#c89b3c]/45 hover:shadow-[0_0_22px_rgba(200,155,60,.18)]",
+                answer === option && option === round.answerTier && "ring-2 ring-green-300/60",
+                answer === option && option !== round.answerTier && "ring-2 ring-red-300/60",
+                answer !== option && submitted && option === round.answerTier && "ring-2 ring-green-300/55"
               )}
             >
-              <RankSplitLabel option={option} compact />
+              <RankSplitLabel option={option} compact interactive={!submitted} />
             </button>
           ))}
         </div>
@@ -2146,7 +2211,9 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
           <div className="absolute inset-0 bg-cover bg-center opacity-48" style={{ backgroundImage: `url(${lane.champion.splashUrl})` }} />
           <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/55 to-transparent" />
           <div className="relative flex h-full min-h-0 flex-col justify-end p-2 sm:p-2">
-            <span className="text-[10px] uppercase leading-tight text-[#c89b3c]">{lane.role}</span>
+            <span className="w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
+              {displayLaneLabel(lane.role)}
+            </span>
             <span className="truncate text-sm font-bold leading-tight sm:text-base">{lane.champion.name}</span>
             {lane.playerName && (
               <span title={lane.playerName} className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-[#9fb7d5]">
@@ -2224,9 +2291,10 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             onClick={() => lockCall("dodge")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/55 disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              !submitted && "hover:-translate-y-0.5 hover:ring-2 hover:ring-red-300/45 hover:shadow-[0_0_22px_rgba(248,113,113,.18)] hover:brightness-110",
               answer === "dodge"
-                ? "border-red-300 bg-red-500 text-white"
+                ? "border-red-300 bg-red-500 text-white ring-2 ring-red-300/55"
                 : "border-red-400/35 bg-red-500/14 text-red-100 hover:bg-red-500/24"
             )}
           >
@@ -2237,9 +2305,10 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
             onClick={() => lockCall("queue")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300/55 disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              !submitted && "hover:-translate-y-0.5 hover:ring-2 hover:ring-green-300/45 hover:shadow-[0_0_22px_rgba(74,222,128,.18)] hover:brightness-110",
               answer === "queue"
-                ? "border-green-300 bg-green-500 text-[#071018]"
+                ? "border-green-300 bg-green-500 text-[#071018] ring-2 ring-green-300/55"
                 : "border-green-400/35 bg-green-500/14 text-green-100 hover:bg-green-500/24"
             )}
           >
@@ -2278,25 +2347,6 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
 
 function createDodgeQueueRounds(base: DodgeQueueChallenge): DodgeQueueRound[] {
   return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
-}
-
-function pickUiUnique(list: PublicChampion[], seed: string, count: number, excluded: string[]) {
-  const excludedSet = new Set(excluded);
-  const sorted = [...list].sort((a, b) => (hashString(`${seed}:${a.id}`) % 1000) - (hashString(`${seed}:${b.id}`) % 1000));
-  const picked: PublicChampion[] = [];
-
-  for (const item of sorted) {
-    if (!excludedSet.has(item.id)) {
-      picked.push(item);
-      excludedSet.add(item.id);
-    }
-
-    if (picked.length === count) {
-      break;
-    }
-  }
-
-  return picked;
 }
 
 function PuzzleFrame({ icon, title, kicker, children }: { icon: ReactNode; title: string; kicker?: string; children: ReactNode }) {
@@ -2435,29 +2485,51 @@ function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
 
 function DraftPickCard({ pick, hiddenLabel }: { pick?: OptionItem; hiddenLabel: string }) {
   return (
-    <div className="grid min-h-14 grid-cols-[3rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] p-1.5 sm:min-h-16 sm:grid-cols-[3.5rem_minmax(0,1fr)] sm:p-2 md:min-h-20 md:grid-cols-[4.25rem_minmax(0,1fr)] md:gap-3">
-      <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:h-14 sm:w-14 md:h-16 md:w-16">
-        {pick?.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <div className="grid h-full w-full place-items-center text-sm text-[#c89b3c]">?</div>
-        )}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-bold leading-tight sm:text-base md:text-lg">{pick?.label ?? hiddenLabel}</div>
-        <div className="truncate text-[11px] leading-tight text-[#c89b3c] sm:text-xs md:text-sm">{pick?.sublabel ?? "Champion select"}</div>
-        {pick?.playerName && (
-          <div title={pick.playerName} className="mt-0.5 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5]">
-            {pick.playerName}
+    <div className="relative min-h-20 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:min-h-24">
+      {pick?.splashUrl && (
+        <div
+          className="absolute inset-0 bg-cover bg-center opacity-38"
+          style={{
+            backgroundImage: `url(${pick.splashUrl})`,
+            backgroundPosition: championSplashPosition(pick.label)
+          }}
+        />
+      )}
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,6,7,.96)_0%,rgba(5,6,7,.72)_42%,rgba(5,6,7,.38)_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-[#c89b3c]/45 via-transparent to-transparent" />
+
+      <div className="relative grid h-full min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-2 p-2 sm:min-h-24 sm:grid-cols-[4rem_minmax(0,1fr)_auto] sm:gap-3 sm:p-2.5">
+        <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-16 sm:w-16">
+          {pick?.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="grid h-full w-full place-items-center text-sm text-[#c89b3c]">?</div>
+          )}
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
+              {displayLaneLabel(pick?.sublabel)}
+            </span>
           </div>
-        )}
+          <div className="mt-1 truncate font-display text-base font-black leading-none text-white sm:text-xl">{pick?.label ?? hiddenLabel}</div>
+          {pick?.playerName && (
+            <div title={pick.playerName} className="mt-1 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5] sm:text-xs">
+              {pick.playerName}
+            </div>
+          )}
+        </div>
+
         {pick?.spells && (
-          <div className="mt-1 flex gap-1">
-            {pick.spells.map((spell) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-5 w-5 rounded-sm border border-[#3c3421] sm:h-6 sm:w-6" />
-            ))}
+          <div className="grid justify-items-end gap-1">
+            <div className="flex gap-1">
+              {pick.spells.map((spell) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] bg-[#050607] shadow-[0_8px_18px_rgba(0,0,0,.32)] sm:h-7 sm:w-7" />
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -2484,6 +2556,7 @@ function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[],
     label: champion.name,
     sublabel: champion.roles.join(" / "),
     imageUrl: champion.squareUrl,
+    splashUrl: champion.splashUrl,
     spells,
     ...(playerName ? { playerName } : {})
   };
@@ -2491,6 +2564,18 @@ function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[],
 
 const laneLabels = ["Top", "Jungle", "Mid", "Bot", "Supp"] as const;
 type LaneLabel = (typeof laneLabels)[number];
+
+function displayLaneLabel(label?: string) {
+  const normalized = (label ?? "Lane").trim().toLowerCase();
+
+  if (["top", "TOP"].includes(label ?? "") || normalized === "top") return "TOP";
+  if (normalized === "jungle" || normalized === "jg") return "JUNGLE";
+  if (normalized === "mid" || normalized === "middle") return "MID";
+  if (normalized === "bot" || normalized === "bottom" || normalized === "adc") return "BOTTOM";
+  if (normalized === "supp" || normalized === "support" || normalized === "utility") return "SUPPORT";
+
+  return (label ?? "Lane").toUpperCase();
+}
 
 const laneRoleWeights: Record<LaneLabel, string[]> = {
   Top: ["Fighter", "Tank", "Assassin", "Mage"],
@@ -2587,25 +2672,50 @@ const rankVisuals: Record<string, { color: string; background: string; border: s
   Challenger: { color: "#74ecff", background: "rgba(86, 216, 255, 0.18)", border: "rgba(116, 236, 255, 0.30)" }
 };
 
-function RankSplitLabel({ option, compact = false }: { option: string; compact?: boolean }) {
+function RankSplitLabel({ option, compact = false, interactive = false }: { option: string; compact?: boolean; interactive?: boolean }) {
   const ranks = rankOptionParts(option);
 
   if (ranks.length === 0) {
     return (
-      <div className={cn("grid place-items-center rounded-lg border border-[#c89b3c]/28 bg-[#c89b3c]/10 px-2 text-center sm:rounded-xl sm:px-3", compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20")}>
+      <div
+        className={cn(
+          "grid place-items-center rounded-lg border border-[#c89b3c]/28 bg-[#c89b3c]/10 px-2 text-center transition duration-150 sm:rounded-xl sm:px-3",
+          interactive && "group-hover:border-[#c89b3c]/70 group-hover:bg-[#c89b3c]/14 group-hover:brightness-110",
+          compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20"
+        )}
+      >
         <span className={cn("font-display font-black uppercase tracking-[0.06em] text-[#f5c542] sm:tracking-[0.08em]", compact ? "text-xs sm:text-sm" : "text-lg sm:text-2xl")}>{option}</span>
       </div>
     );
   }
 
   return (
-    <div className={cn("relative grid overflow-hidden rounded-lg border border-white/10 bg-[#071018] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:rounded-xl", ranks.length > 1 && "grid-cols-2", compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20")}>
+    <div
+      className={cn(
+        "relative grid overflow-hidden rounded-lg border border-white/10 bg-[#071018] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition duration-150 sm:rounded-xl",
+        interactive && "group-hover:border-[#c89b3c]/65 group-hover:brightness-110 group-hover:shadow-[0_0_18px_rgba(200,155,60,.14),inset_0_1px_0_rgba(255,255,255,.06)]",
+        ranks.length > 1 && "grid-cols-2",
+        compact ? "min-h-11 sm:min-h-[3.25rem]" : "min-h-16 sm:min-h-20"
+      )}
+    >
       {ranks.map((rank) => {
         const visual = rankVisuals[rank];
 
         return (
-          <div key={rank} className="relative grid place-items-center px-1.5 py-1.5 text-center sm:px-2 sm:py-2" style={{ background: visual.background, borderColor: visual.border }}>
-            <span className={cn("font-display font-black uppercase leading-none tracking-[0.04em] sm:tracking-[0.08em]", compact ? "text-xs sm:text-[15px]" : "text-base sm:text-2xl")} style={{ color: visual.color }}>
+          <div
+            key={rank}
+            className="relative grid place-items-center border-l border-white/10 px-1 py-1.5 text-center first:border-l-0 sm:px-1.5 sm:py-2"
+            style={{ background: visual.background, borderColor: visual.border }}
+          >
+            <span
+              className={cn(
+                "font-display font-black leading-none",
+                compact
+                  ? "text-[11px] normal-case tracking-normal min-[390px]:text-xs sm:text-[13px] xl:text-sm"
+                  : "text-base uppercase tracking-[0.04em] sm:text-2xl sm:tracking-[0.08em]"
+              )}
+              style={{ color: visual.color }}
+            >
               {rank}
             </span>
           </div>

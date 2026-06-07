@@ -17,7 +17,15 @@ import type {
 import { getUtcDateKey, seededIndex } from "./daily";
 
 const MIN_BUILD_WINRATE_GAMES = 5;
-const POSITIVE_BUILD_ITEM_BOOST = 1200;
+
+type VerifiedBuildTarget = {
+  answerBuild: GameItem[];
+  answerBoots: GameItem;
+  enemyChampionIds: string[];
+  possibleItems: GameItem[];
+  possibleBoots: GameItem[];
+  stats: BuildWinrateStats;
+};
 
 export async function generateExpandedDailyChallenges(
   version: string,
@@ -68,41 +76,39 @@ function generateItemBuildChallenge(
   version: string,
   winrateSamples: Record<string, BuildWinrateStats>
 ): ItemBuildChallenge {
-  const sampledChampions = publicChampions
-    .filter((champion) => hasVerifiedBuildChampionSample(winrateSamples[champion.id]))
-    .sort((a, b) => (winrateSamples[b.id]?.games ?? 0) - (winrateSamples[a.id]?.games ?? 0) || a.name.localeCompare(b.name))
-    .slice(0, 20);
-  const championPool = sampledChampions.length > 0 ? sampledChampions : publicChampions;
-  const champion = championPool[seededIndex(seed, championPool.length)];
-  const enemyTeam = pickUnique(publicChampions, `${seed}:enemy`, 5, [champion.id]);
-  const sampleItemFrequency = buildItemFrequency(winrateSamples[champion.id]);
-  const positiveItemSamples = buildPositiveItemSamples(winrateSamples[champion.id]);
-  const candidateItems = itemCatalog
-    .filter(isBuildCandidateItem)
-    .map((item) => ({
-      item,
-      score: scoreItemForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
+  const playable = publicChampions
+    .map((champion) => ({
+      champion,
+      target: selectVerifiedBuildTarget(winrateSamples[champion.id], itemCatalog)
     }))
-    .sort((a, b) => b.score - a.score);
-  const uniqueCandidateItems = uniqueScoredItemsByName(candidateItems);
-  const bootCandidates = itemCatalog
-    .filter((item) => isBootUpgrade(item))
-    .map((item) => ({
-      item,
-      score: scoreBootsForMatchup(item, champion, enemyTeam) + sampleItemScore(item.id, sampleItemFrequency, positiveItemSamples)
-    }))
-    .sort((a, b) => b.score - a.score);
-  const uniqueBootCandidates = uniqueScoredItemsByName(bootCandidates);
-  const answerBuild = uniqueCandidateItems.slice(0, 5).map((candidate) => candidate.item);
+    .filter((entry): entry is { champion: PublicChampion; target: VerifiedBuildTarget } => Boolean(entry.target))
+    .sort(
+      (a, b) =>
+        (b.target.stats.buildGames ?? 0) - (a.target.stats.buildGames ?? 0) ||
+        b.target.stats.buildWinRate! - a.target.stats.buildWinRate! ||
+        a.champion.name.localeCompare(b.champion.name)
+    );
+
+  if (playable.length === 0) {
+    return unavailableItemBuildChallenge(
+      date,
+      winrateSamples,
+      `Build needs ${MIN_BUILD_WINRATE_GAMES}+ Riot Match-V5 games with the same completed five-item plus boots inventory and a real enemy team. Keep warming the live cache.`
+    );
+  }
+
+  const selected = playable[seededIndex(seed, playable.length)];
+  const champion = selected.champion;
+  const enemyTeam = selected.target.enemyChampionIds
+    .map((championId) => publicChampions.find((candidate) => candidate.id === championId))
+    .filter(Boolean) as PublicChampion[];
+  const answerBuild = selected.target.answerBuild;
   const answer = answerBuild[0];
-  const answerBoots = uniqueBootCandidates[0]?.item ?? itemCatalog.find((item) => item.tags.includes("Boots") && item.name !== "Boots") ?? answer;
-  const targetItemIds = [...answerBuild.map((item) => item.id), answerBoots.id];
-  const possibleItems = uniqueCandidateItems
-    .filter((candidate) => candidate.score >= 6)
-    .slice(0, 32)
-    .map((candidate) => candidate.item);
-  const possibleBoots = uniqueBootCandidates.map((candidate) => candidate.item);
-  const candidates = [answer, ...uniqueCandidateItems.slice(1).filter((candidate) => candidate.item.id !== answer.id).slice(0, 3).map((candidate) => candidate.item)]
+  const answerBoots = selected.target.answerBoots;
+  const possibleItems = selected.target.possibleItems;
+  const possibleBoots = selected.target.possibleBoots;
+  const candidates = answerBuild
+    .slice(0, 4)
     .sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000));
 
   return {
@@ -118,173 +124,220 @@ function generateItemBuildChallenge(
     answerItemIds: answerBuild.map((item) => item.id),
     answerBootsId: answerBoots.id,
     matchupNotes: buildMatchupNotes(champion, enemyTeam, answerBuild, answerBoots),
-    winrateStats: withTargetBuildWinrate(winrateSamples[champion.id], targetItemIds),
+    winrateStats: selected.target.stats,
     winrateSamples,
     catalogModel: {
-      source: `Riot Data Dragon ${version} champion/item metadata`,
+      source: `Riot Match-V5 current-patch inventory samples + Riot Data Dragon ${version}`,
       candidateCount: possibleItems.length,
       targetItemCount: answerBuild.length
     }
   };
 }
 
-function buildItemFrequency(stats: BuildWinrateStats | undefined) {
-  const frequency = new Map<string, number>();
+function buildTargetFromInventory(itemIds: string[], itemById: Map<string, GameItem>) {
+  const items = uniqueStrings(itemIds)
+    .map((itemId) => itemById.get(itemId))
+    .filter(Boolean) as GameItem[];
+  const answerBoots = items.filter(isBootUpgrade).sort((a, b) => b.goldTotal - a.goldTotal || a.name.localeCompare(b.name))[0];
 
-  for (const game of stats?.inventorySamples ?? []) {
-    for (const itemId of game.itemIds) {
-      frequency.set(itemId, (frequency.get(itemId) ?? 0) + 1);
-    }
-  }
-
-  return frequency;
-}
-
-function withTargetBuildWinrate(stats: BuildWinrateStats | undefined, targetItemIds: string[]) {
-  if (!stats) {
+  if (!answerBoots) {
     return undefined;
   }
 
-  const samples = stats.inventorySamples ?? [];
-  const targetIds = uniqueStrings(targetItemIds);
-  let selected: {
-    games: typeof samples;
-    wins: number;
-    winRate: number;
-    matchedItemCount: number;
-  } | undefined;
+  const answerBuild = uniqueItemsByName(items.filter(isBuildCandidateItem)).slice(0, 5);
 
-  for (let size = targetIds.length; size >= 1; size -= 1) {
-    let bestAtSize: typeof selected;
-
-    for (const subset of combinations(targetIds, size)) {
-      const games = samples.filter((game) => subset.every((itemId) => game.itemIds.includes(itemId)));
-
-      if (games.length < MIN_BUILD_WINRATE_GAMES) {
-        continue;
-      }
-
-      const wins = games.filter((game) => game.win).length;
-      const winRate = Math.round((wins / games.length) * 1000) / 10;
-
-      if (winRate < stats.winRate) {
-        continue;
-      }
-
-      if (
-        !bestAtSize ||
-        winRate - stats.winRate > bestAtSize.winRate - stats.winRate ||
-        (winRate === bestAtSize.winRate && games.length > bestAtSize.games.length)
-      ) {
-        bestAtSize = {
-          games,
-          wins,
-          winRate,
-          matchedItemCount: size
-        };
-      }
-    }
-
-    if (bestAtSize) {
-      selected = bestAtSize;
-      break;
-    }
+  if (answerBuild.length !== 5) {
+    return undefined;
   }
 
   return {
-    ...stats,
-    targetItemIds,
-    buildWins: selected?.wins ?? stats.wins,
-    buildGames: selected?.games.length ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.games : undefined),
-    buildWinRate: selected?.winRate ?? (stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.winRate : undefined),
-    buildSampleMatches: selected ? new Set(selected.games.map((game) => game.matchId)).size : stats.games >= MIN_BUILD_WINRATE_GAMES ? stats.sampleMatches : undefined,
-    buildMatchedItemCount: selected?.matchedItemCount ?? 0
+    answerBuild,
+    answerBoots
   };
 }
 
-function hasVerifiedBuildChampionSample(stats: BuildWinrateStats | undefined) {
-  return Boolean(stats && stats.games >= MIN_BUILD_WINRATE_GAMES);
+function buildGroupKey(answerBuild: GameItem[], answerBoots: GameItem) {
+  return `${answerBuild.map((item) => item.id).sort().join("+")}:${answerBoots.id}`;
 }
 
-function buildPositiveItemSamples(stats: BuildWinrateStats | undefined) {
-  const samples = new Map<string, { wins: number; games: number; winRate: number; lift: number }>();
-
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return samples;
-  }
-
-  const raw = new Map<string, { wins: number; games: number }>();
-
-  for (const game of stats.inventorySamples ?? []) {
-    for (const itemId of uniqueStrings(game.itemIds)) {
-      const current = raw.get(itemId) ?? { wins: 0, games: 0 };
-      current.games += 1;
-      current.wins += game.win ? 1 : 0;
-      raw.set(itemId, current);
-    }
-  }
-
-  for (const [itemId, itemStats] of raw) {
-    if (itemStats.games < MIN_BUILD_WINRATE_GAMES) {
-      continue;
-    }
-
-    const winRate = Math.round((itemStats.wins / itemStats.games) * 1000) / 10;
-
-    if (winRate >= stats.winRate) {
-      samples.set(itemId, {
-        ...itemStats,
-        winRate,
-        lift: winRate - stats.winRate
-      });
-    }
-  }
-
-  return samples;
+function incrementObservedItem(target: Map<string, { item: GameItem; games: number; wins: number }>, item: GameItem, win: boolean) {
+  const current = target.get(item.id) ?? { item, games: 0, wins: 0 };
+  current.games += 1;
+  current.wins += win ? 1 : 0;
+  target.set(item.id, current);
 }
 
-function sampleItemScore(itemId: string, frequency: Map<string, number>, positiveSamples: Map<string, { games: number; lift: number }>) {
-  const positive = positiveSamples.get(itemId);
-
-  return (frequency.get(itemId) ?? 0) * 12 + (positive ? POSITIVE_BUILD_ITEM_BOOST + positive.games + positive.lift * 35 : 0);
+function rankedObservedItems(target: Map<string, { item: GameItem; games: number; wins: number }>) {
+  return uniqueItemsByName(
+    [...target.values()]
+      .sort((a, b) => b.games - a.games || b.wins - a.wins || a.item.name.localeCompare(b.item.name))
+      .map((entry) => entry.item)
+  );
 }
 
-function uniqueScoredItemsByName<T extends { item: GameItem }>(items: T[]) {
+function includeRequiredItems(items: GameItem[], required: GameItem[]) {
+  return uniqueItemsByName([...required, ...items]);
+}
+
+function uniqueItemsByName(items: GameItem[]) {
   const seen = new Set<string>();
-  const uniqueItems: T[] = [];
+  const uniqueItems: GameItem[] = [];
 
-  for (const entry of items) {
-    const key = itemNameKey(entry.item);
+  for (const item of items) {
+    const key = itemNameKey(item);
 
     if (!seen.has(key)) {
       seen.add(key);
-      uniqueItems.push(entry);
+      uniqueItems.push(item);
     }
   }
 
   return uniqueItems;
 }
 
-function itemNameKey(item: GameItem) {
-  return item.name.trim().toLowerCase();
+function unavailableItemBuildChallenge(date: string, winrateSamples: Record<string, BuildWinrateStats>, reason: string): ItemBuildChallenge {
+  const emptyChampion: PublicChampion = {
+    id: "",
+    name: "",
+    title: "",
+    roles: [],
+    region: "",
+    resource: "",
+    gender: "",
+    releaseYear: 0,
+    squareUrl: "",
+    splashUrl: ""
+  };
+
+  return {
+    id: `${date}:item-build-unavailable`,
+    type: "item-build",
+    date,
+    champion: emptyChampion,
+    enemyTeam: [],
+    candidates: [],
+    possibleItems: [],
+    possibleBoots: [],
+    answerItemId: "",
+    answerItemIds: [],
+    answerBootsId: "",
+    matchupNotes: [],
+    winrateSamples,
+    unavailableReason: reason,
+    catalogModel: {
+      source: "Riot Match-V5",
+      candidateCount: 0,
+      targetItemCount: 0
+    }
+  };
 }
 
-function combinations(values: string[], size: number) {
-  const result: string[][] = [];
-
-  function visit(start: number, picked: string[]) {
-    if (picked.length === size) {
-      result.push(picked);
-      return;
-    }
-
-    for (let index = start; index < values.length; index += 1) {
-      visit(index + 1, [...picked, values[index]]);
-    }
+function selectVerifiedBuildTarget(stats: BuildWinrateStats | undefined, itemCatalog: GameItem[]): VerifiedBuildTarget | undefined {
+  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES || !stats.inventorySamples?.length) {
+    return undefined;
   }
 
-  visit(0, []);
-  return result;
+  const itemById = new Map(itemCatalog.map((item) => [item.id, item]));
+  const itemCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
+  const bootCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
+  const buildGroups = new Map<
+    string,
+    {
+      answerBuild: GameItem[];
+      answerBoots: GameItem;
+      wins: number;
+      games: number;
+      matchIds: Set<string>;
+      enemyChampionIds: string[];
+    }
+  >();
+
+  for (const sample of stats.inventorySamples) {
+    for (const itemId of uniqueStrings(sample.itemIds)) {
+      const item = itemById.get(itemId);
+
+      if (!item) {
+        continue;
+      }
+
+      if (isBuildCandidateItem(item)) {
+        incrementObservedItem(itemCounts, item, sample.win);
+      } else if (isBootUpgrade(item)) {
+        incrementObservedItem(bootCounts, item, sample.win);
+      }
+    }
+
+    if ((sample.enemyChampionIds?.length ?? 0) < 5) {
+      continue;
+    }
+
+    const sampledBuild = buildTargetFromInventory(sample.itemIds, itemById);
+
+    if (!sampledBuild) {
+      continue;
+    }
+
+    const key = buildGroupKey(sampledBuild.answerBuild, sampledBuild.answerBoots);
+    const current = buildGroups.get(key) ?? {
+      ...sampledBuild,
+      wins: 0,
+      games: 0,
+      matchIds: new Set<string>(),
+      enemyChampionIds: sample.enemyChampionIds!.slice(0, 5)
+    };
+
+    current.games += 1;
+    current.wins += sample.win ? 1 : 0;
+    current.matchIds.add(sample.matchId);
+
+    if (current.enemyChampionIds.length < 5 && sample.enemyChampionIds) {
+      current.enemyChampionIds = sample.enemyChampionIds.slice(0, 5);
+    }
+
+    buildGroups.set(key, current);
+  }
+
+  const selected = [...buildGroups.values()]
+    .map((group) => ({
+      ...group,
+      winRate: Math.round((group.wins / group.games) * 1000) / 10
+    }))
+    .filter((group) => group.games >= MIN_BUILD_WINRATE_GAMES && group.enemyChampionIds.length >= 5 && group.winRate >= stats.winRate)
+    .sort((a, b) => b.winRate - a.winRate || b.games - a.games || a.answerBuild[0].name.localeCompare(b.answerBuild[0].name))[0];
+
+  if (!selected) {
+    return undefined;
+  }
+
+  const possibleItems = includeRequiredItems(rankedObservedItems(itemCounts), selected.answerBuild).slice(0, 36);
+  const possibleBoots = includeRequiredItems(rankedObservedItems(bootCounts), [selected.answerBoots]);
+
+  if (possibleItems.length < 5 || possibleBoots.length === 0) {
+    return undefined;
+  }
+
+  const targetItemIds = [...selected.answerBuild.map((item) => item.id), selected.answerBoots.id];
+
+  return {
+    answerBuild: selected.answerBuild,
+    answerBoots: selected.answerBoots,
+    enemyChampionIds: selected.enemyChampionIds,
+    possibleItems,
+    possibleBoots,
+    stats: {
+      ...stats,
+      targetItemIds,
+      buildWins: selected.wins,
+      buildGames: selected.games,
+      buildWinRate: selected.winRate,
+      buildSampleMatches: selected.matchIds.size,
+      buildMatchedItemCount: targetItemIds.length
+    }
+  };
+}
+
+function itemNameKey(item: GameItem) {
+  return item.name.trim().toLowerCase();
 }
 
 function uniqueStrings(values: string[]) {
@@ -426,57 +479,6 @@ function generateSkillshotDodgeChallenge(date: string): SkillshotDodgeChallenge 
     arena: { width: 900, height: 520 },
     player: { moveSpeed: 280, radius: 14, health: 3 }
   };
-}
-
-function pickUnique<T extends { id: string }>(list: T[], seed: string, count: number, excluded: string[]) {
-  const excludedSet = new Set(excluded);
-  const sorted = [...list].sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000));
-  const picked: T[] = [];
-
-  for (const item of sorted) {
-    if (!excludedSet.has(item.id)) {
-      picked.push(item);
-      excludedSet.add(item.id);
-    }
-
-    if (picked.length === count) {
-      break;
-    }
-  }
-
-  return picked;
-}
-
-function scoreItemForMatchup(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]): number {
-  const enemyTanks = enemyTeam.filter((enemy) => enemy.roles.includes("Tank")).length;
-  const enemyAssassins = enemyTeam.filter((enemy) => enemy.roles.includes("Assassin")).length;
-  const wantsAp = champion.roles.includes("Mage");
-  const wantsAd = champion.roles.includes("Marksman") || champion.roles.includes("Fighter") || champion.roles.includes("Assassin");
-  let score = item.goldTotal / 1000;
-
-  if (wantsAp && item.tags.includes("SpellDamage")) score += 8;
-  if (wantsAd && item.tags.includes("Damage")) score += 8;
-  if (champion.roles.includes("Tank") && (item.tags.includes("Health") || item.tags.includes("Armor") || item.tags.includes("SpellBlock"))) score += 8;
-  if (enemyTanks >= 2 && (item.tags.includes("ArmorPenetration") || item.tags.includes("MagicPenetration") || item.tags.includes("AttackSpeed"))) score += 5;
-  if (enemyAssassins >= 2 && (item.tags.includes("Armor") || item.tags.includes("Health"))) score += 4;
-  if (item.tags.includes("Boots")) score -= 5;
-
-  return score;
-}
-
-function scoreBootsForMatchup(item: GameItem, champion: PublicChampion, enemyTeam: PublicChampion[]): number {
-  const enemyPhysical = enemyTeam.filter((enemy) => enemy.roles.includes("Marksman") || enemy.roles.includes("Fighter") || enemy.roles.includes("Assassin")).length;
-  const enemyMagic = enemyTeam.filter((enemy) => enemy.roles.includes("Mage") || enemy.roles.includes("Support")).length;
-  let score = item.goldTotal / 100;
-
-  if (champion.roles.includes("Marksman") && item.tags.includes("AttackSpeed")) score += 20;
-  if (champion.roles.includes("Mage") && (item.tags.includes("MagicPenetration") || item.tags.includes("CooldownReduction"))) score += 18;
-  if (champion.roles.includes("Tank") && item.tags.includes("Armor")) score += 14;
-  if (enemyPhysical >= 3 && item.tags.includes("Armor")) score += 12;
-  if (enemyMagic >= 3 && (item.tags.includes("SpellBlock") || item.tags.includes("Tenacity"))) score += 12;
-  if (champion.roles.includes("Support") && item.tags.includes("NonbootsMovement")) score += 8;
-
-  return score;
 }
 
 function isBootUpgrade(item: GameItem) {

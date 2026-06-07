@@ -6,7 +6,7 @@ export const env = {
   riotApiKey: process.env.RIOT_API_KEY ?? "",
   riotRegion: process.env.RIOT_REGION ?? "na1",
   riotMatchSampleSize: Number(process.env.RIOT_MATCH_SAMPLE_SIZE ?? "100"),
-  riotBuildSampleMatchCount: Number(process.env.RIOT_BUILD_SAMPLE_MATCH_COUNT ?? "128"),
+  riotBuildSampleMatchCount: Number(process.env.RIOT_BUILD_SAMPLE_MATCH_COUNT ?? "512"),
   riotMatchupSampleMatchCount: Number(process.env.RIOT_MATCHUP_SAMPLE_MATCH_COUNT ?? "1600"),
   riotMatchHistoryPagesPerSource: Number(process.env.RIOT_MATCH_HISTORY_PAGES_PER_SOURCE ?? "2"),
   cronSecret: process.env.CRON_SECRET ?? ""

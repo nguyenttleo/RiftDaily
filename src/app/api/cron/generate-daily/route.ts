@@ -70,6 +70,56 @@ async function generate(request: Request) {
     });
   }
 
+  if (mode === "warm-verified" || mode === "warm-samples") {
+    const [publicChampions, summonerSpells] = await Promise.all([
+      getLivePublicChampions(version),
+      getLiveSummonerSpells(version)
+    ]);
+    const verified = await getVerifiedRankedMatchChallenges({
+      date,
+      dataDragonVersion: version,
+      publicChampions,
+      summonerSpells,
+      allowLiveMatchupCollection: false,
+      forceRefresh: true,
+      batchKey: url.searchParams.get("batch") ?? String(Math.floor(Date.now() / 600000)),
+      timeBudgetMs: numberParam(url, "budgetMs", 24000),
+      matchSampleSize: numberParam(url, "sampleSize", env.riotMatchSampleSize || 100),
+      buildSampleMatchCount: numberParam(url, "buildTarget", Math.max(512, env.riotBuildSampleMatchCount || 512)),
+      matchHistoryPagesPerSource: numberParam(url, "pages", Math.max(2, env.riotMatchHistoryPagesPerSource || 2))
+    });
+    const buildSamples = Object.values(verified.championWinrateSamples);
+    const buildSampleGames = buildSamples.reduce((total, sample) => total + sample.games, 0);
+    const topBuildSamples = buildSamples
+      .sort((a, b) => b.games - a.games || a.championName.localeCompare(b.championName))
+      .slice(0, 8)
+      .map((sample) => ({
+        champion: sample.championName,
+        games: sample.games,
+        winRate: sample.winRate
+      }));
+
+    return NextResponse.json({
+      ok: verified.status === "ready",
+      date,
+      mode,
+      challenges: {
+        ability,
+        champion
+      },
+      verified: {
+        guessEloRounds: verified.guessEloRounds.length,
+        dodgeQueueRounds: verified.dodgeQueueRounds.length,
+        championMatchupRounds: verified.championMatchupRounds.length,
+        buildSampleChampions: buildSamples.length,
+        buildSampleGames,
+        topBuildSamples,
+        status: verified.status,
+        message: verified.message
+      }
+    });
+  }
+
   const includeVerified = mode === "verified" || url.searchParams.get("verified") === "1";
 
   if (!includeVerified) {
@@ -97,7 +147,13 @@ async function generate(request: Request) {
     dataDragonVersion: version,
     publicChampions,
     summonerSpells,
-    allowLiveMatchupCollection: false
+    allowLiveMatchupCollection: false,
+    forceRefresh: url.searchParams.get("force") === "1",
+    batchKey: url.searchParams.get("batch") ?? "",
+    timeBudgetMs: numberParam(url, "budgetMs", 26000),
+    matchSampleSize: numberParam(url, "sampleSize", env.riotMatchSampleSize || 100),
+    buildSampleMatchCount: numberParam(url, "buildTarget", env.riotBuildSampleMatchCount || 512),
+    matchHistoryPagesPerSource: numberParam(url, "pages", env.riotMatchHistoryPagesPerSource || 2)
   });
 
   return NextResponse.json({

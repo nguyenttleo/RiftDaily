@@ -356,14 +356,14 @@ function TrainerHeader({
 
 function TrainerStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-[color:var(--muted)]">
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+    <div className="flex flex-wrap items-center gap-2.5 text-sm text-[color:var(--muted)]">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 leading-none">
         Round <b className="relative top-px font-display leading-none text-white">{round}</b>
       </span>
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-[#3c3421] bg-[#c89b3c]/10 px-3.5 py-1.5 leading-none text-[#c89b3c]">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-[#3c3421] bg-[#c89b3c]/10 px-4 py-2 leading-none text-[#c89b3c]">
         Streak <b className="relative top-px font-display leading-none">{current}</b>
       </span>
-      <span className="inline-flex min-h-7 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 leading-none">
+      <span className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 py-2 leading-none">
         Best <b className="relative top-px font-display leading-none text-white">{best}</b>
       </span>
     </div>

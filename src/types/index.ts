@@ -44,6 +44,7 @@ export interface GameItem {
   purchasable: boolean;
   from: string[];
   into: string[];
+  maps?: Record<string, boolean>;
   imageUrl: string;
 }
 
@@ -85,6 +86,7 @@ export interface BuildWinrateStats {
     win: boolean;
     matchId: string;
     itemIds: string[];
+    enemyChampionIds?: string[];
   }>;
   source: string;
 }
@@ -125,6 +127,7 @@ export interface OptionItem {
   label: string;
   sublabel?: string;
   imageUrl?: string;
+  splashUrl?: string;
   spells?: SummonerSpellRef[];
   playerName?: string;
 }
@@ -170,6 +173,7 @@ export interface ItemBuildChallenge {
   matchupNotes: string[];
   winrateStats?: BuildWinrateStats;
   winrateSamples?: Record<string, BuildWinrateStats>;
+  unavailableReason?: string;
   catalogModel: {
     source: string;
     candidateCount: number;

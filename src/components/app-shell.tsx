@@ -177,7 +177,7 @@ export function AppShell() {
   }
 
   return (
-    <main className="grid min-h-dvh overflow-x-hidden bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
+    <main className="grid min-h-dvh items-start overflow-x-clip bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
       <section className="grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 sm:gap-3 sm:p-4 lg:grid-rows-[auto_minmax(0,1fr)]">
         <nav className="sticky top-0 z-30 flex min-h-12 flex-nowrap items-center gap-1.5 overflow-x-auto rounded-lg border border-[color:var(--line)] bg-[#080a0d]/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_14px_40px_rgba(0,0,0,.32)] backdrop-blur fine-scrollbar sm:min-h-14 sm:gap-2 sm:px-3 sm:py-2 lg:static">
           <Link
@@ -248,7 +248,7 @@ export function AppShell() {
         </div>
       </section>
 
-      <aside className="relative hidden h-screen overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.14),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-0 lg:flex lg:flex-col lg:gap-3">
+      <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.14),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
         <div className="relative">
           <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Rift Daily</h1>

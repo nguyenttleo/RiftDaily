@@ -11,12 +11,16 @@ import type {
 } from "@/types";
 
 const RANKED_SOLO_QUEUE_ID = 420;
+const SUMMONERS_RIFT_MAP_ID = 11;
+const CLASSIC_GAME_MODE = "CLASSIC";
 const SMITE_ID = 11;
 const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
 const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
 const MIN_BUILD_SAMPLE_GAMES = 5;
+const DEFAULT_BUILD_SAMPLE_MATCH_COUNT = 512;
+const MAX_BUILD_SAMPLE_MATCH_COUNT = 5000;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
 const TARGET_MATCHUP_ROUNDS = 16;
 const MATCH_IDS_PER_REQUEST = 100;
@@ -156,6 +160,7 @@ interface WinrateAccumulator {
     win: boolean;
     matchId: string;
     itemIds: string[];
+    enemyChampionIds: string[];
   }>;
 }
 
@@ -214,7 +219,13 @@ export async function getVerifiedRankedMatchChallenges({
   publicChampions,
   summonerSpells,
   allowLiveMatchupCollection = false,
-  timeBudgetMs = 26000
+  timeBudgetMs = 26000,
+  matchSampleSize,
+  buildSampleMatchCount,
+  matchupSampleMatchCount,
+  matchHistoryPagesPerSource,
+  batchKey = "",
+  forceRefresh = false
 }: {
   date: string;
   dataDragonVersion: string;
@@ -222,6 +233,12 @@ export async function getVerifiedRankedMatchChallenges({
   summonerSpells: SummonerSpellRef[];
   allowLiveMatchupCollection?: boolean;
   timeBudgetMs?: number;
+  matchSampleSize?: number;
+  buildSampleMatchCount?: number;
+  matchupSampleMatchCount?: number;
+  matchHistoryPagesPerSource?: number;
+  batchKey?: string;
+  forceRefresh?: boolean;
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
     return {
@@ -238,16 +255,22 @@ export async function getVerifiedRankedMatchChallenges({
   const regional = regionalRouteForPlatform(platform);
   const startedAt = Date.now();
   const isTimedOut = () => Date.now() - startedAt > timeBudgetMs;
-  const requestedSampleSize = Number.isFinite(env.riotMatchSampleSize) ? Math.max(RANK_BUCKETS.length, Math.min(100, env.riotMatchSampleSize)) : 100;
+  const requestedSampleSizeValue = matchSampleSize ?? env.riotMatchSampleSize;
+  const requestedSampleSize = Number.isFinite(requestedSampleSizeValue) ? Math.max(RANK_BUCKETS.length, Math.min(100, requestedSampleSizeValue)) : 100;
   const roundsPerRank = Math.max(1, Math.floor(requestedSampleSize / RANK_BUCKETS.length));
   const sampleSize = roundsPerRank * RANK_BUCKETS.length;
   const initialRoundsPerRank = Math.min(roundsPerRank, MIN_PLAYABLE_ROUNDS_PER_RANK);
-  const requestedBuildSampleSize = Number.isFinite(env.riotBuildSampleMatchCount) ? Math.max(sampleSize, Math.min(128, env.riotBuildSampleMatchCount)) : 128;
-  const requestedMatchupSampleSize = Number.isFinite(env.riotMatchupSampleMatchCount)
-    ? Math.max(sampleSize, Math.min(MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE, env.riotMatchupSampleMatchCount))
+  const requestedBuildSampleValue = buildSampleMatchCount ?? env.riotBuildSampleMatchCount;
+  const requestedBuildSampleSize = Number.isFinite(requestedBuildSampleValue)
+    ? Math.max(sampleSize, Math.min(MAX_BUILD_SAMPLE_MATCH_COUNT, requestedBuildSampleValue))
+    : DEFAULT_BUILD_SAMPLE_MATCH_COUNT;
+  const requestedMatchupSampleValue = matchupSampleMatchCount ?? env.riotMatchupSampleMatchCount;
+  const requestedMatchupSampleSize = Number.isFinite(requestedMatchupSampleValue)
+    ? Math.max(sampleSize, Math.min(MAX_CURRENT_PATCH_MATCHUP_SAMPLE_SIZE, requestedMatchupSampleValue))
     : 1600;
-  const matchHistoryPagesPerSource = Number.isFinite(env.riotMatchHistoryPagesPerSource)
-    ? Math.max(1, Math.min(MAX_MATCH_HISTORY_PAGES_PER_SOURCE, env.riotMatchHistoryPagesPerSource))
+  const requestedHistoryPages = matchHistoryPagesPerSource ?? env.riotMatchHistoryPagesPerSource;
+  const boundedMatchHistoryPagesPerSource = Number.isFinite(requestedHistoryPages)
+    ? Math.max(1, Math.min(MAX_MATCH_HISTORY_PAGES_PER_SOURCE, requestedHistoryPages))
     : 2;
   const currentPatchPrefix = patchPrefixFromVersion(dataDragonVersion);
   const championLookup = createChampionLookup(publicChampions);
@@ -257,19 +280,19 @@ export async function getVerifiedRankedMatchChallenges({
   const analysisFetchBudget = shouldCollectLiveMatchups
     ? Math.min(MAX_ANALYSIS_MATCH_FETCH_BUDGET, Math.max(analysisTargetMatchCount, requestedMatchupSampleSize * 3))
     : Math.max(analysisTargetMatchCount, requestedBuildSampleSize * 3);
-  const matchIdsPerSourceBudget = MATCH_IDS_PER_REQUEST * (shouldCollectLiveMatchups ? matchHistoryPagesPerSource : 1);
+  const matchIdsPerSourceBudget = MATCH_IDS_PER_REQUEST * (shouldCollectLiveMatchups ? boundedMatchHistoryPagesPerSource : 1);
   const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisFetchBudget / RANK_BUCKETS.length));
   const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / matchIdsPerSourceBudget) + 1));
-  const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${matchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
-  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:verified-rounds`;
+  const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${boundedMatchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
+  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${boundedMatchHistoryPagesPerSource}:verified-rounds`;
 
-  if (cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
+  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
     return cachedMatchSet.value;
   }
 
   const persistedVerifiedSet = await getPersistedVerifiedMatchCache(persistedCacheKey);
 
-  if (persistedVerifiedSet && hasBuildWinrateSamplesRecord(persistedVerifiedSet.championWinrateSamples)) {
+  if (!forceRefresh && persistedVerifiedSet && hasBuildWinrateSamplesRecord(persistedVerifiedSet.championWinrateSamples)) {
     const value = mergePersistedMatchupsIntoVerifiedSet(persistedVerifiedSet, persistedChampionMatchupRounds);
 
     cachedMatchSet = {
@@ -282,7 +305,8 @@ export async function getVerifiedRankedMatchChallenges({
   }
 
   try {
-    const sources = await getRankedSources(platform, date, sourceCountPerBucket);
+    const batchSeed = batchKey || String(Math.floor(Date.now() / 600000));
+    const sources = await getRankedSources(platform, `${date}:${batchSeed}`, sourceCountPerBucket);
     const sourcesByBucket = groupSourcesByBucket(sources);
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
     const seenMatches = new Set<string>();
@@ -332,7 +356,7 @@ export async function getVerifiedRankedMatchChallenges({
           continue;
         }
 
-        for (const matchId of seededOrder(matchIds, `${date}:${source.bucket}:${source.puuid}`)) {
+        for (const matchId of seededOrder(matchIds, `${date}:${batchSeed}:${source.bucket}:${source.puuid}`)) {
           if (bucketRounds.length >= initialRoundsPerRank || isTimedOut()) {
             break;
           }
@@ -405,14 +429,14 @@ export async function getVerifiedRankedMatchChallenges({
         matchIds = await getRankedMatchIdsForSource(
           regional,
           source.puuid,
-          matchHistoryPagesPerSource,
+      boundedMatchHistoryPagesPerSource,
           shouldCollectLiveMatchups ? MATCH_IDS_PER_REQUEST : MATCH_IDS_PER_PLAY_SOURCE
         );
       } catch {
         continue;
       }
 
-      for (const matchId of seededOrder(matchIds, `${date}:analysis:${source.bucket}:${source.puuid}`)) {
+      for (const matchId of seededOrder(matchIds, `${date}:analysis:${batchSeed}:${source.bucket}:${source.puuid}`)) {
         if (
           isTimedOut() ||
           isAnalysisComplete(
@@ -507,14 +531,17 @@ export async function getVerifiedRankedMatchChallenges({
       ...(dodgeQueueMessage ? { dodgeQueueMessage } : {}),
       ...(championMatchupMessage ? { championMatchupMessage } : {})
     };
+    const valueToPersist = persistedVerifiedSet ? mergeVerifiedChallengeSets(persistedVerifiedSet, value) : value;
 
-    if (hasVerifiedBuildSamples) {
-      await persistVerifiedMatchCache(persistedCacheKey, value);
+    if (hasVerifiedBuildSamples || hasBuildWinrateSamplesRecord(valueToPersist.championWinrateSamples)) {
+      await persistVerifiedMatchCache(persistedCacheKey, valueToPersist);
       cachedMatchSet = {
         key: cacheKey,
         expiresAt: Date.now() + 1000 * 60 * 60 * 2,
-        value
+        value: valueToPersist
       };
+
+      return valueToPersist;
     }
 
     return value;
@@ -700,6 +727,17 @@ function addChampionWinrateSamples(
   championWinrates: Map<string, WinrateAccumulator>
 ) {
   const winningTeams = new Map(match.info.teams.map((team) => [team.teamId, team.win]));
+  const enemyChampionIdsByTeam = new Map<TeamId, string[]>();
+
+  for (const teamId of [100, 200] as const) {
+    enemyChampionIdsByTeam.set(
+      teamId,
+      match.info.participants
+        .filter((participant) => participant.teamId !== teamId)
+        .map((participant) => championLookup.get(participant.championId)?.id)
+        .filter(Boolean) as string[]
+    );
+  }
 
   for (const participant of match.info.participants) {
     const champion = championLookup.get(participant.championId);
@@ -723,7 +761,8 @@ function addChampionWinrateSamples(
     current.gamesWithItems.push({
       win: Boolean(winningTeams.get(participant.teamId)),
       matchId: match.metadata.matchId,
-      itemIds
+      itemIds,
+      enemyChampionIds: enemyChampionIdsByTeam.get(participant.teamId) ?? []
     });
     championWinrates.set(champion.id, current);
   }
@@ -899,7 +938,11 @@ function hasBuildWinrateCandidate(championWinrates: Map<string, WinrateAccumulat
 }
 
 function hasBuildWinrateSamplesRecord(samples: Record<string, BuildWinrateStats>) {
-  return Object.values(samples).some((sample) => sample.games >= MIN_BUILD_SAMPLE_GAMES);
+  return Object.values(samples).some(
+    (sample) =>
+      sample.games >= MIN_BUILD_SAMPLE_GAMES &&
+      (sample.inventorySamples ?? []).some((game) => (game.enemyChampionIds?.length ?? 0) >= 5)
+  );
 }
 
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
@@ -1042,6 +1085,81 @@ function mergePersistedMatchupsIntoVerifiedSet(cachedSet: VerifiedMatchChallenge
   };
 }
 
+function mergeVerifiedChallengeSets(existing: VerifiedMatchChallengeSet, incoming: VerifiedMatchChallengeSet): VerifiedMatchChallengeSet {
+  const guessEloRounds = mergeRoundsByMatch(existing.guessEloRounds, incoming.guessEloRounds).slice(0, 200);
+  const dodgeQueueRounds = mergeRoundsByMatch(existing.dodgeQueueRounds, incoming.dodgeQueueRounds).slice(0, 200);
+  const championWinrateSamples = mergeChampionWinrateSamples(existing.championWinrateSamples, incoming.championWinrateSamples);
+  const championMatchupRounds = incoming.championMatchupRounds.length > 0 ? incoming.championMatchupRounds : existing.championMatchupRounds;
+
+  return {
+    ...incoming,
+    guessEloRounds,
+    dodgeQueueRounds,
+    championMatchupRounds,
+    championWinrateSamples,
+    status: guessEloRounds.length > 0 || dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : incoming.status,
+    message: incoming.message ?? existing.message,
+    guessEloMessage: incoming.guessEloMessage ?? existing.guessEloMessage,
+    dodgeQueueMessage: incoming.dodgeQueueMessage ?? existing.dodgeQueueMessage,
+    championMatchupMessage: incoming.championMatchupMessage ?? existing.championMatchupMessage
+  };
+}
+
+function mergeRoundsByMatch<T extends { id: string; sourceMatch?: { matchId: string } }>(existing: T[], incoming: T[]) {
+  const seen = new Set<string>();
+  const merged: T[] = [];
+
+  for (const round of [...incoming, ...existing]) {
+    const key = round.sourceMatch?.matchId ?? round.id;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(round);
+    }
+  }
+
+  return merged;
+}
+
+function mergeChampionWinrateSamples(existing: Record<string, BuildWinrateStats>, incoming: Record<string, BuildWinrateStats>) {
+  const championIds = new Set([...Object.keys(existing), ...Object.keys(incoming)]);
+  const merged: Record<string, BuildWinrateStats> = {};
+
+  for (const championId of championIds) {
+    const existingStats = existing[championId];
+    const incomingStats = incoming[championId];
+    const championName = incomingStats?.championName ?? existingStats?.championName ?? championId;
+    const samplesByMatch = new Map<string, NonNullable<BuildWinrateStats["inventorySamples"]>[number]>();
+
+    for (const sample of [...(existingStats?.inventorySamples ?? []), ...(incomingStats?.inventorySamples ?? [])]) {
+      samplesByMatch.set(sample.matchId, sample);
+    }
+
+    const inventorySamples = [...samplesByMatch.values()];
+
+    if (inventorySamples.length === 0) {
+      merged[championId] = incomingStats ?? existingStats;
+      continue;
+    }
+
+    const wins = inventorySamples.filter((sample) => sample.win).length;
+    const games = inventorySamples.length;
+
+    merged[championId] = {
+      championId,
+      championName,
+      wins,
+      games,
+      winRate: toWinRate(wins, games),
+      sampleMatches: samplesByMatch.size,
+      inventorySamples,
+      source: "Riot Match-V5 ranked solo sample"
+    };
+  }
+
+  return merged;
+}
+
 async function getPersistedVerifiedMatchCache(cacheKey: string) {
   if (!isDatabaseConfigured()) {
     return null;
@@ -1073,7 +1191,7 @@ async function persistVerifiedMatchCache(cacheKey: string, value: VerifiedMatchC
     await ensureVerifiedMatchCacheTable();
     await query(
       `insert into verified_match_cache (cache_key, payload, expires_at)
-      values ($1, $2::jsonb, now() + interval '2 hours')
+      values ($1, $2::jsonb, now() + interval '24 hours')
       on conflict (cache_key)
       do update set
         payload = excluded.payload,
@@ -1435,8 +1553,8 @@ function isRankBucket(value: string): value is RankBucket {
 function isRankedClassicSummonersRiftMatch(match: RiotMatchDto) {
   return (
     match.info.queueId === RANKED_SOLO_QUEUE_ID &&
-    match.info.mapId === 11 &&
-    match.info.gameMode === "CLASSIC" &&
+    match.info.mapId === SUMMONERS_RIFT_MAP_ID &&
+    match.info.gameMode === CLASSIC_GAME_MODE &&
     match.info.participants.length === 10
   );
 }
@@ -1559,8 +1677,8 @@ function toVerifiedRounds(
 ) {
   if (
     match.info.queueId !== RANKED_SOLO_QUEUE_ID ||
-    match.info.mapId !== 11 ||
-    match.info.gameMode !== "CLASSIC" ||
+    match.info.mapId !== SUMMONERS_RIFT_MAP_ID ||
+    match.info.gameMode !== CLASSIC_GAME_MODE ||
     match.info.participants.length !== 10
   ) {
     return null;
