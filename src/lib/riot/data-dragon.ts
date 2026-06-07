@@ -36,6 +36,7 @@ const NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS = new Set([
   "2015",
   "2049",
   "2050",
+  "2051",
   "2056",
   "2142",
   "2143",
@@ -53,8 +54,11 @@ const NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS = new Set([
   "3039",
   "3095",
   "3105",
+  "3112",
   "3128",
   "3131",
+  "3177",
+  "3184",
   "3193",
   "3348",
   "3349",
@@ -272,6 +276,7 @@ export interface RiotItemPayload {
         total?: number;
         purchasable?: boolean;
       };
+      inStore?: boolean;
       from?: string[];
       into?: string[];
       maps?: Record<string, boolean>;
@@ -402,7 +407,7 @@ export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
 }
 
 function isSummonersRiftRiotItem(id: string, item: RiotItemPayload["data"][string]) {
-  return id.length <= 4 && item.maps?.[SUMMONERS_RIFT_MAP_ID] === true;
+  return id.length <= 4 && item.maps?.[SUMMONERS_RIFT_MAP_ID] === true && item.inStore !== false && !NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS.has(id);
 }
 
 function isSummonersRiftFallbackItem(item: GameItem) {

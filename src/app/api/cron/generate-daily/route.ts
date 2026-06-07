@@ -108,6 +108,7 @@ async function generate(request: Request) {
         champion
       },
       verified: {
+        buildRounds: verified.buildRounds.length,
         guessEloRounds: verified.guessEloRounds.length,
         dodgeQueueRounds: verified.dodgeQueueRounds.length,
         championMatchupRounds: verified.championMatchupRounds.length,
@@ -164,6 +165,7 @@ async function generate(request: Request) {
       champion
     },
     verified: {
+      buildRounds: verified.buildRounds.length,
       guessEloRounds: verified.guessEloRounds.length,
       dodgeQueueRounds: verified.dodgeQueueRounds.length,
       championMatchupRounds: verified.championMatchupRounds.length,

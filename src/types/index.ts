@@ -122,6 +122,35 @@ export interface VerifiedMatchData {
   }>;
 }
 
+export interface VerifiedBuildPick {
+  role: string;
+  champion: PublicChampion;
+  spells?: SummonerSpellRef[];
+  playerName?: string;
+}
+
+export interface VerifiedBuildRound {
+  id: string;
+  date: string;
+  champion: PublicChampion;
+  playerName?: string;
+  role: string;
+  allyTeam: VerifiedBuildPick[];
+  enemyTeam: VerifiedBuildPick[];
+  itemIds: string[];
+  dataSource: string;
+  sourceMatch?: {
+    matchId: string;
+    gameId?: number;
+    gameVersion: string;
+    gameCreation?: number;
+    queueId: number;
+    platform: string;
+    sourcePlayer?: string;
+    matchData?: VerifiedMatchData;
+  };
+}
+
 export interface OptionItem {
   id: string;
   label: string;
@@ -164,6 +193,10 @@ export interface ItemBuildChallenge {
   date: string;
   champion: PublicChampion;
   enemyTeam: PublicChampion[];
+  allyTeam?: VerifiedBuildPick[];
+  enemyPlayers?: VerifiedBuildPick[];
+  targetPlayerName?: string;
+  targetRole?: string;
   candidates: GameItem[];
   possibleItems: GameItem[];
   possibleBoots: GameItem[];
@@ -173,6 +206,8 @@ export interface ItemBuildChallenge {
   matchupNotes: string[];
   winrateStats?: BuildWinrateStats;
   winrateSamples?: Record<string, BuildWinrateStats>;
+  sourceMatch?: VerifiedBuildRound["sourceMatch"];
+  rounds?: ItemBuildChallenge[];
   unavailableReason?: string;
   catalogModel: {
     source: string;

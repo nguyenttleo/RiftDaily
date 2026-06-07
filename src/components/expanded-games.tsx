@@ -25,21 +25,10 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const INFINITE_ROUNDS = 48;
-const MIN_BUILD_WINRATE_GAMES = 5;
 type ItemGuessResult = "correct" | "wrong";
-type VerifiedBuildTargetForUi = {
-  answerBuild: GameItem[];
-  answerBoots: GameItem;
-  enemyChampionIds: string[];
-  possibleItems: GameItem[];
-  possibleBoots: GameItem[];
-  stats: NonNullable<ItemBuildChallenge["winrateStats"]>;
-};
 
 export function ItemBuildGame({
   challenge,
-  champions = [],
-  items = [],
   username = "Guest"
 }: {
   challenge: ItemBuildChallenge;
@@ -47,8 +36,8 @@ export function ItemBuildGame({
   items?: GameItem[];
   username?: string;
 }) {
-  const generatedRounds = useMemo(() => createBuildRounds(challenge, champions, items), [challenge, champions, items]);
-  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, buildRoundPriority, buildRoundFirstKey);
+  const generatedRounds = useMemo(() => createBuildRounds(challenge), [challenge]);
+  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, undefined, buildRoundFirstKey);
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
@@ -78,6 +67,8 @@ export function ItemBuildGame({
     return results;
   }, [answerSet, round.answerBootsId, guesses]);
   const unavailableReason = getBuildUnavailableReason(round);
+  const missedGuesses = guesses.filter((guess) => !isBuildGuessSolved(guess, answerSet, round.answerBootsId)).length;
+  const revealedEnemyCount = finished ? 5 : Math.min(5, missedGuesses);
 
   function toggleItem(id: string) {
     if (finished) {
@@ -179,9 +170,7 @@ export function ItemBuildGame({
             <div className="hidden sm:block">
               <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
             </div>
-            <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
-              <ChampionLine label="Enemy Team" champions={round.enemyTeam} compact />
-            </div>
+            <BuildTargetCard round={round} />
             <div className="relative hidden aspect-[21/9] min-h-36 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:block sm:aspect-[16/10] sm:min-h-48 xl:aspect-[16/11] xl:min-h-56">
               <div
                 className="absolute inset-0 bg-cover opacity-80"
@@ -193,11 +182,8 @@ export function ItemBuildGame({
               <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
             </div>
             <div className="grid gap-2">
-              <div>
-                <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">Your Champion</div>
-                <div className="font-display text-2xl font-bold sm:text-4xl">{round.champion.name}</div>
-              </div>
-              <BuildWinrateCard stats={round.winrateStats} />
+              <BuildTeamScout title="Ally Team" picks={round.allyTeam ?? []} targetPlayerName={round.targetPlayerName} />
+              <BuildTeamScout title="Enemy Intel" picks={round.enemyPlayers ?? []} revealCount={revealedEnemyCount} hidden />
             </div>
           </div>
         </aside>
@@ -207,8 +193,9 @@ export function ItemBuildGame({
             <div className="mb-1 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
-                  Pick {round.champion.name}&apos;s best build against the enemy team.
+                  Guess {round.targetPlayerName ?? "the Challenger winner"}&apos;s final build.
                 </div>
+                <div className="mt-1 text-xs text-[color:var(--muted)] sm:text-sm">Missed guesses reveal enemy players one at a time.</div>
               </div>
               <div className="text-xs text-[color:var(--muted)]">Guess {Math.min(guesses.length + 1, BUILD_MAX_GUESSES)}/{BUILD_MAX_GUESSES}</div>
             </div>
@@ -293,12 +280,94 @@ export function ItemBuildGame({
           round={round}
           guesses={guesses}
           solved={solved}
+          streak={streak}
           onClose={() => setModalOpen(false)}
           onReset={reset}
           onNext={nextBuild}
         />
       )}
     </section>
+  );
+}
+
+function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
+  return (
+    <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
+      <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">Challenger Target</div>
+      <div className="mt-2 flex items-center gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-sm border border-[#3c3421] object-cover sm:h-16 sm:w-16" />
+        <div className="min-w-0">
+          <div className="font-display text-2xl font-bold leading-none text-white sm:text-3xl">{round.champion.name}</div>
+          <div className="mt-1 truncate text-sm font-semibold text-[#9fb7d5]" title={round.targetPlayerName}>
+            {round.targetPlayerName ?? "Verified Challenger"}
+          </div>
+          {round.targetRole && (
+            <div className="mt-1 w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
+              {displayLaneLabel(round.targetRole)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BuildTeamScout({
+  title,
+  picks,
+  revealCount = picks.length,
+  targetPlayerName,
+  hidden = false
+}: {
+  title: string;
+  picks: NonNullable<ItemBuildChallenge["allyTeam"]>;
+  revealCount?: number;
+  targetPlayerName?: string;
+  hidden?: boolean;
+}) {
+  return (
+    <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">{title}</div>
+        {hidden && <div className="text-[10px] uppercase text-[color:var(--muted)]">{Math.min(revealCount, picks.length)}/{picks.length}</div>}
+      </div>
+      <div className="grid gap-1.5">
+        {picks.map((pick, index) => {
+          const revealed = !hidden || index < revealCount;
+          const isTarget = !hidden && pick.playerName && targetPlayerName && normalize(pick.playerName) === normalize(targetPlayerName);
+
+          return (
+            <div
+              key={`${title}:${pick.role}:${pick.champion.id}:${index}`}
+              className={cn(
+                "grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-2 rounded-sm border p-1.5",
+                revealed ? "border-[#26313f] bg-[#111722]" : "border-white/10 bg-[#111722]/55"
+              )}
+            >
+              {revealed ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={pick.champion.squareUrl} alt="" className="h-9 w-9 rounded-sm border border-[#3c3421] object-cover" />
+              ) : (
+                <div className="grid h-9 w-9 place-items-center rounded-sm border border-white/10 bg-[#050607] text-sm font-black text-[color:var(--muted)]">?</div>
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 rounded-sm border border-[#c89b3c]/30 bg-[#c89b3c]/10 px-1.5 py-0.5 text-[9px] font-bold uppercase leading-none text-[#c89b3c]">
+                    {displayLaneLabel(pick.role)}
+                  </span>
+                  <span className={cn("truncate text-sm font-bold", !revealed && "text-[color:var(--muted)]")}>{revealed ? pick.champion.name : "Hidden"}</span>
+                  {isTarget && <span className="shrink-0 rounded-sm bg-green-400/18 px-1.5 py-0.5 text-[9px] font-bold uppercase text-green-200">Target</span>}
+                </div>
+                <div className="truncate text-[11px] font-semibold text-[#9fb7d5]" title={revealed ? pick.playerName : undefined}>
+                  {revealed ? pick.playerName ?? "Unknown player" : "Reveal after a miss"}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -366,6 +435,7 @@ function BuildWordleModal({
   round,
   guesses,
   solved,
+  streak,
   onClose,
   onReset,
   onNext
@@ -373,10 +443,12 @@ function BuildWordleModal({
   round: ItemBuildChallenge;
   guesses: Array<{ items: string[]; boots: string }>;
   solved: boolean;
+  streak: { current: number; best: number; played: number };
   onClose: () => void;
   onReset: () => void;
   onNext: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   useBodyScrollLock();
 
   const answerSet = new Set(round.answerItemIds);
@@ -385,15 +457,23 @@ function BuildWordleModal({
     .filter(Boolean) as GameItem[];
   const targetBoots = round.possibleBoots.find((item) => item.id === round.answerBootsId);
   const targetBuild = targetBoots ? [...targetItems, targetBoots] : targetItems;
+  const headline = solved ? "Build read." : "Build gap.";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-black/70 p-3 backdrop-blur-sm sm:p-4">
-      <div className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto rounded-xl border border-[#c89b3c]/60 bg-[#071018] p-4 shadow-[0_24px_90px_rgba(0,0,0,.65)] fine-scrollbar sm:max-h-[calc(100dvh-2rem)] sm:p-5">
+    <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.16),transparent_32%),rgba(0,0,0,.76)] p-3 backdrop-blur-md sm:p-4">
+      <div
+        className={cn(
+          "relative grid w-full gap-4 overscroll-contain rounded-3xl border bg-[linear-gradient(180deg,rgba(13,20,31,.98),rgba(5,8,13,.98))] p-3 shadow-[0_30px_110px_rgba(0,0,0,.72),inset_0_1px_0_rgba(255,255,255,.06)] transition-[max-width] sm:p-4",
+          expanded
+            ? "max-h-[calc(100dvh-1.5rem)] max-w-[min(92rem,calc(100vw-1.5rem))] overflow-y-auto border-[#c89b3c]/70 fine-scrollbar sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(92rem,calc(100vw-2rem))]"
+            : "max-h-[calc(100dvh-1.5rem)] max-w-2xl overflow-y-auto border-[#c89b3c]/55 fine-scrollbar sm:max-h-[calc(100dvh-2rem)]"
+        )}
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="font-display text-3xl font-extrabold text-[#f5c542]">{solved ? "Build diff." : "Shopkeeper wins."}</div>
+            <div className={cn("font-display text-3xl font-extrabold", solved ? "text-green-300" : "text-red-200")}>{headline}</div>
             <p className="mt-1 text-sm text-[color:var(--muted)]">
-              {solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES} guesses.` : `The six-item answer dodged all ${BUILD_MAX_GUESSES} guesses.`}
+              {solved ? `Solved in ${guesses.length}/${BUILD_MAX_GUESSES} guesses.` : `The Challenger build dodged all ${BUILD_MAX_GUESSES} guesses.`}
             </p>
           </div>
           <button
@@ -404,6 +484,10 @@ function BuildWordleModal({
           >
             <X size={16} />
           </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_11rem]">
+          <ResultStat label="Current Streak" value={String(streak.current)} detail={`Best ${streak.best}`} tone={solved ? "good" : "muted"} />
+          <ResultStat label="Enemy Reveals" value={String(Math.min(5, guesses.length))} detail="5 max" tone="gold" />
         </div>
         <div className="mt-5 grid gap-1.5">
           {guesses.map((guess, rowIndex) => (
@@ -426,17 +510,23 @@ function BuildWordleModal({
             ))}
           </div>
         </div>
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2 rounded-2xl border border-white/8 bg-white/[.035] p-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Close
           </Button>
           <Button type="button" onClick={onReset}>
             Replay
           </Button>
+          {round.sourceMatch && (
+            <Button type="button" variant={expanded ? "secondary" : "primary"} onClick={() => setExpanded((current) => !current)}>
+              {expanded ? "Hide match data" : "View match data"}
+            </Button>
+          )}
           <Button type="button" onClick={onNext}>
             Next build
           </Button>
         </div>
+        {expanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
       </div>
     </div>
   );
@@ -459,171 +549,12 @@ function buildPerformanceQuality(solved: boolean, guesses: Array<{ items: string
   return bestCorrect / 6;
 }
 
-function BuildWinrateCard({ stats }: { stats?: ItemBuildChallenge["winrateStats"] }) {
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return (
-      <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:p-3">
-        <div className="text-[11px] uppercase text-[color:var(--muted)]">Winrate</div>
-        <div className="mt-1 font-display text-2xl font-bold text-[color:var(--muted)]">N/A</div>
-      </div>
-    );
-  }
-
-  const hasBuildSample = typeof stats.buildWinRate === "number" && (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES && stats.buildWinRate >= stats.winRate;
-  const delta = hasBuildSample ? stats.buildWinRate! - stats.winRate : null;
-  const buildDetail = hasBuildSample
-    ? (stats.buildMatchedItemCount ?? 0) > 0
-      ? `${stats.buildMatchedItemCount ?? 0}/${stats.targetItemIds?.length ?? 6} target items`
-      : undefined
-    : undefined;
-
-  return (
-    <div className="rounded-sm border border-[#3c3421] bg-[#111722] p-2 sm:p-3">
-      <div className="grid grid-cols-2 gap-2">
-        <WinrateMiniStat label="Baseline" winRate={stats.winRate} wins={stats.wins} games={stats.games} />
-        <WinrateMiniStat
-          label="Correct Build"
-          winRate={hasBuildSample ? stats.buildWinRate : undefined}
-          wins={stats.buildWins}
-          games={stats.buildGames}
-          detail={buildDetail}
-        />
-      </div>
-      {delta !== null && (
-        <div className={cn("mt-2 text-xs font-semibold", delta >= 0 ? "text-green-300" : "text-red-300")}>
-          {delta >= 0 ? "+" : ""}{delta.toFixed(1)}% vs baseline
-        </div>
-      )}
-    </div>
-  );
-}
-
-function WinrateMiniStat({
-  label,
-  winRate,
-  wins = 0,
-  games = 0,
-  detail
-}: {
-  label: string;
-  winRate?: number;
-  wins?: number;
-  games?: number;
-  detail?: string;
-}) {
-  const hasValue = typeof winRate === "number" && games >= MIN_BUILD_WINRATE_GAMES;
-
-  return (
-    <div className="rounded-sm border border-white/10 bg-[#050607]/70 p-2">
-      <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
-      <div className={cn("font-display text-xl font-bold sm:text-2xl", hasValue ? (winRate >= 50 ? "text-green-300" : "text-red-300") : "text-[color:var(--muted)]")}>
-        {hasValue ? `${winRate.toFixed(1)}%` : "N/A"}
-      </div>
-      <div className="text-[11px] text-[color:var(--muted)]">{games > 0 ? `${wins}W / ${games}G` : `<${MIN_BUILD_WINRATE_GAMES} games`}</div>
-      {detail && <div className="text-[10px] uppercase tracking-[0.06em] text-[#c89b3c]">{detail}</div>}
-    </div>
-  );
-}
-
-function createBuildRounds(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[]) {
-  if (!isPlayableVerifiedBuildRoundForUi(base) || champions.length < 6 || itemCatalog.length < 20) {
-    return [base];
-  }
-
-  const rounds: ItemBuildChallenge[] = [base];
-
-  for (let index = 1; index <= INFINITE_ROUNDS; index += 1) {
-    const previousChampionId = rounds[rounds.length - 1]?.champion.id;
-    const generated = createGeneratedBuildRound(base, champions, itemCatalog, index, previousChampionId);
-
-    if (generated) {
-      rounds.push(generated);
-    }
-  }
-
-  return rounds;
-}
-
-function buildRoundPriority(round: ItemBuildChallenge) {
-  const stats = round.winrateStats;
-
-  if (!stats?.games || stats.games < MIN_BUILD_WINRATE_GAMES) {
-    return 0;
-  }
-
-  if (!stats.buildGames || typeof stats.buildWinRate !== "number") {
-    return 1;
-  }
-
-  return (stats.buildMatchedItemCount ?? 0) >= 4 ? 3 : 2;
+function createBuildRounds(base: ItemBuildChallenge) {
+  return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
 function buildRoundFirstKey(round: ItemBuildChallenge) {
   return round.champion.id;
-}
-
-function createGeneratedBuildRound(base: ItemBuildChallenge, champions: PublicChampion[], itemCatalog: GameItem[], round: number, previousChampionId?: string): ItemBuildChallenge | undefined {
-  const seed = `${base.date}:item-build-infinite:${round}`;
-  const playable = champions
-    .map((champion) => ({
-      champion,
-      target: selectVerifiedBuildTargetForUi(base.winrateSamples?.[champion.id], itemCatalog)
-    }))
-    .filter((entry): entry is { champion: PublicChampion; target: VerifiedBuildTargetForUi } => Boolean(entry.target))
-    .sort(
-      (a, b) =>
-        (b.target.stats.buildGames ?? 0) - (a.target.stats.buildGames ?? 0) ||
-        b.target.stats.buildWinRate! - a.target.stats.buildWinRate! ||
-        a.champion.name.localeCompare(b.champion.name)
-    );
-
-  if (playable.length === 0) {
-    return undefined;
-  }
-
-  const champion = pickBuildChampion(playable.map((entry) => entry.champion), `${seed}:champion`, previousChampionId);
-  const target = playable.find((entry) => entry.champion.id === champion.id)?.target;
-
-  if (!target) {
-    return undefined;
-  }
-
-  const enemyTeam = target.enemyChampionIds
-    .map((championId) => champions.find((candidate) => candidate.id === championId))
-    .filter(Boolean) as PublicChampion[];
-
-  if (enemyTeam.length < 5) {
-    return undefined;
-  }
-
-  const answerBuild = target.answerBuild;
-  const answerBoots = target.answerBoots;
-  const possibleItems = target.possibleItems;
-  const possibleBoots = target.possibleBoots;
-
-  return {
-    ...base,
-    id: `${base.date}:item-build:${round}`,
-    champion,
-    enemyTeam,
-    candidates: answerBuild.slice(0, 4),
-    possibleItems,
-    possibleBoots,
-    answerItemId: answerBuild[0].id,
-    answerItemIds: answerBuild.map((item) => item.id),
-    answerBootsId: answerBoots.id,
-    winrateStats: target.stats,
-    winrateSamples: base.winrateSamples,
-    matchupNotes: [
-      `Target build: ${answerBuild.map((item) => item.name).join(", ")} plus ${answerBoots.name}.`,
-      "Answer is generated from Riot Match-V5 inventory samples."
-    ],
-    catalogModel: {
-      ...base.catalogModel,
-      candidateCount: possibleItems.length,
-      targetItemCount: answerBuild.length
-    }
-  };
 }
 
 function getBuildUnavailableReason(round: ItemBuildChallenge) {
@@ -631,203 +562,18 @@ function getBuildUnavailableReason(round: ItemBuildChallenge) {
     return round.unavailableReason;
   }
 
-  if (!isPlayableVerifiedBuildRoundForUi(round)) {
-    return `Build needs ${MIN_BUILD_WINRATE_GAMES}+ Riot Match-V5 games with the same completed five-item plus boots inventory and a real enemy team. Keep warming the live cache.`;
+  if (
+    round.enemyPlayers?.length !== 5 ||
+    round.allyTeam?.length !== 5 ||
+    round.answerItemIds.length !== 5 ||
+    !round.answerBootsId ||
+    round.possibleItems.length < 5 ||
+    round.possibleBoots.length === 0
+  ) {
+    return "Build needs a verified Challenger ranked win with five completed items and upgraded boots. Keep the live cache warming.";
   }
 
   return "";
-}
-
-function isPlayableVerifiedBuildRoundForUi(round: ItemBuildChallenge) {
-  const stats = round.winrateStats;
-
-  return Boolean(
-    stats &&
-      stats.games >= MIN_BUILD_WINRATE_GAMES &&
-      (stats.buildGames ?? 0) >= MIN_BUILD_WINRATE_GAMES &&
-      typeof stats.buildWinRate === "number" &&
-      stats.buildWinRate >= stats.winRate &&
-      (stats.buildMatchedItemCount ?? 0) >= 6 &&
-      round.enemyTeam.length >= 5 &&
-      round.answerItemIds.length === 5 &&
-      Boolean(round.answerBootsId) &&
-      round.possibleItems.length >= 5 &&
-      round.possibleBoots.length > 0
-  );
-}
-
-function selectVerifiedBuildTargetForUi(stats: ItemBuildChallenge["winrateStats"] | undefined, itemCatalog: GameItem[]): VerifiedBuildTargetForUi | undefined {
-  if (!stats || stats.games < MIN_BUILD_WINRATE_GAMES || !stats.inventorySamples?.length) {
-    return undefined;
-  }
-
-  const itemById = new Map(itemCatalog.map((item) => [item.id, item]));
-  const itemCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
-  const bootCounts = new Map<string, { item: GameItem; games: number; wins: number }>();
-  const buildGroups = new Map<
-    string,
-    {
-      answerBuild: GameItem[];
-      answerBoots: GameItem;
-      wins: number;
-      games: number;
-      matchIds: Set<string>;
-      enemyChampionIds: string[];
-    }
-  >();
-
-  for (const sample of stats.inventorySamples) {
-    for (const itemId of uniqueStringsForUi(sample.itemIds)) {
-      const item = itemById.get(itemId);
-
-      if (!item) {
-        continue;
-      }
-
-      if (isBuildCandidateItemForUi(item)) {
-        incrementObservedItemForUi(itemCounts, item, sample.win);
-      } else if (isBuildBootUpgrade(item)) {
-        incrementObservedItemForUi(bootCounts, item, sample.win);
-      }
-    }
-
-    if ((sample.enemyChampionIds?.length ?? 0) < 5) {
-      continue;
-    }
-
-    const sampledBuild = buildTargetFromInventoryForUi(sample.itemIds, itemById);
-
-    if (!sampledBuild) {
-      continue;
-    }
-
-    const key = buildGroupKeyForUi(sampledBuild.answerBuild, sampledBuild.answerBoots);
-    const current = buildGroups.get(key) ?? {
-      ...sampledBuild,
-      wins: 0,
-      games: 0,
-      matchIds: new Set<string>(),
-      enemyChampionIds: sample.enemyChampionIds!.slice(0, 5)
-    };
-
-    current.games += 1;
-    current.wins += sample.win ? 1 : 0;
-    current.matchIds.add(sample.matchId);
-    buildGroups.set(key, current);
-  }
-
-  const selected = [...buildGroups.values()]
-    .map((group) => ({
-      ...group,
-      winRate: Math.round((group.wins / group.games) * 1000) / 10
-    }))
-    .filter((group) => group.games >= MIN_BUILD_WINRATE_GAMES && group.enemyChampionIds.length >= 5 && group.winRate >= stats.winRate)
-    .sort((a, b) => b.winRate - a.winRate || b.games - a.games || a.answerBuild[0].name.localeCompare(b.answerBuild[0].name))[0];
-
-  if (!selected) {
-    return undefined;
-  }
-
-  const possibleItems = includeRequiredItemsForUi(rankedObservedItemsForUi(itemCounts), selected.answerBuild).slice(0, 36);
-  const possibleBoots = includeRequiredItemsForUi(rankedObservedItemsForUi(bootCounts), [selected.answerBoots]);
-
-  if (possibleItems.length < 5 || possibleBoots.length === 0) {
-    return undefined;
-  }
-
-  const targetItemIds = [...selected.answerBuild.map((item) => item.id), selected.answerBoots.id];
-
-  return {
-    answerBuild: selected.answerBuild,
-    answerBoots: selected.answerBoots,
-    enemyChampionIds: selected.enemyChampionIds,
-    possibleItems,
-    possibleBoots,
-    stats: {
-      ...stats,
-      targetItemIds,
-      buildWins: selected.wins,
-      buildGames: selected.games,
-      buildWinRate: selected.winRate,
-      buildSampleMatches: selected.matchIds.size,
-      buildMatchedItemCount: targetItemIds.length
-    }
-  };
-}
-
-function buildTargetFromInventoryForUi(itemIds: string[], itemById: Map<string, GameItem>) {
-  const items = uniqueStringsForUi(itemIds)
-    .map((itemId) => itemById.get(itemId))
-    .filter(Boolean) as GameItem[];
-  const answerBoots = items.filter(isBuildBootUpgrade).sort((a, b) => b.goldTotal - a.goldTotal || a.name.localeCompare(b.name))[0];
-
-  if (!answerBoots) {
-    return undefined;
-  }
-
-  const answerBuild = uniqueGameItemsByNameForUi(items.filter(isBuildCandidateItemForUi)).slice(0, 5);
-
-  if (answerBuild.length !== 5) {
-    return undefined;
-  }
-
-  return {
-    answerBuild,
-    answerBoots
-  };
-}
-
-function buildGroupKeyForUi(answerBuild: GameItem[], answerBoots: GameItem) {
-  return `${answerBuild.map((item) => item.id).sort().join("+")}:${answerBoots.id}`;
-}
-
-function incrementObservedItemForUi(target: Map<string, { item: GameItem; games: number; wins: number }>, item: GameItem, win: boolean) {
-  const current = target.get(item.id) ?? { item, games: 0, wins: 0 };
-  current.games += 1;
-  current.wins += win ? 1 : 0;
-  target.set(item.id, current);
-}
-
-function rankedObservedItemsForUi(target: Map<string, { item: GameItem; games: number; wins: number }>) {
-  return uniqueGameItemsByNameForUi(
-    [...target.values()]
-      .sort((a, b) => b.games - a.games || b.wins - a.wins || a.item.name.localeCompare(b.item.name))
-      .map((entry) => entry.item)
-  );
-}
-
-function includeRequiredItemsForUi(items: GameItem[], required: GameItem[]) {
-  return uniqueGameItemsByNameForUi([...required, ...items]);
-}
-
-function uniqueGameItemsByNameForUi(items: GameItem[]) {
-  const seen = new Set<string>();
-  const uniqueItems: GameItem[] = [];
-
-  for (const item of items) {
-    const key = normalize(item.name);
-
-    if (!seen.has(key)) {
-      seen.add(key);
-      uniqueItems.push(item);
-    }
-  }
-
-  return uniqueItems;
-}
-
-function pickBuildChampion(championPool: PublicChampion[], seed: string, previousChampionId?: string) {
-  const start = hashString(seed) % championPool.length;
-
-  for (let offset = 0; offset < championPool.length; offset += 1) {
-    const champion = championPool[(start + offset) % championPool.length];
-
-    if (champion.id !== previousChampionId || championPool.length === 1) {
-      return champion;
-    }
-  }
-
-  return championPool[start];
 }
 
 function uniqueItemsByName(items: GameItem[], preferredIds = new Set<string>()) {
@@ -847,18 +593,6 @@ function uniqueItemsByName(items: GameItem[], preferredIds = new Set<string>()) 
 
 function itemNameKeyForUi(item: GameItem) {
   return item.name.trim().toLowerCase();
-}
-
-function uniqueStringsForUi(values: string[]) {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function isBuildCandidateItemForUi(item: GameItem) {
-  return item.purchasable && item.goldTotal >= 2200 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket") && !item.tags.includes("Boots");
-}
-
-function isBuildBootUpgrade(item: GameItem) {
-  return item.purchasable && item.name !== "Boots" && item.tags.includes("Boots") && item.goldTotal >= 900;
 }
 
 export function ItemRecipeGame({ challenge, items: itemCatalog = [], username = "Guest" }: { challenge: ItemRecipeChallenge; items?: GameItem[]; username?: string }) {
@@ -1800,7 +1534,7 @@ function VerifiedAnswerModal({
   selectedLabel: string;
   answerLabel: string;
   streak: { current: number; best: number; played: number };
-  sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"];
+  sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"] | ItemBuildChallenge["sourceMatch"];
   note?: string;
   onClose: () => void;
   onNext: () => void;
@@ -2049,7 +1783,7 @@ function NextLobbyButton({ onClick, label = "Next lobby" }: { onClick: () => voi
   );
 }
 
-function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"] }) {
+function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"] | ItemBuildChallenge["sourceMatch"] }) {
   const [copied, setCopied] = useState(false);
 
   if (!sourceMatch) {
@@ -2377,25 +2111,6 @@ function VerifiedDataUnavailable({ reason }: { reason: string }) {
         >
           Refresh live data
         </button>
-      </div>
-    </div>
-  );
-}
-
-function ChampionLine({ label, champions, compact }: { label: string; champions: Array<{ id: string; name: string; squareUrl: string; roles: string[] }>; compact?: boolean }) {
-  return (
-    <div className="grid gap-1.5 sm:gap-2">
-      <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">{label}</div>
-      <div className={cn("grid gap-1.5 sm:gap-2", compact ? "grid-cols-5" : "grid-cols-5")}>
-        {champions.map((champion) => (
-          <div key={champion.id} className={cn("overflow-hidden rounded-sm border border-white/10 bg-[#111722]", compact && "bg-[#050607]/75")} title={champion.name}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={champion.squareUrl} alt="" className={cn("aspect-square w-full object-cover", compact ? "h-9 sm:h-12" : "h-14 sm:h-16")} />
-            <div className={cn("p-2", compact && "hidden xl:block px-1.5 py-1")}>
-              <div className="truncate text-sm font-semibold leading-tight">{champion.name}</div>
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );

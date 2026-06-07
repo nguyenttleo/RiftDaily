@@ -7,6 +7,7 @@ import type {
   GuessEloRound,
   PublicChampion,
   SummonerSpellRef,
+  VerifiedBuildRound,
   VerifiedMatchData
 } from "@/types";
 
@@ -126,6 +127,7 @@ interface RankedEntryCandidate {
 }
 
 export interface VerifiedMatchChallengeSet {
+  buildRounds: VerifiedBuildRound[];
   guessEloRounds: GuessEloRound[];
   dodgeQueueRounds: DodgeQueueRound[];
   championMatchupRounds: ChampionMatchupRound[];
@@ -242,6 +244,7 @@ export async function getVerifiedRankedMatchChallenges({
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
     return {
+      buildRounds: [],
       guessEloRounds: [],
       dodgeQueueRounds: [],
       championMatchupRounds: [],
@@ -284,15 +287,15 @@ export async function getVerifiedRankedMatchChallenges({
   const analysisMatchesPerRank = Math.max(roundsPerRank, Math.ceil(analysisFetchBudget / RANK_BUCKETS.length));
   const sourceCountPerBucket = Math.min(MAX_SOURCES_PER_RANK_BUCKET, Math.max(4, Math.ceil(analysisMatchesPerRank / matchIdsPerSourceBudget) + 1));
   const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${boundedMatchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
-  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${boundedMatchHistoryPagesPerSource}:verified-rounds`;
+  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
 
-  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now()) {
+  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now() && hasVerifiedBuildRoundsRecord(cachedMatchSet.value)) {
     return cachedMatchSet.value;
   }
 
   const persistedVerifiedSet = await getPersistedVerifiedMatchCache(persistedCacheKey);
 
-  if (!forceRefresh && persistedVerifiedSet && hasBuildWinrateSamplesRecord(persistedVerifiedSet.championWinrateSamples)) {
+  if (!forceRefresh && persistedVerifiedSet && hasVerifiedBuildRoundsRecord(persistedVerifiedSet)) {
     const value = mergePersistedMatchupsIntoVerifiedSet(persistedVerifiedSet, persistedChampionMatchupRounds);
 
     cachedMatchSet = {
@@ -311,6 +314,7 @@ export async function getVerifiedRankedMatchChallenges({
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
     const seenMatches = new Set<string>();
     const guessRoundsByBucket = createEmptyRankBucketMap();
+    const buildRounds: VerifiedBuildRound[] = [];
     const dodgeQueueRounds: DodgeQueueRound[] = [];
     const championWinrates = new Map<string, WinrateAccumulator>();
     const championMatchupSamples = new Map<string, ChampionMatchupAccumulator>();
@@ -333,6 +337,13 @@ export async function getVerifiedRankedMatchChallenges({
       }
 
       await flushMatchupSampleRecords();
+    };
+    const collectBuildRound = (match: RiotMatchDto, source: RankedSource) => {
+      const round = toVerifiedBuildRound(match, source, platform, championLookup, spellLookup, date);
+
+      if (round && !buildRounds.some((candidate) => candidate.id === round.id)) {
+        buildRounds.push(round);
+      }
     };
 
     for (const bucket of RANK_BUCKETS) {
@@ -376,6 +387,7 @@ export async function getVerifiedRankedMatchChallenges({
 
             addChampionWinrateSamples(match, championLookup, championWinrates);
             await collectMatchupSamples(match);
+            collectBuildRound(match, source);
 
             const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
 
@@ -415,7 +427,7 @@ export async function getVerifiedRankedMatchChallenges({
           requestedBuildSampleSize,
           requestedMatchupSampleSize,
           shouldCollectLiveMatchups,
-          championWinrates,
+          buildRounds,
           championMatchupSamples
         ) ||
         seenMatches.size >= analysisFetchBudget
@@ -445,7 +457,7 @@ export async function getVerifiedRankedMatchChallenges({
             requestedBuildSampleSize,
             requestedMatchupSampleSize,
             shouldCollectLiveMatchups,
-            championWinrates,
+            buildRounds,
             championMatchupSamples
           ) ||
           seenMatches.size >= analysisFetchBudget
@@ -468,6 +480,7 @@ export async function getVerifiedRankedMatchChallenges({
 
           addChampionWinrateSamples(match, championLookup, championWinrates);
           await collectMatchupSamples(match);
+          collectBuildRound(match, source);
 
           const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
 
@@ -495,9 +508,10 @@ export async function getVerifiedRankedMatchChallenges({
     const collectedGuessEloRounds = interleaveRankBuckets(guessRoundsByBucket, roundsPerRank);
     const distribution = rankDistribution(collectedGuessEloRounds);
     const guessEloRounds = orderRoundsWithoutConsecutivePlayers(collectedGuessEloRounds, `${date}:guess-elo-round-order`, guessEloRoundPlayers);
+    const orderedBuildRounds = orderRoundsWithoutConsecutivePlayers(buildRounds, `${date}:build-round-order`, buildRoundPlayers).slice(0, 200);
     const orderedDodgeQueueRounds = orderRoundsWithoutConsecutivePlayers(dodgeQueueRounds, `${date}:dodge-queue-round-order`, dodgeQueueRoundPlayers);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
-    const hasVerifiedBuildSamples = hasBuildWinrateCandidate(championWinrates);
+    const hasVerifiedBuildSamples = orderedBuildRounds.length > 0 || hasBuildWinrateCandidate(championWinrates);
     const liveChampionMatchupRounds = toChampionMatchupRounds(championMatchupSamples, date);
     const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
     const championMatchupRounds = mergeChampionMatchupRounds(refreshedPersistedChampionMatchupRounds, liveChampionMatchupRounds);
@@ -521,11 +535,12 @@ export async function getVerifiedRankedMatchChallenges({
         ? undefined
         : `Champion Matchup needs ${MIN_MATCHUP_SAMPLE_GAMES}+ Riot Match-V5 ranked games containing both champions in their selected lanes in the same match.`;
     const value: VerifiedMatchChallengeSet = {
+      buildRounds: orderedBuildRounds,
       guessEloRounds: hasPlayableGuessRounds ? guessEloRounds : [],
       dodgeQueueRounds: orderedDodgeQueueRounds,
       championMatchupRounds,
       championWinrateSamples,
-      status: hasPlayableGuessRounds || orderedDodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : "unavailable",
+      status: orderedBuildRounds.length > 0 || hasPlayableGuessRounds || orderedDodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : "unavailable",
       message: guessEloMessage ?? dodgeQueueMessage ?? championMatchupMessage,
       ...(guessEloMessage ? { guessEloMessage } : {}),
       ...(dodgeQueueMessage ? { dodgeQueueMessage } : {}),
@@ -533,7 +548,7 @@ export async function getVerifiedRankedMatchChallenges({
     };
     const valueToPersist = persistedVerifiedSet ? mergeVerifiedChallengeSets(persistedVerifiedSet, value) : value;
 
-    if (hasVerifiedBuildSamples || hasBuildWinrateSamplesRecord(valueToPersist.championWinrateSamples)) {
+    if (hasVerifiedBuildSamples || hasVerifiedBuildRoundsRecord(valueToPersist)) {
       await persistVerifiedMatchCache(persistedCacheKey, valueToPersist);
       cachedMatchSet = {
         key: cacheKey,
@@ -548,6 +563,7 @@ export async function getVerifiedRankedMatchChallenges({
   } catch (error) {
     const message = error instanceof Error ? error.message : "Riot API match fetch failed.";
     return {
+      buildRounds: [],
       guessEloRounds: [],
       dodgeQueueRounds: [],
       championMatchupRounds: [],
@@ -921,12 +937,12 @@ function isAnalysisComplete(
   requestedBuildSampleSize: number,
   requestedMatchupSampleSize: number,
   needsLiveMatchupRounds: boolean,
-  championWinrates: Map<string, WinrateAccumulator>,
+  buildRounds: VerifiedBuildRound[],
   championMatchupSamples: Map<string, ChampionMatchupAccumulator>
 ) {
   return (
     seenMatchCount >= requestedBuildSampleSize &&
-    hasBuildWinrateCandidate(championWinrates) &&
+    buildRounds.length > 0 &&
     (!needsLiveMatchupRounds ||
       eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS ||
       currentPatchMatchupMatchCount >= requestedMatchupSampleSize)
@@ -943,6 +959,10 @@ function hasBuildWinrateSamplesRecord(samples: Record<string, BuildWinrateStats>
       sample.games >= MIN_BUILD_SAMPLE_GAMES &&
       (sample.inventorySamples ?? []).some((game) => (game.enemyChampionIds?.length ?? 0) >= 5)
   );
+}
+
+function hasVerifiedBuildRoundsRecord(set: VerifiedMatchChallengeSet) {
+  return (set.buildRounds?.length ?? 0) > 0 || hasBuildWinrateSamplesRecord(set.championWinrateSamples ?? {});
 }
 
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
@@ -1080,12 +1100,13 @@ function mergePersistedMatchupsIntoVerifiedSet(cachedSet: VerifiedMatchChallenge
   return {
     ...cachedSet,
     championMatchupRounds,
-    status: cachedSet.guessEloRounds.length > 0 || cachedSet.dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" as const : "unavailable" as const,
+    status: (cachedSet.buildRounds?.length ?? 0) > 0 || cachedSet.guessEloRounds.length > 0 || cachedSet.dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" as const : "unavailable" as const,
     ...(championMatchupMessage ? { championMatchupMessage } : { championMatchupMessage: undefined })
   };
 }
 
 function mergeVerifiedChallengeSets(existing: VerifiedMatchChallengeSet, incoming: VerifiedMatchChallengeSet): VerifiedMatchChallengeSet {
+  const buildRounds = mergeRoundsByMatch(existing.buildRounds ?? [], incoming.buildRounds ?? []).slice(0, 200);
   const guessEloRounds = mergeRoundsByMatch(existing.guessEloRounds, incoming.guessEloRounds).slice(0, 200);
   const dodgeQueueRounds = mergeRoundsByMatch(existing.dodgeQueueRounds, incoming.dodgeQueueRounds).slice(0, 200);
   const championWinrateSamples = mergeChampionWinrateSamples(existing.championWinrateSamples, incoming.championWinrateSamples);
@@ -1093,11 +1114,12 @@ function mergeVerifiedChallengeSets(existing: VerifiedMatchChallengeSet, incomin
 
   return {
     ...incoming,
+    buildRounds,
     guessEloRounds,
     dodgeQueueRounds,
     championMatchupRounds,
     championWinrateSamples,
-    status: guessEloRounds.length > 0 || dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : incoming.status,
+    status: buildRounds.length > 0 || guessEloRounds.length > 0 || dodgeQueueRounds.length > 0 || championMatchupRounds.length > 0 ? "ready" : incoming.status,
     message: incoming.message ?? existing.message,
     guessEloMessage: incoming.guessEloMessage ?? existing.guessEloMessage,
     dodgeQueueMessage: incoming.dodgeQueueMessage ?? existing.dodgeQueueMessage,
@@ -1176,10 +1198,23 @@ async function getPersistedVerifiedMatchCache(cacheKey: string) {
       [cacheKey]
     );
 
-    return result.rows[0]?.payload ?? null;
+    const payload = result.rows[0]?.payload;
+
+    return payload ? normalizeVerifiedMatchSet(payload) : null;
   } catch {
     return null;
   }
+}
+
+function normalizeVerifiedMatchSet(payload: VerifiedMatchChallengeSet): VerifiedMatchChallengeSet {
+  return {
+    ...payload,
+    buildRounds: payload.buildRounds ?? [],
+    guessEloRounds: payload.guessEloRounds ?? [],
+    dodgeQueueRounds: payload.dodgeQueueRounds ?? [],
+    championMatchupRounds: payload.championMatchupRounds ?? [],
+    championWinrateSamples: payload.championWinrateSamples ?? {}
+  };
 }
 
 async function persistVerifiedMatchCache(cacheKey: string, value: VerifiedMatchChallengeSet) {
@@ -1509,6 +1544,15 @@ function dodgeQueueRoundPlayers(round: DodgeQueueRound) {
   ].filter((player): player is string => Boolean(player));
 }
 
+function buildRoundPlayers(round: VerifiedBuildRound) {
+  return [
+    round.sourceMatch?.sourcePlayer,
+    round.playerName,
+    ...round.allyTeam.map((pick) => pick.playerName),
+    ...round.enemyTeam.map((pick) => pick.playerName)
+  ].filter((player): player is string => Boolean(player));
+}
+
 function rankDistribution(rounds: GuessEloRound[]) {
   const distribution = Object.fromEntries(RANK_BUCKETS.map((bucket) => [bucket, 0])) as Record<RankBucket, number>;
 
@@ -1608,7 +1652,7 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
       }
     }
 
-    for (const candidate of seededOrder(candidates, `${seed}:${plan.bucket}`).slice(0, sourceCountPerBucket)) {
+    for (const candidate of selectRankedSourceCandidates(candidates, `${seed}:${plan.bucket}`, sourceCountPerBucket, plan.bucket)) {
       let puuid: string | null = null;
 
       try {
@@ -1628,6 +1672,34 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
   }
 
   return seededOrder(sources, `${seed}:ranked-sources`);
+}
+
+function selectRankedSourceCandidates(candidates: RankedEntryCandidate[], seed: string, sourceCountPerBucket: number, bucket: RankBucket) {
+  const ordered = seededOrder(candidates, seed);
+
+  if (bucket !== "Grandmaster/Challenger") {
+    return ordered.slice(0, sourceCountPerBucket);
+  }
+
+  const challengerCandidates = seededOrder(candidates.filter((candidate) => candidate.tier.toUpperCase() === "CHALLENGER"), `${seed}:challenger`);
+  const challengerTarget = Math.min(challengerCandidates.length, Math.max(1, Math.ceil(sourceCountPerBucket / 2)));
+  const selected = challengerCandidates.slice(0, challengerTarget);
+  const selectedKeys = new Set(selected.map((candidate) => candidate.entry.puuid ?? candidate.entry.summonerId ?? `${candidate.tier}:${candidate.entry.rank}`));
+
+  for (const candidate of ordered) {
+    if (selected.length >= sourceCountPerBucket) {
+      break;
+    }
+
+    const key = candidate.entry.puuid ?? candidate.entry.summonerId ?? `${candidate.tier}:${candidate.entry.rank}`;
+
+    if (!selectedKeys.has(key)) {
+      selectedKeys.add(key);
+      selected.push(candidate);
+    }
+  }
+
+  return selected;
 }
 
 async function getLeagueEntryPageCandidates(platform: string, tier: string, division: string) {
@@ -1770,6 +1842,74 @@ function toVerifiedRounds(
   };
 
   return { guessElo, dodgeQueue };
+}
+
+function toVerifiedBuildRound(
+  match: RiotMatchDto,
+  source: RankedSource,
+  platform: string,
+  championLookup: Map<number, PublicChampion>,
+  spellLookup: Map<number, SummonerSpellRef>,
+  date: string
+): VerifiedBuildRound | null {
+  if (!source.tier.toUpperCase().startsWith("CHALLENGER")) {
+    return null;
+  }
+
+  if (!isRankedClassicSummonersRiftMatch(match) || !hasVerifiedSmiteAndPositions(match.info.participants)) {
+    return null;
+  }
+
+  const sourceParticipant = match.info.participants.find((participant) => participant.puuid === source.puuid);
+  const champion = sourceParticipant ? championLookup.get(sourceParticipant.championId) : undefined;
+  const sourceTeam = sourceParticipant ? match.info.teams.find((team) => team.teamId === sourceParticipant.teamId) : undefined;
+
+  if (!sourceParticipant || !champion || !sourceTeam?.win || !isRiotPosition(sourceParticipant.teamPosition)) {
+    return null;
+  }
+
+  const itemIds = participantItemSlotIds(sourceParticipant);
+
+  if (itemIds.length < 6) {
+    return null;
+  }
+
+  const blue = toLanePicks(match.info.participants, 100, championLookup, spellLookup);
+  const red = toLanePicks(match.info.participants, 200, championLookup, spellLookup);
+
+  if (!blue || !red) {
+    return null;
+  }
+
+  const allyTeamId = sourceParticipant.teamId;
+  const enemyTeamId: TeamId = allyTeamId === 100 ? 200 : 100;
+  const gameCreation = match.info.gameCreation ?? match.info.gameStartTimestamp;
+  const gameId = match.info.gameId ?? gameIdFromMatchId(match.metadata.matchId);
+  const sourcePlayer = formatRiotId(sourceParticipant);
+  const matchData = toVerifiedMatchData(match, championLookup, spellLookup);
+  const sourceMatch = {
+    matchId: match.metadata.matchId,
+    ...(gameId ? { gameId } : {}),
+    gameVersion: match.info.gameVersion,
+    ...(gameCreation ? { gameCreation } : {}),
+    queueId: match.info.queueId,
+    platform,
+    ...(sourcePlayer ? { sourcePlayer } : {}),
+    ...(matchData ? { matchData } : {})
+  };
+
+  return {
+    id: `${date}:item-build:${match.metadata.matchId}:${sourceParticipant.puuid}`,
+    date,
+    champion,
+    ...(sourcePlayer ? { playerName: sourcePlayer } : {}),
+    role: toLaneLabel(sourceParticipant.teamPosition),
+    allyTeam: allyTeamId === 100 ? blue : red,
+    enemyTeam: enemyTeamId === 100 ? blue : red,
+    itemIds,
+    dataSource: "Riot Match-V5 Challenger winning inventory sample",
+    sourceMatch
+  };
 }
 
 function toLanePicks(
