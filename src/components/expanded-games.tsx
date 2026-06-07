@@ -15,6 +15,7 @@ import {
   rankedStorageKey
 } from "@/game/scoring";
 import { BUILD_SHARE_PARAM, decodeBuildShareValue, encodeBuildShareCode } from "@/lib/build-share";
+import { splitRiotId } from "@/lib/riot-id";
 import { cn } from "@/lib/utils";
 import type {
   ChampionMatchupChallenge,
@@ -34,6 +35,8 @@ import type {
 
 const BUILD_MAX_GUESSES = 6;
 const BUILD_RELEVANT_ITEM_LIMIT = 24;
+const BUILD_CHAMPION_NAME_DEFAULT_FONT_REM = 1.5;
+const BUILD_CHAMPION_NAME_MIN_FONT_REM = 0.9;
 const INFINITE_ROUNDS = 48;
 type ItemGuessResult = "correct" | "wrong";
 
@@ -252,8 +255,10 @@ export function ItemBuildGame({
 
   if (unavailableReason) {
     return (
-      <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
-        <VerifiedDataUnavailable reason={unavailableReason} />
+      <section className="play-area-depth min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] p-2 pb-16 sm:p-4 lg:rounded-sm">
+        <div className="play-area-content">
+          <VerifiedDataUnavailable reason={unavailableReason} />
+        </div>
       </section>
     );
   }
@@ -299,8 +304,8 @@ export function ItemBuildGame({
   );
 
   const gameContent = (
-    <div className="grid gap-3">
-      <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2 shadow-[inset_0_0_0_1px_rgba(200,155,60,.08)] sm:p-3">
+    <div className="play-area-content grid gap-3">
+      <div className="play-panel-depth grid gap-2 rounded-sm border border-[#3c3421] p-2 sm:p-3">
         <div className="mb-1 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
@@ -335,7 +340,7 @@ export function ItemBuildGame({
       </div>
 
       <div className="grid items-stretch gap-2 xl:grid-cols-[minmax(0,1fr)_13rem]">
-        <div className="flex h-full min-h-0 flex-col rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
+        <div className="play-inset-panel-depth flex h-full min-h-0 flex-col rounded-sm border border-white/10 p-2 sm:p-3">
           <div className="mb-1.5 flex items-center justify-between gap-3">
             <span className="font-display text-base font-extrabold tracking-tight text-[#c89b3c] sm:text-xl">Possible Items</span>
           </div>
@@ -352,7 +357,7 @@ export function ItemBuildGame({
             ))}
           </div>
         </div>
-        <div className="flex h-full flex-col rounded-sm border border-white/10 bg-[#0b111b] p-2 sm:p-3">
+        <div className="play-inset-panel-depth flex h-full flex-col rounded-sm border border-white/10 p-2 sm:p-3">
           <div className="font-display mb-1.5 text-base font-extrabold tracking-tight text-[#c89b3c] sm:text-xl">Boots</div>
           <div className="grid grid-cols-2 content-start gap-1.5 px-0.5 pb-3 pt-1.5 sm:grid-cols-3 sm:gap-2 sm:px-1 sm:pb-4 sm:pt-2 xl:min-h-0 xl:flex-1 xl:auto-rows-fr xl:grid-cols-1">
             {randomizedPossibleBoots.map((item) => (
@@ -423,7 +428,7 @@ export function ItemBuildGame({
     return (
       <>
         {leftRail}
-        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] [overflow-anchor:none] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
+        <section className="play-area-depth min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] p-2 pb-16 [overflow-anchor:none] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
           {gameContent}
           {modal}
           {skipModal}
@@ -433,7 +438,7 @@ export function ItemBuildGame({
   }
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] [overflow-anchor:none] sm:p-4 lg:rounded-sm">
+    <section className="play-area-depth min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] p-2 pb-16 [overflow-anchor:none] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         {leftRail}
         {gameContent}
@@ -519,7 +524,7 @@ function BuildTargetCard({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-lg border border-[#c89b3c]/35 object-cover shadow-[0_10px_22px_rgba(0,0,0,.35)]" />
           <div className="min-w-0">
-            <div className="font-display text-2xl font-bold leading-none text-white" title={round.champion.name}>{round.champion.name}</div>
+            <BuildChampionName name={round.champion.name} />
             {round.targetRole && (
               <div className="mt-1 w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
                 {displayLaneLabel(round.targetRole)}
@@ -540,7 +545,7 @@ function BuildTargetCard({
         <div className="rounded-lg border border-white/10 bg-[#050607]/72 px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,.035)]">
           <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#74ecff]/72">Player</div>
           <div className="mt-1 whitespace-normal break-words text-sm font-bold leading-snug text-[#d7e6ff] [overflow-wrap:anywhere]" title={round.targetPlayerName}>
-            {round.targetPlayerName ?? "Verified Challenger"}
+            <BuildPlayerName name={round.targetPlayerName} fallback="Verified Challenger" />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
@@ -554,6 +559,87 @@ function BuildTargetCard({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function BuildChampionName({ name }: { name: string }) {
+  const nameRef = useRef<HTMLDivElement>(null);
+  const isSingleWord = !/\s/.test(name.trim());
+
+  useLayoutEffect(() => {
+    const element = nameRef.current;
+
+    if (!element) {
+      return undefined;
+    }
+
+    if (!isSingleWord) {
+      element.style.fontSize = "";
+      return undefined;
+    }
+
+    let frame: number | null = null;
+    let cancelled = false;
+
+    const fitName = () => {
+      frame = null;
+      element.style.fontSize = `${BUILD_CHAMPION_NAME_DEFAULT_FONT_REM}rem`;
+
+      if (element.clientWidth <= 0 || element.scrollWidth <= element.clientWidth) {
+        return;
+      }
+
+      const nextFontSize = Math.max(
+        BUILD_CHAMPION_NAME_MIN_FONT_REM,
+        BUILD_CHAMPION_NAME_DEFAULT_FONT_REM * (element.clientWidth / element.scrollWidth) * 0.98
+      );
+
+      element.style.fontSize = `${Number(nextFontSize.toFixed(3))}rem`;
+    };
+
+    const scheduleFit = () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+
+      frame = requestAnimationFrame(() => {
+        if (!cancelled) {
+          fitName();
+        }
+      });
+    };
+
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleFit) : null;
+
+    scheduleFit();
+    resizeObserver?.observe(element);
+    window.addEventListener("resize", scheduleFit);
+    void document.fonts?.ready.then(scheduleFit).catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleFit);
+      element.style.fontSize = "";
+    };
+  }, [isSingleWord, name]);
+
+  return (
+    <div
+      ref={nameRef}
+      className={cn(
+        "max-w-full font-display text-2xl font-bold leading-[1.02] text-white",
+        isSingleWord ? "whitespace-nowrap" : "whitespace-normal break-words [overflow-wrap:anywhere] [text-wrap:balance]"
+      )}
+      title={name}
+    >
+      {name}
     </div>
   );
 }
@@ -629,7 +715,7 @@ function BuildTeamScout({
                   {isTarget && <span className="shrink-0 rounded-sm bg-green-400/18 px-1.5 py-0.5 text-[9px] font-bold uppercase text-green-200">Target</span>}
                 </div>
                 <div className="truncate text-[11px] font-semibold text-[#9fb7d5]" title={revealed ? pick.playerName : undefined}>
-                  {revealed ? pick.playerName ?? "Unknown player" : "Reveal after a miss"}
+                  {revealed ? <BuildPlayerName name={pick.playerName} fallback="Unknown player" compact /> : "Reveal after a miss"}
                 </div>
               </div>
             </div>
@@ -637,6 +723,27 @@ function BuildTeamScout({
         })}
       </div>
     </div>
+  );
+}
+
+function BuildPlayerName({ name, fallback, compact = false }: { name?: string; fallback: string; compact?: boolean }) {
+  const displayName = name?.trim();
+
+  if (!displayName) {
+    return fallback;
+  }
+
+  const riotId = splitRiotId(displayName);
+
+  if (!riotId) {
+    return displayName;
+  }
+
+  return (
+    <span className={cn("inline-flex max-w-full items-baseline", compact ? "align-bottom" : "flex-wrap")}>
+      <span className={cn("min-w-0", compact ? "truncate" : "break-words [overflow-wrap:anywhere]")}>{riotId.gameName}</span>
+      <span className="shrink-0 whitespace-nowrap text-[#74ecff]/85">#{riotId.tagLine}</span>
+    </span>
   );
 }
 
@@ -1660,8 +1767,8 @@ export function ItemRecipeGame({
   );
 
   const gameContent = (
-    <div className="grid gap-3 pb-10">
-      <div className="rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-4">
+    <div className="play-area-content grid gap-3 pb-10">
+      <div className="play-inset-panel-depth rounded-sm border border-[#3c3421] p-2 sm:p-4">
         <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="font-display text-base font-extrabold text-white sm:text-xl">Find the missing component.</div>
@@ -1689,10 +1796,10 @@ export function ItemRecipeGame({
                   }
                 }}
                 className={cn(
-                  "relative grid min-h-20 content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
-                  result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-                  result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
-                  !result && (answer === item.id ? "border-[#c89b3c] bg-[#c89b3c]/12 ring-2 ring-[#c89b3c]/35" : "border-[#26313f]"),
+                  "play-choice-depth relative grid min-h-20 content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
+                  result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+                  result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+                  !result && (answer === item.id ? "play-choice-depth-selected border-[#c89b3c] ring-2 ring-[#c89b3c]/35" : "play-choice-depth-default border-[#26313f]"),
                   submitted && !result && "opacity-55"
                 )}
                 title={`${item.name} - ${item.goldTotal}g`}
@@ -1723,7 +1830,7 @@ export function ItemRecipeGame({
     return (
       <>
         {leftRail}
-        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
+        <section className="play-area-depth min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] p-2 pb-16 sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
           {gameContent}
         </section>
       </>
@@ -1731,7 +1838,7 @@ export function ItemRecipeGame({
   }
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+    <section className="play-area-depth min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] p-2 pb-16 sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         {leftRail}
         {gameContent}
@@ -1802,10 +1909,10 @@ function ItemChoiceCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "relative grid h-full min-h-[6.25rem] content-center justify-items-center gap-1 rounded-sm border bg-[#111722] p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-[7.35rem] sm:gap-1.5 sm:p-2 xl:min-h-[8rem]",
-        result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-        result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
-        !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
+        "play-choice-depth relative grid h-full min-h-[6.25rem] content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[7.35rem] sm:gap-1.5 sm:p-2 xl:min-h-[8rem]",
+        result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+        result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+        !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
         selected && "ring-2 ring-[#c89b3c]/35",
         disabled && !result && "opacity-35"
       )}
@@ -1852,10 +1959,10 @@ function BootChoiceCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "relative grid h-full min-h-[5.5rem] grid-cols-[2.5rem_1fr] items-center gap-2 rounded-sm border bg-[#111722] p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] hover:shadow-[0_0_18px_rgba(245,197,66,.16)] disabled:cursor-not-allowed sm:min-h-[6.25rem] sm:grid-cols-[3rem_1fr] sm:gap-2.5 sm:p-2.5 xl:min-h-[6.6rem]",
-        result === "correct" && "border-green-400/70 bg-green-500/18 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-        result === "wrong" && "border-[#394150] bg-[#151b26] grayscale",
-        !result && (selected ? "border-[#c89b3c] bg-[#c89b3c]/14 shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "border-[#26313f]"),
+        "play-choice-depth relative grid h-full min-h-[5.5rem] grid-cols-[2.5rem_1fr] items-center gap-2 overflow-hidden rounded-sm border p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[6.25rem] sm:grid-cols-[3rem_1fr] sm:gap-2.5 sm:p-2.5 xl:min-h-[6.6rem]",
+        result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+        result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+        !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
         selected && "ring-2 ring-[#c89b3c]/35",
         disabled && !result && "opacity-35"
       )}
@@ -2303,12 +2410,13 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
       icon={<Swords size={18} />}
       title="Who Wins More?"
       headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+      playAreaDepth
     >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
         <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
-          <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:gap-3 sm:p-3 lg:min-h-[28rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
+          <div className="play-panel-depth grid gap-2 rounded-sm border border-[#3c3421] p-2 sm:gap-3 sm:p-3 lg:min-h-[28rem] lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)]">
             <MatchupChampionCard side="left" pick={round.left} revealed={submitted} selected={answer === "left"} submitted={submitted} correctSide={round.answerSide === "left"} />
             <div className="grid place-items-center">
               <MatchupVsMark />
@@ -2380,22 +2488,22 @@ function MatchupChampionCard({
   submitted: boolean;
   correctSide: boolean;
 }) {
-  const tone = submitted && correctSide ? "border-green-400/70 shadow-[0_0_36px_rgba(74,222,128,.18)]" : submitted && selected ? "border-red-400/70 shadow-[0_0_36px_rgba(248,113,113,.16)]" : "border-[#3c3421]";
+  const tone = submitted && correctSide ? "border-green-400/70" : submitted && selected ? "border-red-400/70" : "border-[#3c3421]";
 
   return (
-    <article className={cn("relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
-      <div className="absolute inset-0 bg-cover bg-center opacity-72" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_18%,rgba(200,155,60,.20),transparent_34%),linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
+    <article className={cn("play-card-depth relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
+      <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
+      <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
       <div className="relative flex h-full min-h-[18rem] flex-col justify-between p-3 sm:min-h-[24rem] sm:p-4 lg:min-h-[28rem] lg:p-5">
-        <div className={cn("flex items-center gap-2", side === "right" && "justify-end text-right")}>
-          <span className="rounded-sm border border-[#c89b3c]/45 bg-[#050607]/82 px-3 py-1 font-display text-xs font-bold uppercase tracking-[0.12em] text-[#f1d58a]">
+        <div className={cn("grid gap-1.5", side === "left" ? "justify-items-end text-right" : "justify-items-start text-left")}>
+          <span className="rounded-sm border border-[#c89b3c]/45 bg-[#050607]/82 px-4 py-1.5 font-display text-sm font-bold uppercase leading-none tracking-[0.12em] text-[#f1d58a] sm:text-base">
             {pick.role}
           </span>
-          <span className="rounded-sm border border-white/10 bg-[#050607]/70 px-3 py-1 text-xs text-[color:var(--muted)]">
+          <span className="rounded-sm border border-white/10 bg-[#050607]/70 px-2.5 py-0.5 text-[11px] uppercase tracking-[0.08em] text-[color:var(--muted)]">
             {pick.games} game{pick.games === 1 ? "" : "s"}
           </span>
         </div>
-        <div className={cn("grid gap-4", side === "right" && "justify-items-end text-right")}>
+        <div className={cn("grid gap-4", side === "left" && "justify-items-end text-right")}>
           <div>
             <div className="font-display text-3xl font-black leading-none tracking-tight text-white drop-shadow sm:text-5xl">{pick.champion.name}</div>
             <div className="mt-2 text-sm uppercase tracking-[0.12em] text-[#c89b3c]">{pick.champion.title}</div>
@@ -3161,6 +3269,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
       icon={<CircleSlash size={18} />}
       title="Dodge or Queue"
       headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+      playAreaDepth
     >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
@@ -3247,16 +3356,18 @@ function PuzzleFrame({
   title,
   kicker,
   headerAccessory,
-  children
+  children,
+  playAreaDepth = false
 }: {
   icon: ReactNode;
   title: string;
   kicker?: string;
   headerAccessory?: ReactNode;
   children: ReactNode;
+  playAreaDepth?: boolean;
 }) {
-  return (
-    <section className="flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm">
+  const content = (
+    <>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[#c89b3c]">{icon}</span>
@@ -3266,6 +3377,17 @@ function PuzzleFrame({
         {headerAccessory ? <div className="flex min-w-0 shrink-0">{headerAccessory}</div> : null}
       </div>
       {children}
+    </>
+  );
+
+  return (
+    <section
+      className={cn(
+        "flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm",
+        playAreaDepth && "play-area-depth bg-transparent shadow-none"
+      )}
+    >
+      {playAreaDepth ? <div className="play-area-content flex min-h-0 flex-1 flex-col gap-2 sm:gap-3">{content}</div> : content}
     </section>
   );
 }
@@ -3323,7 +3445,7 @@ function DraftScreen({
   hiddenLabel?: string;
 }) {
   return (
-    <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#050607] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
+    <div className="play-panel-depth grid gap-2 rounded-sm border border-[#3c3421] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} />
       <div className="grid place-items-center text-center">
         <MatchupVsMark compact />
@@ -3399,7 +3521,7 @@ function DraftPickCard({ side, pick, hiddenLabel }: { side: "blue" | "red"; pick
   const mirrored = side === "blue";
 
   return (
-    <div className="relative min-h-20 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] shadow-[inset_0_1px_0_rgba(255,255,255,.04)] sm:min-h-24">
+    <div className="play-card-depth relative min-h-20 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-24">
       {pick?.splashUrl && (
         <div
           className="absolute inset-0 bg-cover bg-center opacity-38"

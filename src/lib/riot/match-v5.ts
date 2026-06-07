@@ -1,5 +1,6 @@
 import { query } from "@/db/client";
 import { env, isDatabaseConfigured, isRiotApiConfigured } from "@/lib/env";
+import { formatRiotIdFromFields } from "@/lib/riot-id";
 import type {
   BuildWinrateStats,
   ChampionMatchupRound,
@@ -258,6 +259,7 @@ export async function getVerifiedRankedMatchChallenges({
   matchupSampleMatchCount,
   matchHistoryPagesPerSource,
   batchKey = "",
+  compactPersistedCache = false,
   forceRefresh = false
 }: {
   date: string;
@@ -272,6 +274,7 @@ export async function getVerifiedRankedMatchChallenges({
   matchupSampleMatchCount?: number;
   matchHistoryPagesPerSource?: number;
   batchKey?: string;
+  compactPersistedCache?: boolean;
   forceRefresh?: boolean;
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
@@ -311,7 +314,7 @@ export async function getVerifiedRankedMatchChallenges({
   const championLookup = createChampionLookup(publicChampions);
   const itemLookup = new Map(gameItems.map((item) => [item.id, item]));
   const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
-  const persistedVerifiedSet = pruneInvalidBuildRounds(await getPersistedVerifiedMatchCache(persistedCacheKey), itemLookup);
+  const persistedVerifiedSet = pruneInvalidBuildRounds(await getPersistedVerifiedMatchCache(persistedCacheKey, { compact: compactPersistedCache }), itemLookup);
   const persistedBuildRoundCount = persistedVerifiedSet ? verifiedBuildRoundCount(persistedVerifiedSet, itemLookup) : 0;
 
   if (!forceRefresh && persistedVerifiedSet && hasAnyVerifiedMatchRounds(persistedVerifiedSet, itemLookup)) {
@@ -1477,7 +1480,7 @@ function mergeChampionWinrateSamples(existing: Record<string, BuildWinrateStats>
   return merged;
 }
 
-async function getPersistedVerifiedMatchCache(cacheKey: string) {
+async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compact?: boolean } = {}) {
   if (!isDatabaseConfigured()) {
     return null;
   }
@@ -1485,11 +1488,28 @@ async function getPersistedVerifiedMatchCache(cacheKey: string) {
   try {
     await ensureVerifiedMatchCacheTable();
     const result = await query<VerifiedMatchCacheRow>(
-      `select payload
-      from verified_match_cache
-      where cache_key = $1
-        and expires_at > now()
-      limit 1`,
+      options.compact
+        ? `select jsonb_strip_nulls(jsonb_build_object(
+            'buildRounds', coalesce(payload->'buildRounds', '[]'::jsonb),
+            'guessEloRounds', coalesce(payload->'guessEloRounds', '[]'::jsonb),
+            'dodgeQueueRounds', coalesce(payload->'dodgeQueueRounds', '[]'::jsonb),
+            'championMatchupRounds', coalesce(payload->'championMatchupRounds', '[]'::jsonb),
+            'championWinrateSamples', '{}'::jsonb,
+            'status', coalesce(payload->'status', '"ready"'::jsonb),
+            'message', payload->'message',
+            'guessEloMessage', payload->'guessEloMessage',
+            'dodgeQueueMessage', payload->'dodgeQueueMessage',
+            'championMatchupMessage', payload->'championMatchupMessage'
+          )) as payload
+          from verified_match_cache
+          where cache_key = $1
+            and expires_at > now()
+          limit 1`
+        : `select payload
+          from verified_match_cache
+          where cache_key = $1
+            and expires_at > now()
+          limit 1`,
       [cacheKey]
     );
 
@@ -2445,11 +2465,7 @@ function isCurrentPatchMatch(match: RiotMatchDto, currentPatchPrefix: string) {
 }
 
 function formatRiotId(participant?: RiotParticipantDto) {
-  if (!participant?.riotIdGameName) {
-    return participant?.summonerName;
-  }
-
-  return participant.riotIdTagline ? `${participant.riotIdGameName}#${participant.riotIdTagline}` : participant.riotIdGameName;
+  return formatRiotIdFromFields(participant);
 }
 
 function parseRiotId(riotId: string) {

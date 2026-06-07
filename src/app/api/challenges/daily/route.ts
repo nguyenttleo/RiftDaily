@@ -76,6 +76,7 @@ export async function GET(request: Request) {
         publicChampions,
         gameItems: liveItems,
         summonerSpells,
+        compactPersistedCache: true,
         timeBudgetMs: 18000
       })
     ),
