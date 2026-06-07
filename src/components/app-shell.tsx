@@ -681,9 +681,7 @@ function hasRecoverableDataGap(daily: DailyChallengeResponse) {
   const build = daily.extraChallenges.itemBuild;
 
   return (
-    build.possibleItems.length === 0 ||
-    build.possibleBoots.length === 0 ||
-    !build.winrateStats?.buildGames ||
+    !hasPlayableBuildChallenge(build) ||
     Boolean(daily.extraChallenges.guessElo.unavailableReason) ||
     (daily.extraChallenges.guessElo.rounds?.length ?? 0) === 0 ||
     Boolean(daily.extraChallenges.dodgeQueue.unavailableReason) ||
@@ -697,7 +695,7 @@ function hasRecoverableDataGapForView(daily: DailyChallengeResponse, view: View)
   const extra = daily.extraChallenges;
 
   if (view === "item-build") {
-    return extra.itemBuild.possibleItems.length === 0 || extra.itemBuild.possibleBoots.length === 0 || !extra.itemBuild.winrateStats?.buildGames;
+    return !hasPlayableBuildChallenge(extra.itemBuild);
   }
 
   if (view === "guess-elo") {
@@ -713,6 +711,19 @@ function hasRecoverableDataGapForView(daily: DailyChallengeResponse, view: View)
   }
 
   return false;
+}
+
+function hasPlayableBuildChallenge(build: DailyChallengeResponse["extraChallenges"]["itemBuild"]) {
+  const rounds = build.rounds && build.rounds.length > 0 ? build.rounds : [build];
+
+  return rounds.some(
+    (round) =>
+      !round.unavailableReason &&
+      round.answerItemIds.length === 5 &&
+      Boolean(round.answerBootsId) &&
+      (round.allyTeam?.length ?? 0) === 5 &&
+      (round.enemyPlayers?.length ?? 0) === 5
+  );
 }
 
 function formatReset(value: string) {

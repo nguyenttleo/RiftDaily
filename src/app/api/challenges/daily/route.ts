@@ -19,9 +19,18 @@ import { authOptions } from "@/lib/auth/options";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
-import type { ChallengeType, DailyChallengeResponse } from "@/types";
+import type {
+  ChallengeType,
+  DailyChallengeResponse,
+  DodgeQueueRound,
+  GuessEloRound,
+  ItemBuildChallenge
+} from "@/types";
 
 export const runtime = "nodejs";
+const PUBLIC_ROUND_LIMIT = 40;
+const GUESS_ELO_ROUNDS_PER_BUCKET = 8;
+const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 
 export async function GET() {
   const version = await getLatestDataDragonVersion();
@@ -43,7 +52,7 @@ export async function GET() {
 
   const stats = await getUserStats(session?.user?.id, session?.user?.username ?? session?.user?.name ?? "Guest");
 
-  const body: DailyChallengeResponse = {
+  const body: DailyChallengeResponse = compactDailyChallengeResponse({
     date: generated.date,
     resetAt: generated.resetAt,
     dataDragonVersion: version,
@@ -69,11 +78,115 @@ export async function GET() {
     champions: publicChampions,
     items: liveItems,
     stats
-  };
+  });
 
   const response = NextResponse.json(body);
   response.headers.set("Cache-Control", "no-store, max-age=0");
   return response;
+}
+
+function compactDailyChallengeResponse(body: DailyChallengeResponse): DailyChallengeResponse {
+  const itemBuild = compactItemBuildChallenge(body.extraChallenges.itemBuild);
+  const guessEloRounds = selectBalancedGuessEloRounds(body.extraChallenges.guessElo.rounds ?? []).map(compactGuessEloRound);
+  const dodgeQueueRounds = selectPublicRounds(body.extraChallenges.dodgeQueue.rounds ?? [], PUBLIC_ROUND_LIMIT).map(compactDodgeQueueRound);
+
+  return {
+    ...body,
+    extraChallenges: {
+      ...body.extraChallenges,
+      itemBuild,
+      guessElo: {
+        ...(guessEloRounds[0] ?? compactGuessEloRound(body.extraChallenges.guessElo)),
+        type: "guess-elo",
+        rounds: guessEloRounds
+      },
+      dodgeQueue: {
+        ...(dodgeQueueRounds[0] ?? compactDodgeQueueRound(body.extraChallenges.dodgeQueue)),
+        type: "dodge-queue",
+        rounds: dodgeQueueRounds
+      }
+    }
+  };
+}
+
+function compactItemBuildChallenge(challenge: ItemBuildChallenge): ItemBuildChallenge {
+  const rounds = selectPublicRounds(challenge.rounds ?? [], PUBLIC_ROUND_LIMIT).map(compactBuildRound);
+
+  return {
+    ...(rounds[0] ?? compactBuildRound(challenge)),
+    type: "item-build",
+    id: challenge.id,
+    rounds
+  };
+}
+
+function compactBuildRound(round: ItemBuildChallenge): ItemBuildChallenge {
+  return {
+    ...round,
+    possibleItems: [],
+    possibleBoots: [],
+    sourceMatch: compactSourceMatch(round.sourceMatch)
+  };
+}
+
+function compactGuessEloRound(round: GuessEloRound): GuessEloRound {
+  return {
+    ...round,
+    sourceMatch: compactSourceMatch(round.sourceMatch)
+  };
+}
+
+function compactDodgeQueueRound(round: DodgeQueueRound): DodgeQueueRound {
+  return {
+    ...round,
+    sourceMatch: compactSourceMatch(round.sourceMatch)
+  };
+}
+
+function compactSourceMatch<T extends { matchData?: unknown } | undefined>(sourceMatch: T): T {
+  if (!sourceMatch || !("matchData" in sourceMatch) || !sourceMatch.matchData) {
+    return sourceMatch;
+  }
+
+  const compact = { ...sourceMatch };
+  delete (compact as { matchData?: unknown }).matchData;
+  return compact as T;
+}
+
+function selectBalancedGuessEloRounds(rounds: GuessEloRound[]) {
+  const selected: GuessEloRound[] = [];
+  const selectedIds = new Set<string>();
+
+  for (const bucket of GUESS_ELO_BUCKETS) {
+    const bucketRounds = rounds.filter((round) => round.answerTier === bucket);
+
+    for (const round of selectPublicRounds(bucketRounds, GUESS_ELO_ROUNDS_PER_BUCKET)) {
+      selected.push(round);
+      selectedIds.add(round.id);
+    }
+  }
+
+  if (selected.length < PUBLIC_ROUND_LIMIT) {
+    const remaining = rounds.filter((round) => !selectedIds.has(round.id));
+    selected.push(...selectPublicRounds(remaining, PUBLIC_ROUND_LIMIT - selected.length));
+  }
+
+  return selectPublicRounds(selected, PUBLIC_ROUND_LIMIT);
+}
+
+function selectPublicRounds<T>(rounds: T[], limit: number) {
+  if (rounds.length <= limit) {
+    return [...rounds];
+  }
+
+  const shuffled = [...rounds];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+
+  return shuffled.slice(0, limit);
 }
 
 async function resolveDailyAbilityChallenge(date: string, version: string) {

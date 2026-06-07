@@ -153,6 +153,16 @@ export interface ChampionMatchupWarmResult {
   validTwentyGamePairs: number;
 }
 
+export interface VerifiedMatchProof {
+  matchId: string;
+  gameId?: number;
+  gameVersion: string;
+  gameCreation?: number;
+  queueId: number;
+  platform: string;
+  matchData: VerifiedMatchData;
+}
+
 interface WinrateAccumulator {
   championName: string;
   wins: number;
@@ -575,6 +585,44 @@ export async function getVerifiedRankedMatchChallenges({
       message
     };
   }
+}
+
+export async function getVerifiedMatchProofById({
+  matchId,
+  publicChampions,
+  summonerSpells
+}: {
+  matchId: string;
+  publicChampions: PublicChampion[];
+  summonerSpells: SummonerSpellRef[];
+}): Promise<VerifiedMatchProof | null> {
+  if (!isRiotApiConfigured()) {
+    return null;
+  }
+
+  const platform = platformFromMatchId(matchId);
+  const regional = regionalRouteForPlatform(platform);
+  const championLookup = createChampionLookup(publicChampions);
+  const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
+  const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+  const matchData = toVerifiedMatchData(match, championLookup, spellLookup);
+
+  if (!matchData) {
+    return null;
+  }
+
+  const gameCreation = match.info.gameCreation ?? match.info.gameStartTimestamp;
+  const gameId = match.info.gameId ?? gameIdFromMatchId(match.metadata.matchId);
+
+  return {
+    matchId: match.metadata.matchId,
+    ...(gameId ? { gameId } : {}),
+    gameVersion: match.info.gameVersion,
+    ...(gameCreation ? { gameCreation } : {}),
+    queueId: match.info.queueId,
+    platform,
+    matchData
+  };
 }
 
 export async function warmChampionMatchupSampleCache({
@@ -2196,6 +2244,11 @@ function sleep(ms: number) {
 
 function normalizePlatform(value: string) {
   return value.trim().toLowerCase() || "na1";
+}
+
+function platformFromMatchId(matchId: string) {
+  const [prefix] = matchId.split("_");
+  return normalizePlatform(prefix || env.riotRegion);
 }
 
 function regionalRouteForPlatform(platform: string) {

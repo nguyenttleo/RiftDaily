@@ -29,6 +29,7 @@ type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({
   challenge,
+  items = [],
   username = "Guest"
 }: {
   challenge: ItemBuildChallenge;
@@ -44,7 +45,8 @@ export function ItemBuildGame({
   const [guesses, setGuesses] = useState<Array<{ items: string[]; boots: string }>>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
-  const round = rounds[roundIndex % rounds.length];
+  const rawRound = rounds[roundIndex % rounds.length];
+  const round = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
   const answerSet = useMemo(() => new Set(round.answerItemIds), [round.answerItemIds]);
   const solved = guesses.some((guess) => isBuildGuessSolved(guess, answerSet, round.answerBootsId));
   const finished = solved || guesses.length >= BUILD_MAX_GUESSES;
@@ -574,6 +576,49 @@ function getBuildUnavailableReason(round: ItemBuildChallenge) {
   }
 
   return "";
+}
+
+function hydrateItemBuildRound(round: ItemBuildChallenge, itemCatalog: GameItem[]): ItemBuildChallenge {
+  if (round.possibleItems.length > 0 && round.possibleBoots.length > 0) {
+    return round;
+  }
+
+  const itemById = new Map(itemCatalog.map((item) => [item.id, item]));
+  const answerItems = round.answerItemIds.map((id) => itemById.get(id)).filter(Boolean) as GameItem[];
+  const answerBoots = itemById.get(round.answerBootsId);
+
+  if (answerItems.length !== 5 || !answerBoots) {
+    return round;
+  }
+
+  return {
+    ...round,
+    possibleItems: uniqueItemsByName([...answerItems, ...itemCatalog.filter(isBuildCandidateChoice)], new Set(round.answerItemIds)).slice(0, 72),
+    possibleBoots: uniqueItemsByName([answerBoots, ...itemCatalog.filter(isUpgradedBootsChoice)], new Set([round.answerBootsId]))
+  };
+}
+
+function isBuildCandidateChoice(item: GameItem) {
+  return (
+    item.purchasable &&
+    item.goldTotal >= 1600 &&
+    item.into.length === 0 &&
+    item.tags.length > 0 &&
+    !item.tags.includes("Boots") &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
+}
+
+function isUpgradedBootsChoice(item: GameItem) {
+  return (
+    item.purchasable &&
+    item.name !== "Boots" &&
+    item.goldTotal >= 900 &&
+    item.tags.includes("Boots") &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
 }
 
 function uniqueItemsByName(items: GameItem[], preferredIds = new Set<string>()) {
@@ -1785,12 +1830,62 @@ function NextLobbyButton({ onClick, label = "Next lobby" }: { onClick: () => voi
 
 function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMatch"] | DodgeQueueRound["sourceMatch"] | ItemBuildChallenge["sourceMatch"] }) {
   const [copied, setCopied] = useState(false);
+  const [remoteMatchData, setRemoteMatchData] = useState<VerifiedMatchData | undefined>(sourceMatch?.matchData);
+  const [loadingMatchData, setLoadingMatchData] = useState(false);
+  const [matchDataError, setMatchDataError] = useState("");
+
+  useEffect(() => {
+    setRemoteMatchData(sourceMatch?.matchData);
+    setMatchDataError("");
+
+    if (!sourceMatch || sourceMatch.matchData) {
+      setLoadingMatchData(false);
+      return;
+    }
+
+    let cancelled = false;
+    const matchId = sourceMatch.matchId;
+
+    async function loadMatchData() {
+      setLoadingMatchData(true);
+
+      try {
+        const response = await fetch(`/api/matches/${encodeURIComponent(matchId)}`, { cache: "force-cache" });
+        const body = (await response.json()) as { matchData?: VerifiedMatchData; error?: string };
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!response.ok || !body.matchData) {
+          throw new Error(body.error || "Match proof unavailable.");
+        }
+
+        setRemoteMatchData(body.matchData);
+      } catch (error) {
+        if (!cancelled) {
+          setMatchDataError(error instanceof Error ? error.message : "Match proof unavailable.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingMatchData(false);
+        }
+      }
+    }
+
+    void loadMatchData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceMatch]);
 
   if (!sourceMatch) {
     return null;
   }
 
   const match = sourceMatch;
+  const matchData = match.matchData ?? remoteMatchData;
 
   async function copyMatchId() {
     await navigator.clipboard.writeText(match.matchId);
@@ -1815,11 +1910,15 @@ function MatchProofCard({ sourceMatch }: { sourceMatch?: GuessEloRound["sourceMa
         </button>
       </div>
       {match.sourcePlayer && <div className="mt-1 text-xs text-[color:var(--muted)]">Source player: {match.sourcePlayer}</div>}
-      {match.matchData ? (
-        <VerifiedMatchReport match={match.matchData} />
+      {matchData ? (
+        <VerifiedMatchReport match={matchData} />
+      ) : loadingMatchData ? (
+        <div className="mt-3 rounded-lg border border-[#2b2f38] bg-[#111722] p-2 text-xs text-[color:var(--muted)]">
+          Loading Riot Match-V5 proof...
+        </div>
       ) : (
         <div className="mt-3 rounded-lg border border-[#2b2f38] bg-[#111722] p-2 text-xs text-[color:var(--muted)]">
-          Match details unavailable in this payload, but the exact Riot Match-V5 ID is shown above.
+          {matchDataError || "Match details unavailable, but the exact Riot Match-V5 ID is shown above."}
         </div>
       )}
     </div>
