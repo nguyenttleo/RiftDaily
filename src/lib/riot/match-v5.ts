@@ -1918,9 +1918,9 @@ function dataDragonVersionFromGameVersion(gameVersion: string) {
 }
 
 function patchPrefixFromVersion(version: string) {
-  const [major, minor] = version.split(".");
+  const [major] = version.split(".");
 
-  return major && minor ? `${major}.${minor}.` : version;
+  return major ? `${major}.` : version;
 }
 
 function isCurrentPatchMatch(match: RiotMatchDto, currentPatchPrefix: string) {
