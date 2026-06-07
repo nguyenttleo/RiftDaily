@@ -29,6 +29,7 @@ import type {
 
 export const runtime = "nodejs";
 const PUBLIC_ROUND_LIMIT = 40;
+const BUILD_PUBLIC_ROUND_LIMIT = 50;
 const GUESS_ELO_ROUNDS_PER_BUCKET = 8;
 const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 
@@ -110,7 +111,7 @@ function compactDailyChallengeResponse(body: DailyChallengeResponse): DailyChall
 }
 
 function compactItemBuildChallenge(challenge: ItemBuildChallenge): ItemBuildChallenge {
-  const rounds = selectPublicRounds(challenge.rounds ?? [], PUBLIC_ROUND_LIMIT).map(compactBuildRound);
+  const rounds = selectPublicRounds(challenge.rounds ?? [], BUILD_PUBLIC_ROUND_LIMIT).map(compactBuildRound);
 
   return {
     ...(rounds[0] ?? compactBuildRound(challenge)),

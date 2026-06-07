@@ -20,6 +20,7 @@ const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
 const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
+const MIN_PLAYABLE_BUILD_ROUNDS = 50;
 const DEFAULT_BUILD_SAMPLE_MATCH_COUNT = 512;
 const MAX_BUILD_SAMPLE_MATCH_COUNT = 5000;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
@@ -321,13 +322,13 @@ export async function getVerifiedRankedMatchChallenges({
   const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${boundedMatchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
   const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
 
-  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now() && hasVerifiedBuildRoundsRecord(cachedMatchSet.value, itemLookup)) {
+  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now() && hasEnoughVerifiedBuildRounds(cachedMatchSet.value, itemLookup)) {
     return cachedMatchSet.value;
   }
 
   const persistedVerifiedSet = await getPersistedVerifiedMatchCache(persistedCacheKey);
 
-  if (!forceRefresh && persistedVerifiedSet && hasVerifiedBuildRoundsRecord(persistedVerifiedSet, itemLookup)) {
+  if (!forceRefresh && persistedVerifiedSet && hasEnoughVerifiedBuildRounds(persistedVerifiedSet, itemLookup)) {
     const value = mergePersistedMatchupsIntoVerifiedSet(persistedVerifiedSet, persistedChampionMatchupRounds);
 
     cachedMatchSet = {
@@ -447,10 +448,6 @@ export async function getVerifiedRankedMatchChallenges({
       const bucketRounds = guessRoundsByBucket.get(source.bucket) ?? [];
       const bucketRoundLimit = nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank);
 
-      if (bucketRounds.length >= bucketRoundLimit) {
-        continue;
-      }
-
       if (
         isTimedOut() ||
         isAnalysisComplete(
@@ -523,10 +520,6 @@ export async function getVerifiedRankedMatchChallenges({
 
             if (dodgeQueueRounds.length < sampleSize) {
               dodgeQueueRounds.push(verified.dodgeQueue);
-            }
-
-            if (bucketRounds.length >= bucketRoundLimit) {
-              break;
             }
           }
         } catch {
@@ -1052,7 +1045,7 @@ function isAnalysisComplete(
 ) {
   return (
     seenMatchCount >= requestedBuildSampleSize &&
-    buildRounds.length > 0 &&
+    buildRounds.length >= MIN_PLAYABLE_BUILD_ROUNDS &&
     (!needsLiveMatchupRounds ||
       eligibleChampionMatchupRoundCount(championMatchupSamples) >= TARGET_MATCHUP_ROUNDS ||
       currentPatchMatchupMatchCount >= requestedMatchupSampleSize)
@@ -1061,6 +1054,14 @@ function isAnalysisComplete(
 
 function hasVerifiedBuildRoundsRecord(set: VerifiedMatchChallengeSet, itemLookup: Map<string, GameItem>) {
   return (set.buildRounds ?? []).some((round) => Boolean(verifiedCompletedBuildItemIds(round.itemIds, itemLookup)));
+}
+
+function hasEnoughVerifiedBuildRounds(set: VerifiedMatchChallengeSet, itemLookup: Map<string, GameItem>) {
+  return verifiedBuildRoundCount(set, itemLookup) >= MIN_PLAYABLE_BUILD_ROUNDS;
+}
+
+function verifiedBuildRoundCount(set: VerifiedMatchChallengeSet, itemLookup: Map<string, GameItem>) {
+  return (set.buildRounds ?? []).filter((round) => Boolean(verifiedCompletedBuildItemIds(round.itemIds, itemLookup))).length;
 }
 
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {

@@ -50,9 +50,9 @@ export function SuggestionForm() {
 
     setStatus("sent");
     if (body.emailed) {
-      setDetail(body.persisted ? "Saved and emailed to Leo." : "Emailed to Leo.");
+      setDetail(body.persisted ? "Saved and emailed to the developer." : "Emailed to the developer.");
     } else {
-      setDetail(body.persisted ? "Saved. Email is not configured, so use Email if needed." : "Submitted locally. Use Email if needed.");
+      setDetail(body.persisted ? "Saved. Thanks for the suggestion." : "Thanks for the suggestion.");
     }
     setMessage("");
   }
