@@ -265,7 +265,7 @@ export function AppShell() {
           )}
         >
 
-        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} champions={daily.champions} items={daily.items} username={displayStats.username} pageRail />}
+        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} items={daily.items} username={displayStats.username} pageRail />}
         {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={displayStats.username} pageRail />}
         {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={displayStats.username} />}
         {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={displayStats.username} />}

@@ -47,7 +47,6 @@ export function ItemBuildGame({
   pageRail = false
 }: {
   challenge: ItemBuildChallenge;
-  champions?: PublicChampion[];
   items?: GameItem[];
   username?: string;
   pageRail?: boolean;

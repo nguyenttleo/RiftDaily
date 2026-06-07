@@ -37,6 +37,8 @@ const MAX_SOURCES_PER_RANK_BUCKET = 48;
 const RIOT_REQUEST_TIMEOUT_MS = 8000;
 const RIOT_MIN_REQUEST_INTERVAL_MS = 140;
 const RIOT_MAX_RETRY_AFTER_MS = 5000;
+const COMPACT_PERSISTED_BUILD_ROUND_LIMIT = 80;
+const COMPACT_PERSISTED_MATCH_ROUND_LIMIT = 80;
 
 let nextRiotRequestAt = 0;
 
@@ -260,7 +262,9 @@ export async function getVerifiedRankedMatchChallenges({
   matchHistoryPagesPerSource,
   batchKey = "",
   compactPersistedCache = false,
-  forceRefresh = false
+  forceRefresh = false,
+  readOnlyCache = false,
+  pinnedBuildRoundId = ""
 }: {
   date: string;
   dataDragonVersion: string;
@@ -276,6 +280,8 @@ export async function getVerifiedRankedMatchChallenges({
   batchKey?: string;
   compactPersistedCache?: boolean;
   forceRefresh?: boolean;
+  readOnlyCache?: boolean;
+  pinnedBuildRoundId?: string;
 }): Promise<VerifiedMatchChallengeSet> {
   if (!isRiotApiConfigured()) {
     return {
@@ -314,12 +320,16 @@ export async function getVerifiedRankedMatchChallenges({
   const championLookup = createChampionLookup(publicChampions);
   const itemLookup = new Map(gameItems.map((item) => [item.id, item]));
   const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
-  const persistedVerifiedSet = pruneInvalidBuildRounds(await getPersistedVerifiedMatchCache(persistedCacheKey, { compact: compactPersistedCache }), itemLookup);
+  const persistedMemoryCacheKey = compactPersistedCache ? `${persistedCacheKey}:compact:${pinnedBuildRoundId || "default"}` : persistedCacheKey;
+  const persistedVerifiedSet = pruneInvalidBuildRounds(
+    await getPersistedVerifiedMatchCache(persistedCacheKey, { compact: compactPersistedCache, pinnedBuildRoundId }),
+    itemLookup
+  );
   const persistedBuildRoundCount = persistedVerifiedSet ? verifiedBuildRoundCount(persistedVerifiedSet, itemLookup) : 0;
 
   if (!forceRefresh && persistedVerifiedSet && hasAnyVerifiedMatchRounds(persistedVerifiedSet, itemLookup)) {
     cachedMatchSet = {
-      key: persistedCacheKey,
+      key: persistedMemoryCacheKey,
       expiresAt: Date.now() + 1000 * 60 * 60 * 2,
       value: persistedVerifiedSet
     };
@@ -327,11 +337,30 @@ export async function getVerifiedRankedMatchChallenges({
     return persistedVerifiedSet;
   }
 
-  if (!forceRefresh && cachedMatchSet?.key === persistedCacheKey && cachedMatchSet.expiresAt > Date.now() && hasAnyVerifiedMatchRounds(cachedMatchSet.value, itemLookup)) {
+  if (!forceRefresh && cachedMatchSet?.key === persistedMemoryCacheKey && cachedMatchSet.expiresAt > Date.now() && hasAnyVerifiedMatchRounds(cachedMatchSet.value, itemLookup)) {
     return cachedMatchSet.value;
   }
 
   const persistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
+
+  if (readOnlyCache) {
+    const championMatchupMessage =
+      persistedChampionMatchupRounds.length > 0
+        ? undefined
+        : `Champion Matchup needs ${MIN_MATCHUP_SAMPLE_GAMES}+ Riot Match-V5 ranked games containing both champions in their selected lanes in the same match.`;
+
+    return {
+      buildRounds: [],
+      guessEloRounds: [],
+      dodgeQueueRounds: [],
+      championMatchupRounds: persistedChampionMatchupRounds,
+      championWinrateSamples: {},
+      status: persistedChampionMatchupRounds.length > 0 ? "ready" : "unavailable",
+      message: "Verified match cache is warming. Try again shortly.",
+      ...(championMatchupMessage ? { championMatchupMessage } : {})
+    };
+  }
+
   const shouldCollectLiveMatchups = allowLiveMatchupCollection && persistedChampionMatchupRounds.length < TARGET_MATCHUP_ROUNDS;
   const analysisTargetMatchCount = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
   const analysisFetchBudget = shouldCollectLiveMatchups
@@ -1480,7 +1509,7 @@ function mergeChampionWinrateSamples(existing: Record<string, BuildWinrateStats>
   return merged;
 }
 
-async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compact?: boolean } = {}) {
+async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compact?: boolean; pinnedBuildRoundId?: string } = {}) {
   if (!isDatabaseConfigured()) {
     return null;
   }
@@ -1489,10 +1518,42 @@ async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compa
     await ensureVerifiedMatchCacheTable();
     const result = await query<VerifiedMatchCacheRow>(
       options.compact
-        ? `select jsonb_strip_nulls(jsonb_build_object(
-            'buildRounds', coalesce(payload->'buildRounds', '[]'::jsonb),
-            'guessEloRounds', coalesce(payload->'guessEloRounds', '[]'::jsonb),
-            'dodgeQueueRounds', coalesce(payload->'dodgeQueueRounds', '[]'::jsonb),
+        ? `with cache_row as (
+            select payload
+            from verified_match_cache
+            where cache_key = $1
+              and expires_at > now()
+            limit 1
+          )
+          select jsonb_strip_nulls(jsonb_build_object(
+            'buildRounds', coalesce((
+              select jsonb_agg(round #- '{sourceMatch,matchData}' order by ordinality)
+              from (
+                select round, ordinality
+                from jsonb_array_elements(coalesce(payload->'buildRounds', '[]'::jsonb)) with ordinality as build(round, ordinality)
+                where ordinality <= ${COMPACT_PERSISTED_BUILD_ROUND_LIMIT}
+                  or round->>'id' = $2
+                order by ordinality
+              ) limited_build
+            ), '[]'::jsonb),
+            'guessEloRounds', coalesce((
+              select jsonb_agg(round #- '{sourceMatch,matchData}' order by ordinality)
+              from (
+                select round, ordinality
+                from jsonb_array_elements(coalesce(payload->'guessEloRounds', '[]'::jsonb)) with ordinality as guess_elo(round, ordinality)
+                order by ordinality
+                limit ${COMPACT_PERSISTED_MATCH_ROUND_LIMIT}
+              ) limited_guess_elo
+            ), '[]'::jsonb),
+            'dodgeQueueRounds', coalesce((
+              select jsonb_agg(round #- '{sourceMatch,matchData}' order by ordinality)
+              from (
+                select round, ordinality
+                from jsonb_array_elements(coalesce(payload->'dodgeQueueRounds', '[]'::jsonb)) with ordinality as dodge_queue(round, ordinality)
+                order by ordinality
+                limit ${COMPACT_PERSISTED_MATCH_ROUND_LIMIT}
+              ) limited_dodge_queue
+            ), '[]'::jsonb),
             'championMatchupRounds', coalesce(payload->'championMatchupRounds', '[]'::jsonb),
             'championWinrateSamples', '{}'::jsonb,
             'status', coalesce(payload->'status', '"ready"'::jsonb),
@@ -1501,16 +1562,13 @@ async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compa
             'dodgeQueueMessage', payload->'dodgeQueueMessage',
             'championMatchupMessage', payload->'championMatchupMessage'
           )) as payload
-          from verified_match_cache
-          where cache_key = $1
-            and expires_at > now()
-          limit 1`
+          from cache_row`
         : `select payload
           from verified_match_cache
           where cache_key = $1
             and expires_at > now()
           limit 1`,
-      [cacheKey]
+      options.compact ? [cacheKey, options.pinnedBuildRoundId ?? ""] : [cacheKey]
     );
 
     const payload = result.rows[0]?.payload;

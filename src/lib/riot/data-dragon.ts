@@ -167,6 +167,9 @@ const NON_SUMMONERS_RIFT_FALLBACK_ITEM_IDS = new Set([
 ]);
 
 let cachedVersion: string | null = null;
+const liveChampionCache = new Map<string, PublicChampion[]>();
+const liveItemCache = new Map<string, GameItem[]>();
+const liveSummonerSpellCache = new Map<string, SummonerSpellRef[]>();
 
 export async function getLatestDataDragonVersion(): Promise<string> {
   if (cachedVersion) {
@@ -331,12 +334,17 @@ export async function fetchRiotSummonerSpellPayload(version?: string): Promise<R
 
 export async function getLivePublicChampions(version?: string): Promise<PublicChampion[]> {
   const resolvedVersion = version ?? (await getLatestDataDragonVersion());
+  const cached = liveChampionCache.get(resolvedVersion);
+
+  if (cached) {
+    return cached;
+  }
 
   try {
     const payload = await fetchRiotChampionPayload(resolvedVersion);
     const supplemental = new Map(champions.map((champion) => [champion.id, champion]));
 
-    return Object.values(payload.data)
+    const liveChampions = Object.values(payload.data)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((champion) => {
         const local = supplemental.get(champion.id);
@@ -355,16 +363,27 @@ export async function getLivePublicChampions(version?: string): Promise<PublicCh
           splashUrl: championSplashUrl(champion.id)
         };
       });
+
+    liveChampionCache.set(resolvedVersion, liveChampions);
+    return liveChampions;
   } catch {
-    return champions.map((champion) => toPublicChampion(champion, resolvedVersion));
+    const fallbackChampions = champions.map((champion) => toPublicChampion(champion, resolvedVersion));
+    liveChampionCache.set(resolvedVersion, fallbackChampions);
+    return fallbackChampions;
   }
 }
 
 export async function getLiveSummonerSpells(version?: string): Promise<SummonerSpellRef[]> {
   const resolvedVersion = version ?? (await getLatestDataDragonVersion());
+  const cached = liveSummonerSpellCache.get(resolvedVersion);
+
+  if (cached) {
+    return cached;
+  }
+
   const payload = await fetchRiotSummonerSpellPayload(resolvedVersion);
 
-  return Object.values(payload.data)
+  const spells = Object.values(payload.data)
     .map((spell) => ({
       id: Number(spell.key),
       key: spell.id,
@@ -373,15 +392,23 @@ export async function getLiveSummonerSpells(version?: string): Promise<SummonerS
     }))
     .filter((spell) => Number.isFinite(spell.id))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  liveSummonerSpellCache.set(resolvedVersion, spells);
+  return spells;
 }
 
 export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
   const resolvedVersion = version ?? (await getLatestDataDragonVersion());
+  const cached = liveItemCache.get(resolvedVersion);
+
+  if (cached) {
+    return cached;
+  }
 
   try {
     const payload = await fetchRiotItemPayload(resolvedVersion);
 
-    return Object.entries(payload.data)
+    const liveItems = Object.entries(payload.data)
       .filter(([id, item]) => isSummonersRiftRiotItem(id, item))
       .map(([id, item]) => ({
         id,
@@ -396,13 +423,19 @@ export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
         imageUrl: `${DATA_DRAGON_BASE}/cdn/${resolvedVersion}/img/item/${item.image?.full ?? `${id}.png`}`
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+
+    liveItemCache.set(resolvedVersion, liveItems);
+    return liveItems;
   } catch {
-    return items
+    const fallbackItems = items
       .filter(isSummonersRiftFallbackItem)
       .map((item) => ({
         ...item,
         imageUrl: `${DATA_DRAGON_BASE}/cdn/${resolvedVersion}/img/item/${item.id}.png`
       }));
+
+    liveItemCache.set(resolvedVersion, fallbackItems);
+    return fallbackItems;
   }
 }
 
