@@ -26,6 +26,7 @@ import {
   type RankPromotionEventDetail,
   type LeagueRankState
 } from "@/game/scoring";
+import { BUILD_SHARE_PARAM } from "@/lib/build-share";
 import { cn } from "@/lib/utils";
 import { RiftCommandBar, type PlayMode } from "@/components/rift-command-bar";
 import type { DailyChallengeResponse, LeaderboardEntry, UserStats } from "@/types";
@@ -80,7 +81,14 @@ export function AppShell() {
     setRefreshing(true);
 
     try {
-      const response = await fetch(`/api/challenges/daily?t=${Date.now()}`, { cache: "no-store" });
+      const query = new URLSearchParams({ t: String(Date.now()) });
+      const sharedBuild = currentBuildShareValue();
+
+      if (sharedBuild) {
+        query.set(BUILD_SHARE_PARAM, sharedBuild);
+      }
+
+      const response = await fetch(`/api/challenges/daily?${query.toString()}`, { cache: "no-store" });
 
       if (!response.ok) {
         throw new Error("Daily load failed.");
@@ -163,6 +171,9 @@ export function AppShell() {
 
     const url = new URL(window.location.href);
     url.searchParams.set("mode", nextView);
+    if (nextView !== "item-build") {
+      url.searchParams.delete(BUILD_SHARE_PARAM);
+    }
     window.history.replaceState(null, "", url);
   }, []);
 
@@ -688,8 +699,22 @@ function currentGameLabel(view: View) {
 }
 
 function viewFromSearch(search: string): View | null {
-  const mode = new URLSearchParams(search).get("mode") as View | null;
+  const params = new URLSearchParams(search);
+  const mode = params.get("mode") as View | null;
+
+  if (params.get(BUILD_SHARE_PARAM)) {
+    return "item-build";
+  }
+
   return mode && viewModes.has(mode) ? mode : null;
+}
+
+function currentBuildShareValue() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return new URLSearchParams(window.location.search).get(BUILD_SHARE_PARAM) ?? "";
 }
 
 function hasRecoverableDataGap(daily: DailyChallengeResponse) {

@@ -86,7 +86,7 @@ function generateItemBuildChallenge(
     );
   }
 
-  const rounds = playable.map((target, index) => toItemBuildChallenge(date, `${date}:item-build:${index}`, target, version));
+  const rounds = playable.map((target) => toItemBuildChallenge(date, `${date}:item-build:${target.source.id}`, target, version));
   const selected = rounds[seededIndex(seed, rounds.length)];
 
   return {

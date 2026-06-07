@@ -14,6 +14,7 @@ import {
   rankPromotionEventName,
   rankedStorageKey
 } from "@/game/scoring";
+import { BUILD_SHARE_PARAM, decodeBuildShareValue, encodeBuildShareCode } from "@/lib/build-share";
 import { cn } from "@/lib/utils";
 import type {
   ChampionMatchupChallenge,
@@ -58,6 +59,7 @@ export function ItemBuildGame({
   const [skipWarningOpen, setSkipWarningOpen] = useState(false);
   const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [choiceShuffleSeed, setChoiceShuffleSeed] = useState(() => createClientShuffleSeed(username));
+  const [sharedBuildRoundId, setSharedBuildRoundId] = useState("");
   const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
   const rawRound = rounds[roundIndex % rounds.length];
   const hydratedRound = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
@@ -86,6 +88,40 @@ export function ItemBuildGame({
   const unavailableReason = getBuildUnavailableReason(round);
   const missedGuesses = guesses.filter((guess) => !isBuildGuessSolved(guess, answerSet, round.answerBootsId)).length;
   const revealedEnemyCount = finished ? 5 : Math.min(5, missedGuesses);
+  const sharedBuildActive = sharedBuildRoundId === round.id;
+
+  useEffect(() => {
+    const syncSharedBuildRound = () => {
+      setSharedBuildRoundId(getBuildShareRoundIdFromUrl());
+    };
+
+    syncSharedBuildRound();
+    window.addEventListener("popstate", syncSharedBuildRound);
+
+    return () => {
+      window.removeEventListener("popstate", syncSharedBuildRound);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sharedBuildRoundId || rounds.length === 0) {
+      return;
+    }
+
+    const targetIndex = rounds.findIndex((candidate) => candidate.id === sharedBuildRoundId);
+
+    if (targetIndex < 0) {
+      return;
+    }
+
+    setRoundIndex((current) => (current === targetIndex ? current : targetIndex));
+    setSelectedItems([]);
+    setSelectedBoots("");
+    setGuesses([]);
+    setModalOpen(false);
+    setSkipWarningOpen(false);
+    setMatchDataExpanded(false);
+  }, [rounds, sharedBuildRoundId]);
 
   function toggleItem(id: string) {
     if (finished) {
@@ -117,6 +153,11 @@ export function ItemBuildGame({
   }
 
   function nextBuild() {
+    if (sharedBuildRoundId) {
+      clearBuildShareParamFromUrl();
+      setSharedBuildRoundId("");
+    }
+
     setRoundIndex((current) => current + 1);
     setSelectedItems([]);
     setSelectedBoots("");
@@ -247,8 +288,11 @@ export function ItemBuildGame({
             <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
               Guess {round.targetPlayerName ?? "the Challenger winner"}&apos;s final build.
             </div>
-            <div className="mt-1 text-xs text-[color:var(--muted)] sm:text-sm">Missed guesses reveal enemy players one at a time.</div>
+            <div className="mt-1 text-xs text-[color:var(--muted)] sm:text-sm">
+              {sharedBuildActive ? "Shared build loaded. Your friend will see this exact round." : "Missed guesses reveal enemy players one at a time."}
+            </div>
           </div>
+          <BuildShareButtons roundId={round.id} />
         </div>
         {Array.from({ length: BUILD_MAX_GUESSES }).map((_, index) => {
           const guess = guesses[index];
@@ -716,6 +760,7 @@ function BuildWordleModal({
           </div>
         </div>
         <div className="mt-5 flex flex-wrap justify-end gap-2 rounded-2xl border border-white/8 bg-white/[.035] p-2">
+          <BuildShareButtons roundId={round.id} compact />
           <Button type="button" variant="secondary" onClick={onClose}>
             Close
           </Button>
@@ -795,6 +840,98 @@ function createClientShuffleSeed(username: string) {
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
 
   return `${Date.now()}:${now}:${username}:${randomId}:${Math.random()}`;
+}
+
+function BuildShareButtons({ roundId, compact = false }: { roundId: string; compact?: boolean }) {
+  const [status, setStatus] = useState("");
+  const shareCode = useMemo(() => encodeBuildShareCode(roundId), [roundId]);
+  const shareUrl = useMemo(() => buildShareUrl(shareCode), [shareCode]);
+
+  useEffect(() => {
+    if (!status) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setStatus(""), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [status]);
+
+  async function copyShare(kind: "link" | "code") {
+    const value = kind === "link" ? shareUrl : shareCode;
+
+    if (!value) {
+      return;
+    }
+
+    const copied = await copyTextToClipboard(value);
+    setStatus(copied ? `Copied ${kind}.` : "Copy failed.");
+  }
+
+  return (
+    <div className={cn("flex flex-wrap items-center justify-end gap-1.5", compact ? "mr-auto" : "shrink-0")}>
+      {status && <span className="rounded-full border border-green-300/20 bg-green-400/10 px-2 py-1 text-[10px] font-bold text-green-200">{status}</span>}
+      <Button type="button" variant="secondary" icon={<Copy size={14} />} onClick={() => void copyShare("link")} className={compact ? "min-h-9 px-2.5 text-xs" : "min-h-9 px-2.5 text-xs sm:px-3"}>
+        Copy link
+      </Button>
+    </div>
+  );
+}
+
+function buildShareUrl(shareCode: string) {
+  if (typeof window === "undefined" || !shareCode) {
+    return "";
+  }
+
+  const url = new URL(window.location.origin);
+  url.pathname = "/play";
+  url.searchParams.set("mode", "item-build");
+  url.searchParams.set(BUILD_SHARE_PARAM, shareCode);
+  return url.toString();
+}
+
+function getBuildShareRoundIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return decodeBuildShareValue(new URLSearchParams(window.location.search).get(BUILD_SHARE_PARAM));
+}
+
+function clearBuildShareParamFromUrl() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete(BUILD_SHARE_PARAM);
+  window.history.replaceState(null, "", url);
+}
+
+async function copyTextToClipboard(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall back to an off-screen textarea below.
+  }
+
+  try {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return copied;
+  } catch {
+    return false;
+  }
 }
 
 const TIER_TWO_BOOT_IDS = new Set(["3006", "3008", "3009", "3020", "3047", "3111", "3158"]);

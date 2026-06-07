@@ -16,6 +16,7 @@ import {
 } from "@/game/generators/daily";
 import { generateExpandedDailyChallenges } from "@/game/generators/expanded";
 import { authOptions } from "@/lib/auth/options";
+import { BUILD_SHARE_PARAM, decodeBuildShareValue } from "@/lib/build-share";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
@@ -33,7 +34,9 @@ const BUILD_PUBLIC_ROUND_LIMIT = 50;
 const GUESS_ELO_ROUNDS_PER_BUCKET = 8;
 const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const requestedBuildRoundId = decodeBuildShareValue(url.searchParams.get(BUILD_SHARE_PARAM));
   const version = await getLatestDataDragonVersion();
   const [publicChampions, liveItems, summonerSpells] = await Promise.all([
     getLivePublicChampions(version),
@@ -79,15 +82,15 @@ export async function GET() {
     champions: publicChampions,
     items: liveItems,
     stats
-  });
+  }, requestedBuildRoundId);
 
   const response = NextResponse.json(body);
   response.headers.set("Cache-Control", "no-store, max-age=0");
   return response;
 }
 
-function compactDailyChallengeResponse(body: DailyChallengeResponse): DailyChallengeResponse {
-  const itemBuild = compactItemBuildChallenge(body.extraChallenges.itemBuild);
+function compactDailyChallengeResponse(body: DailyChallengeResponse, requestedBuildRoundId = ""): DailyChallengeResponse {
+  const itemBuild = compactItemBuildChallenge(body.extraChallenges.itemBuild, requestedBuildRoundId);
   const guessEloRounds = selectBalancedGuessEloRounds(body.extraChallenges.guessElo.rounds ?? []).map(compactGuessEloRound);
   const dodgeQueueRounds = selectPublicRounds(body.extraChallenges.dodgeQueue.rounds ?? [], PUBLIC_ROUND_LIMIT).map(compactDodgeQueueRound);
 
@@ -110,8 +113,9 @@ function compactDailyChallengeResponse(body: DailyChallengeResponse): DailyChall
   };
 }
 
-function compactItemBuildChallenge(challenge: ItemBuildChallenge): ItemBuildChallenge {
-  const rounds = selectPublicRounds(challenge.rounds ?? [], BUILD_PUBLIC_ROUND_LIMIT).map(compactBuildRound);
+function compactItemBuildChallenge(challenge: ItemBuildChallenge, requestedBuildRoundId = ""): ItemBuildChallenge {
+  const sourceRounds = challenge.rounds ?? [];
+  const rounds = selectPublicRoundsWithPinned(sourceRounds, BUILD_PUBLIC_ROUND_LIMIT, requestedBuildRoundId).map(compactBuildRound);
 
   return {
     ...(rounds[0] ?? compactBuildRound(challenge)),
@@ -188,6 +192,27 @@ function selectPublicRounds<T>(rounds: T[], limit: number) {
   }
 
   return shuffled.slice(0, limit);
+}
+
+function selectPublicRoundsWithPinned<T extends { id: string }>(rounds: T[], limit: number, pinnedId = "") {
+  if (!pinnedId) {
+    return selectPublicRounds(rounds, limit);
+  }
+
+  const pinnedRound = rounds.find((round) => round.id === pinnedId);
+
+  if (!pinnedRound) {
+    return selectPublicRounds(rounds, limit);
+  }
+
+  if (rounds.length <= limit) {
+    return [pinnedRound, ...rounds.filter((round) => round.id !== pinnedRound.id)];
+  }
+
+  return [
+    pinnedRound,
+    ...selectPublicRounds(rounds.filter((round) => round.id !== pinnedRound.id), limit - 1)
+  ];
 }
 
 async function resolveDailyAbilityChallenge(date: string, version: string) {
