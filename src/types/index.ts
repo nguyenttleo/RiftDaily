@@ -134,6 +134,7 @@ export interface VerifiedBuildRound {
   date: string;
   champion: PublicChampion;
   playerName?: string;
+  playerLp?: number;
   role: string;
   allyTeam: VerifiedBuildPick[];
   enemyTeam: VerifiedBuildPick[];
@@ -196,6 +197,7 @@ export interface ItemBuildChallenge {
   allyTeam?: VerifiedBuildPick[];
   enemyPlayers?: VerifiedBuildPick[];
   targetPlayerName?: string;
+  targetPlayerLp?: number;
   targetRole?: string;
   candidates: GameItem[];
   possibleItems: GameItem[];

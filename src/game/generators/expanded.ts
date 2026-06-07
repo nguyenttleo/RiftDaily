@@ -107,6 +107,7 @@ function toItemBuildChallenge(date: string, id: string, target: VerifiedBuildTar
     allyTeam: target.source.allyTeam,
     enemyPlayers: target.source.enemyTeam,
     targetPlayerName: target.source.playerName,
+    ...(typeof target.source.playerLp === "number" ? { targetPlayerLp: target.source.playerLp } : {}),
     targetRole: target.source.role,
     candidates: answerBuild.slice(0, 4),
     possibleItems: target.possibleItems,

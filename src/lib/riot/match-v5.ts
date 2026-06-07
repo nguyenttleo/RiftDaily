@@ -47,6 +47,7 @@ interface RiotLeagueEntry {
   summonerId?: string;
   tier?: string;
   rank?: string;
+  leaguePoints?: number;
 }
 
 interface RiotLeagueList {
@@ -56,6 +57,17 @@ interface RiotLeagueList {
 
 interface RiotSummonerDto {
   puuid: string;
+}
+
+interface RiotAccountDto {
+  puuid: string;
+}
+
+interface RiotLeaguePositionDto {
+  queueType?: string;
+  tier?: string;
+  rank?: string;
+  leaguePoints?: number;
 }
 
 interface RiotMatchDto {
@@ -118,6 +130,7 @@ interface RankedSource {
   puuid: string;
   bucket: RankBucket;
   tier: string;
+  leaguePoints?: number;
 }
 
 interface RankedEntryCandidate {
@@ -161,6 +174,12 @@ export interface VerifiedMatchProof {
   queueId: number;
   platform: string;
   matchData: VerifiedMatchData;
+}
+
+export interface RankedSoloLpProof {
+  tier: string;
+  rank?: string;
+  leaguePoints: number;
 }
 
 interface WinrateAccumulator {
@@ -622,6 +641,46 @@ export async function getVerifiedMatchProofById({
     queueId: match.info.queueId,
     platform,
     matchData
+  };
+}
+
+export async function getRankedSoloLpByRiotId({
+  riotId,
+  platform = env.riotRegion
+}: {
+  riotId: string;
+  platform?: string;
+}): Promise<RankedSoloLpProof | null> {
+  if (!isRiotApiConfigured()) {
+    return null;
+  }
+
+  const parsed = parseRiotId(riotId);
+
+  if (!parsed) {
+    return null;
+  }
+
+  const normalizedPlatform = normalizePlatform(platform);
+  const regional = regionalRouteForPlatform(normalizedPlatform);
+  const account = await riotFetch<RiotAccountDto>(
+    regional,
+    `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(parsed.gameName)}/${encodeURIComponent(parsed.tagLine)}`
+  );
+  const entries = await riotFetch<RiotLeaguePositionDto[]>(
+    normalizedPlatform,
+    `/lol/league/v4/entries/by-puuid/${encodeURIComponent(account.puuid)}`
+  );
+  const solo = entries.find((entry) => entry.queueType === "RANKED_SOLO_5x5");
+
+  if (!solo?.tier || typeof solo.leaguePoints !== "number") {
+    return null;
+  }
+
+  return {
+    tier: titleCaseRank(solo.tier),
+    ...(solo.rank ? { rank: solo.rank } : {}),
+    leaguePoints: solo.leaguePoints
   };
 }
 
@@ -1704,7 +1763,8 @@ async function getRankedSources(platform: string, seed: string, sourceCountPerBu
         sources.push({
           puuid,
           bucket: plan.bucket,
-          tier: `${candidate.tier} ${candidate.entry.rank ?? candidate.division ?? ""}`.trim()
+          tier: `${candidate.tier} ${candidate.entry.rank ?? candidate.division ?? ""}`.trim(),
+          ...(typeof candidate.entry.leaguePoints === "number" ? { leaguePoints: candidate.entry.leaguePoints } : {})
         });
       }
     }
@@ -1944,6 +2004,7 @@ function toVerifiedBuildRound(
     date,
     champion,
     ...(sourcePlayer ? { playerName: sourcePlayer } : {}),
+    ...(typeof source.leaguePoints === "number" ? { playerLp: source.leaguePoints } : {}),
     role: toLaneLabel(sourceParticipant.teamPosition),
     allyTeam: allyTeamId === 100 ? blue : red,
     enemyTeam: enemyTeamId === 100 ? blue : red,
@@ -2152,6 +2213,24 @@ function formatRiotId(participant?: RiotParticipantDto) {
   }
 
   return participant.riotIdTagline ? `${participant.riotIdGameName}#${participant.riotIdTagline}` : participant.riotIdGameName;
+}
+
+function parseRiotId(riotId: string) {
+  const separatorIndex = riotId.lastIndexOf("#");
+
+  if (separatorIndex <= 0 || separatorIndex >= riotId.length - 1) {
+    return null;
+  }
+
+  const gameName = riotId.slice(0, separatorIndex).trim();
+  const tagLine = riotId.slice(separatorIndex + 1).trim();
+
+  return gameName && tagLine ? { gameName, tagLine } : null;
+}
+
+function titleCaseRank(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized ? `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}` : value;
 }
 
 function gameIdFromMatchId(matchId: string) {

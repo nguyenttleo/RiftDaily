@@ -162,7 +162,9 @@ export function ItemBuildGame({
     <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         <aside className="xl:sticky xl:top-3 xl:max-h-[calc(100dvh-1.5rem)] xl:self-start xl:overflow-y-auto xl:pr-1 fine-scrollbar">
-          <div className="grid w-full gap-2 rounded-sm border border-[#3c3421] bg-[#0b111b] p-2.5 shadow-[0_24px_70px_rgba(0,0,0,.28)] sm:gap-3 sm:p-4">
+          <div className="relative grid w-full gap-2 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[radial-gradient(circle_at_22%_0%,rgba(200,155,60,.13),transparent_30%),linear-gradient(180deg,rgba(15,24,37,.96),rgba(6,11,18,.98))] p-2.5 shadow-[0_28px_90px_rgba(0,0,0,.42),inset_0_1px_0_rgba(255,255,255,.07)] sm:gap-3 sm:p-4 xl:rounded-lg">
+            <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/22 to-transparent" />
+            <div className="pointer-events-none absolute -right-20 top-20 h-44 w-44 rounded-full bg-[#c89b3c]/10 blur-3xl" />
             <div className="hidden flex-wrap items-center gap-2 sm:flex">
               <span className="text-[#c89b3c]">
                 <PackageSearch size={18} />
@@ -173,7 +175,7 @@ export function ItemBuildGame({
               <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
             </div>
             <BuildTargetCard round={round} />
-            <div className="relative hidden aspect-[21/9] min-h-36 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] sm:block sm:aspect-[16/10] sm:min-h-48 xl:aspect-[16/11] xl:min-h-56">
+            <div className="relative hidden aspect-[21/9] min-h-36 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[#071018] shadow-[0_18px_46px_rgba(0,0,0,.32),inset_0_1px_0_rgba(255,255,255,.055)] sm:block sm:aspect-[16/10] sm:min-h-48 xl:aspect-[16/11] xl:min-h-56">
               <div
                 className="absolute inset-0 bg-cover opacity-80"
                 style={{
@@ -181,7 +183,8 @@ export function ItemBuildGame({
                   backgroundPosition: championSplashPosition(round.champion.name)
                 }}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/20 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/26 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-[radial-gradient(ellipse_at_center,rgba(200,155,60,.14),transparent_68%)]" />
             </div>
             <div className="grid gap-2">
               <BuildTeamScout title="Ally Team" picks={round.allyTeam ?? []} targetPlayerName={round.targetPlayerName} />
@@ -293,12 +296,61 @@ export function ItemBuildGame({
 }
 
 function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
+  const [liveLp, setLiveLp] = useState<number | null>(null);
+  const [lpLoading, setLpLoading] = useState(false);
+  const displayedLp = typeof round.targetPlayerLp === "number" ? round.targetPlayerLp : liveLp;
+
+  useEffect(() => {
+    setLiveLp(null);
+
+    if (typeof round.targetPlayerLp === "number" || !round.targetPlayerName?.includes("#")) {
+      setLpLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const platform = round.sourceMatch?.platform;
+
+    async function loadLp() {
+      setLpLoading(true);
+
+      try {
+        const query = new URLSearchParams({
+          riotId: round.targetPlayerName ?? ""
+        });
+
+        if (platform) {
+          query.set("platform", platform);
+        }
+
+        const response = await fetch(`/api/ranked/lp?${query.toString()}`, { cache: "force-cache" });
+        const body = (await response.json()) as { leaguePoints?: number };
+
+        if (!cancelled && response.ok && typeof body.leaguePoints === "number") {
+          setLiveLp(body.leaguePoints);
+        }
+      } catch {
+        // LP is cosmetic for the puzzle surface; the verified match data remains authoritative.
+      } finally {
+        if (!cancelled) {
+          setLpLoading(false);
+        }
+      }
+    }
+
+    void loadLp();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [round.sourceMatch?.platform, round.targetPlayerLp, round.targetPlayerName]);
+
   return (
-    <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
-      <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">Challenger Target</div>
-      <div className="mt-2 flex items-center gap-3">
+    <div className="relative overflow-hidden rounded-xl border border-[#74ecff]/18 bg-[linear-gradient(135deg,rgba(10,22,34,.96),rgba(5,7,11,.92)_62%)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.30),inset_0_1px_0_rgba(255,255,255,.065)]">
+      <div className="pointer-events-none absolute -right-14 -top-16 h-36 w-36 rounded-full bg-[#74ecff]/12 blur-3xl" />
+      <div className="relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-sm border border-[#3c3421] object-cover sm:h-16 sm:w-16" />
+        <img src={round.champion.squareUrl} alt="" className="h-14 w-14 rounded-lg border border-[#c89b3c]/35 object-cover shadow-[0_10px_22px_rgba(0,0,0,.35)] sm:h-16 sm:w-16" />
         <div className="min-w-0">
           <div className="font-display text-2xl font-bold leading-none text-white sm:text-3xl">{round.champion.name}</div>
           <div className="mt-1 truncate text-sm font-semibold text-[#9fb7d5]" title={round.targetPlayerName}>
@@ -310,9 +362,39 @@ function BuildTargetCard({ round }: { round: ItemBuildChallenge }) {
             </div>
           )}
         </div>
+        <div className="grid min-w-[4.75rem] justify-items-center gap-0.5">
+          <RankEmblemMini rankTier="Challenger" />
+          {typeof displayedLp === "number" ? (
+            <div className="font-display text-sm font-black leading-none text-[#74ecff] drop-shadow-[0_0_12px_rgba(116,236,255,.2)]">
+              {displayedLp} LP
+            </div>
+          ) : lpLoading ? (
+            <div className="font-display text-[10px] font-black uppercase tracking-[0.08em] text-[#74ecff]/70">LP</div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
+}
+
+function RankEmblemMini({ rankTier }: { rankTier: string }) {
+  return (
+    <span className="relative -my-3 h-16 w-20 shrink-0 bg-transparent">
+      <span className="absolute inset-0 overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={rankEmblemUrl(rankTier)}
+          alt=""
+          className="pointer-events-none absolute left-1/2 top-1/2 max-w-none object-contain opacity-100 saturate-125"
+          style={{ width: "24rem", maxWidth: "none", transform: "translate(-50%, -50%)" }}
+        />
+      </span>
+    </span>
+  );
+}
+
+function rankEmblemUrl(rankTier: string) {
+  return `https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/images/ranked-emblem/emblem-${rankTier.toLowerCase()}.png`;
 }
 
 function BuildTeamScout({
@@ -329,10 +411,11 @@ function BuildTeamScout({
   hidden?: boolean;
 }) {
   return (
-    <div className="rounded-sm border border-white/10 bg-[#050607]/75 p-2 sm:p-3">
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-[linear-gradient(180deg,rgba(10,17,27,.9),rgba(5,7,11,.9))] p-2 shadow-[0_14px_38px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.045)] sm:p-3">
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-[11px] uppercase text-[#c89b3c] sm:text-sm">{title}</div>
-        {hidden && <div className="text-[10px] uppercase text-[color:var(--muted)]">{Math.min(revealCount, picks.length)}/{picks.length}</div>}
+        <div className="font-display text-[12px] font-black uppercase tracking-[0.14em] text-[#f0d99d] sm:text-sm">{title}</div>
+        {hidden && <div className="rounded-full border border-white/10 bg-white/[.035] px-2 py-0.5 font-display text-[10px] font-bold uppercase text-[color:var(--muted)]">{Math.min(revealCount, picks.length)}/{picks.length}</div>}
       </div>
       <div className="grid gap-1.5">
         {picks.map((pick, index) => {
@@ -343,15 +426,17 @@ function BuildTeamScout({
             <div
               key={`${title}:${pick.role}:${pick.champion.id}:${index}`}
               className={cn(
-                "grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-2 rounded-sm border p-1.5",
-                revealed ? "border-[#26313f] bg-[#111722]" : "border-white/10 bg-[#111722]/55"
+                "grid grid-cols-[2.35rem_minmax(0,1fr)] items-center gap-2 rounded-lg border p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.035)]",
+                revealed
+                  ? "border-[#26313f] bg-[linear-gradient(180deg,rgba(20,30,44,.92),rgba(12,18,28,.92))]"
+                  : "border-white/10 bg-[linear-gradient(180deg,rgba(17,23,34,.64),rgba(8,11,17,.74))]"
               )}
             >
               {revealed ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={pick.champion.squareUrl} alt="" className="h-9 w-9 rounded-sm border border-[#3c3421] object-cover" />
+                <img src={pick.champion.squareUrl} alt="" className="h-9 w-9 rounded-lg border border-[#3c3421] object-cover shadow-[0_7px_16px_rgba(0,0,0,.25)]" />
               ) : (
-                <div className="grid h-9 w-9 place-items-center rounded-sm border border-white/10 bg-[#050607] text-sm font-black text-[color:var(--muted)]">?</div>
+                <div className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 bg-[#050607] font-display text-sm font-black text-[color:var(--muted)]">?</div>
               )}
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
