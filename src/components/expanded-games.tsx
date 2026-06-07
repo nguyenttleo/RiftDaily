@@ -2,7 +2,7 @@
 
 import { ArrowRight, CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -50,7 +50,8 @@ export function ItemBuildGame({
   pageRail?: boolean;
 }) {
   const generatedRounds = useMemo(() => createBuildRounds(challenge), [challenge]);
-  const rounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, undefined, buildRoundFirstKey);
+  const randomizedBuildRounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, undefined, buildRoundFirstKey);
+  const rounds = useMemo(() => orderBuildRoundsAvoidingConsecutiveRepeats(randomizedBuildRounds), [randomizedBuildRounds]);
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [selectedBoots, setSelectedBoots] = useState("");
@@ -60,6 +61,7 @@ export function ItemBuildGame({
   const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [choiceShuffleSeed, setChoiceShuffleSeed] = useState(() => createClientShuffleSeed(username));
   const [sharedBuildRoundId, setSharedBuildRoundId] = useState("");
+  const viewportRestoreRef = useRef<number | null>(null);
   const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
   const rawRound = rounds[roundIndex % rounds.length];
   const hydratedRound = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
@@ -123,6 +125,18 @@ export function ItemBuildGame({
     setMatchDataExpanded(false);
   }, [rounds, sharedBuildRoundId]);
 
+  useLayoutEffect(() => {
+    const targetScroll = viewportRestoreRef.current;
+
+    if (targetScroll === null) {
+      return;
+    }
+
+    viewportRestoreRef.current = null;
+    restoreWindowScroll(targetScroll);
+    window.requestAnimationFrame(() => restoreWindowScroll(targetScroll));
+  }, [round.id]);
+
   function toggleItem(id: string) {
     if (finished) {
       return;
@@ -152,7 +166,11 @@ export function ItemBuildGame({
     setSelectedBoots("");
   }
 
-  function nextBuild() {
+  function nextBuild({ preserveViewport = false }: { preserveViewport?: boolean } = {}) {
+    if (preserveViewport) {
+      prepareBuildViewportRestore(viewportRestoreRef);
+    }
+
     if (sharedBuildRoundId) {
       clearBuildShareParamFromUrl();
       setSharedBuildRoundId("");
@@ -190,7 +208,7 @@ export function ItemBuildGame({
         skipped: true
       }
     });
-    nextBuild();
+    nextBuild({ preserveViewport: true });
   }
 
   function removeItem(id: string) {
@@ -405,7 +423,7 @@ export function ItemBuildGame({
     return (
       <>
         {leftRail}
-        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
+        <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] [overflow-anchor:none] sm:p-4 lg:rounded-sm xl:col-start-2 xl:row-start-2 xl:min-h-[calc(100dvh-5.25rem)]">
           {gameContent}
           {modal}
           {skipModal}
@@ -415,7 +433,7 @@ export function ItemBuildGame({
   }
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:p-4 lg:rounded-sm">
+    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[#3c3421] bg-[#071018] p-2 pb-16 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] [overflow-anchor:none] sm:p-4 lg:rounded-sm">
       <div className="grid items-start gap-2 sm:gap-4 xl:grid-cols-[minmax(18rem,30%)_minmax(0,1fr)]">
         {leftRail}
         {gameContent}
@@ -835,11 +853,74 @@ function buildRoundFirstKey(round: ItemBuildChallenge) {
   return round.champion.id;
 }
 
+function orderBuildRoundsAvoidingConsecutiveRepeats(rounds: ItemBuildChallenge[]) {
+  if (rounds.length <= 1) {
+    return rounds;
+  }
+
+  const remaining = [...rounds];
+  const ordered: ItemBuildChallenge[] = [];
+
+  while (remaining.length > 0) {
+    const previous = ordered[ordered.length - 1];
+    const nextIndex = previous
+      ? remaining.findIndex((round) => !isRepeatedBuildRound(previous, round))
+      : 0;
+    const [next] = remaining.splice(nextIndex >= 0 ? nextIndex : 0, 1);
+
+    if (next) {
+      ordered.push(next);
+    }
+  }
+
+  return ordered;
+}
+
+function isRepeatedBuildRound(previous: ItemBuildChallenge, next: ItemBuildChallenge) {
+  return (
+    previous.champion.id === next.champion.id ||
+    Boolean(buildRoundPlayerKey(previous) && buildRoundPlayerKey(previous) === buildRoundPlayerKey(next))
+  );
+}
+
+function buildRoundPlayerKey(round: ItemBuildChallenge) {
+  const playerName = (round.targetPlayerName ?? round.sourceMatch?.sourcePlayer ?? "").trim();
+
+  if (!playerName) {
+    return "";
+  }
+
+  return normalize(playerName) || playerName.toLowerCase();
+}
+
 function createClientShuffleSeed(username: string) {
   const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
   const now = typeof performance !== "undefined" ? performance.now() : Date.now();
 
   return `${Date.now()}:${now}:${username}:${randomId}:${Math.random()}`;
+}
+
+function prepareBuildViewportRestore(viewportRestoreRef: { current: number | null }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  viewportRestoreRef.current = window.scrollY;
+  const activeElement = document.activeElement;
+
+  if (activeElement instanceof HTMLElement) {
+    activeElement.blur();
+  }
+}
+
+function restoreWindowScroll(targetScroll: number) {
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+
+  window.scrollTo({
+    top: Math.min(targetScroll, maxScroll),
+    left: window.scrollX,
+    behavior: "auto"
+  });
 }
 
 function BuildShareButtons({ roundId, compact = false }: { roundId: string; compact?: boolean }) {
