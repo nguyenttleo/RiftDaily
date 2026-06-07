@@ -128,17 +128,20 @@ function buildTargetFromInventory(itemIds: string[], itemById: Map<string, GameI
   const items = uniqueStrings(itemIds)
     .map((itemId) => itemById.get(itemId))
     .filter(Boolean) as GameItem[];
-  const answerBoots = items.filter(isBootUpgrade).sort((a, b) => b.goldTotal - a.goldTotal || a.name.localeCompare(b.name))[0];
+  const nonTrinketItems = items.filter((item) => !item.tags.includes("Trinket"));
+  const boots = nonTrinketItems.filter(isBootUpgrade);
+  const answerBuild = uniqueItemsByName(nonTrinketItems.filter(isBuildCandidateItem));
 
-  if (!answerBoots) {
+  if (
+    nonTrinketItems.length !== 6 ||
+    boots.length !== 1 ||
+    answerBuild.length !== 5 ||
+    new Set(answerBuild.map((item) => item.id)).size !== 5
+  ) {
     return undefined;
   }
 
-  const answerBuild = uniqueItemsByName(items.filter(isBuildCandidateItem)).slice(0, 5);
-
-  if (answerBuild.length !== 5) {
-    return undefined;
-  }
+  const [answerBoots] = boots;
 
   return {
     answerBuild,
@@ -237,7 +240,15 @@ function uniqueStrings(values: string[]) {
 }
 
 function isBuildCandidateItem(item: GameItem) {
-  return item.purchasable && item.goldTotal >= 300 && item.tags.length > 0 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket") && !item.tags.includes("Boots");
+  return (
+    item.purchasable &&
+    item.goldTotal >= 1600 &&
+    item.into.length === 0 &&
+    item.tags.length > 0 &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket") &&
+    !item.tags.includes("Boots")
+  );
 }
 
 function generateItemRecipeChallenge(date: string, seed: string, itemCatalog: GameItem[]): ItemRecipeChallenge {
@@ -374,7 +385,7 @@ function generateSkillshotDodgeChallenge(date: string): SkillshotDodgeChallenge 
 }
 
 function isBootUpgrade(item: GameItem) {
-  return item.purchasable && item.tags.includes("Boots") && item.goldTotal >= 300;
+  return item.purchasable && item.name !== "Boots" && item.tags.includes("Boots") && item.goldTotal >= 900 && !item.tags.includes("Consumable") && !item.tags.includes("Trinket");
 }
 
 function getItemById(itemCatalog: GameItem[], id: string) {

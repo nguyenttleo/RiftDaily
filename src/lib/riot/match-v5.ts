@@ -4,6 +4,7 @@ import type {
   BuildWinrateStats,
   ChampionMatchupRound,
   DodgeQueueRound,
+  GameItem,
   GuessEloRound,
   PublicChampion,
   SummonerSpellRef,
@@ -19,7 +20,6 @@ const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
 const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
-const MIN_BUILD_SAMPLE_GAMES = 5;
 const DEFAULT_BUILD_SAMPLE_MATCH_COUNT = 512;
 const MAX_BUILD_SAMPLE_MATCH_COUNT = 5000;
 const MIN_MATCHUP_SAMPLE_GAMES = 20;
@@ -219,6 +219,7 @@ export async function getVerifiedRankedMatchChallenges({
   date,
   dataDragonVersion,
   publicChampions,
+  gameItems = [],
   summonerSpells,
   allowLiveMatchupCollection = false,
   timeBudgetMs = 26000,
@@ -232,6 +233,7 @@ export async function getVerifiedRankedMatchChallenges({
   date: string;
   dataDragonVersion: string;
   publicChampions: PublicChampion[];
+  gameItems?: GameItem[];
   summonerSpells: SummonerSpellRef[];
   allowLiveMatchupCollection?: boolean;
   timeBudgetMs?: number;
@@ -277,6 +279,7 @@ export async function getVerifiedRankedMatchChallenges({
     : 2;
   const currentPatchPrefix = patchPrefixFromVersion(dataDragonVersion);
   const championLookup = createChampionLookup(publicChampions);
+  const itemLookup = new Map(gameItems.map((item) => [item.id, item]));
   const persistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
   const shouldCollectLiveMatchups = allowLiveMatchupCollection && persistedChampionMatchupRounds.length < TARGET_MATCHUP_ROUNDS;
   const analysisTargetMatchCount = Math.max(requestedBuildSampleSize, shouldCollectLiveMatchups ? requestedMatchupSampleSize : sampleSize);
@@ -289,13 +292,13 @@ export async function getVerifiedRankedMatchChallenges({
   const cacheKey = `${date}:${platform}:${currentPatchPrefix}:${sampleSize}:${requestedBuildSampleSize}:${analysisFetchBudget}:${sourceCountPerBucket}:${boundedMatchHistoryPagesPerSource}:${persistedChampionMatchupRounds.length}`;
   const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
 
-  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now() && hasVerifiedBuildRoundsRecord(cachedMatchSet.value)) {
+  if (!forceRefresh && cachedMatchSet?.key === cacheKey && cachedMatchSet.expiresAt > Date.now() && hasVerifiedBuildRoundsRecord(cachedMatchSet.value, itemLookup)) {
     return cachedMatchSet.value;
   }
 
   const persistedVerifiedSet = await getPersistedVerifiedMatchCache(persistedCacheKey);
 
-  if (!forceRefresh && persistedVerifiedSet && hasVerifiedBuildRoundsRecord(persistedVerifiedSet)) {
+  if (!forceRefresh && persistedVerifiedSet && hasVerifiedBuildRoundsRecord(persistedVerifiedSet, itemLookup)) {
     const value = mergePersistedMatchupsIntoVerifiedSet(persistedVerifiedSet, persistedChampionMatchupRounds);
 
     cachedMatchSet = {
@@ -339,7 +342,7 @@ export async function getVerifiedRankedMatchChallenges({
       await flushMatchupSampleRecords();
     };
     const collectBuildRound = (match: RiotMatchDto, source: RankedSource) => {
-      const round = toVerifiedBuildRound(match, source, platform, championLookup, spellLookup, date);
+      const round = toVerifiedBuildRound(match, source, platform, championLookup, spellLookup, itemLookup, date);
 
       if (round && !buildRounds.some((candidate) => candidate.id === round.id)) {
         buildRounds.push(round);
@@ -511,7 +514,7 @@ export async function getVerifiedRankedMatchChallenges({
     const orderedBuildRounds = orderRoundsWithoutConsecutivePlayers(buildRounds, `${date}:build-round-order`, buildRoundPlayers).slice(0, 200);
     const orderedDodgeQueueRounds = orderRoundsWithoutConsecutivePlayers(dodgeQueueRounds, `${date}:dodge-queue-round-order`, dodgeQueueRoundPlayers);
     const championWinrateSamples = toChampionWinrateSamples(championWinrates);
-    const hasVerifiedBuildSamples = orderedBuildRounds.length > 0 || hasBuildWinrateCandidate(championWinrates);
+    const hasVerifiedBuildSamples = orderedBuildRounds.some((round) => Boolean(verifiedCompletedBuildItemIds(round.itemIds, itemLookup)));
     const liveChampionMatchupRounds = toChampionMatchupRounds(championMatchupSamples, date);
     const refreshedPersistedChampionMatchupRounds = await getPersistedChampionMatchupRounds(date, publicChampions, currentPatchPrefix);
     const championMatchupRounds = mergeChampionMatchupRounds(refreshedPersistedChampionMatchupRounds, liveChampionMatchupRounds);
@@ -548,7 +551,7 @@ export async function getVerifiedRankedMatchChallenges({
     };
     const valueToPersist = persistedVerifiedSet ? mergeVerifiedChallengeSets(persistedVerifiedSet, value) : value;
 
-    if (hasVerifiedBuildSamples || hasVerifiedBuildRoundsRecord(valueToPersist)) {
+    if (hasVerifiedBuildSamples || hasVerifiedBuildRoundsRecord(valueToPersist, itemLookup)) {
       await persistVerifiedMatchCache(persistedCacheKey, valueToPersist);
       cachedMatchSet = {
         key: cacheKey,
@@ -949,20 +952,8 @@ function isAnalysisComplete(
   );
 }
 
-function hasBuildWinrateCandidate(championWinrates: Map<string, WinrateAccumulator>) {
-  return [...championWinrates.values()].some((sample) => sample.games >= MIN_BUILD_SAMPLE_GAMES);
-}
-
-function hasBuildWinrateSamplesRecord(samples: Record<string, BuildWinrateStats>) {
-  return Object.values(samples).some(
-    (sample) =>
-      sample.games >= MIN_BUILD_SAMPLE_GAMES &&
-      (sample.inventorySamples ?? []).some((game) => (game.enemyChampionIds?.length ?? 0) >= 5)
-  );
-}
-
-function hasVerifiedBuildRoundsRecord(set: VerifiedMatchChallengeSet) {
-  return (set.buildRounds?.length ?? 0) > 0 || hasBuildWinrateSamplesRecord(set.championWinrateSamples ?? {});
+function hasVerifiedBuildRoundsRecord(set: VerifiedMatchChallengeSet, itemLookup: Map<string, GameItem>) {
+  return (set.buildRounds ?? []).some((round) => Boolean(verifiedCompletedBuildItemIds(round.itemIds, itemLookup)));
 }
 
 function eligibleChampionMatchupRoundCount(championMatchupSamples: Map<string, ChampionMatchupAccumulator>) {
@@ -1850,6 +1841,7 @@ function toVerifiedBuildRound(
   platform: string,
   championLookup: Map<number, PublicChampion>,
   spellLookup: Map<number, SummonerSpellRef>,
+  itemLookup: Map<string, GameItem>,
   date: string
 ): VerifiedBuildRound | null {
   if (!source.tier.toUpperCase().startsWith("CHALLENGER")) {
@@ -1869,8 +1861,9 @@ function toVerifiedBuildRound(
   }
 
   const itemIds = participantItemSlotIds(sourceParticipant);
+  const validBuildItemIds = verifiedCompletedBuildItemIds(itemIds, itemLookup);
 
-  if (itemIds.length < 6) {
+  if (!validBuildItemIds) {
     return null;
   }
 
@@ -1906,10 +1899,48 @@ function toVerifiedBuildRound(
     role: toLaneLabel(sourceParticipant.teamPosition),
     allyTeam: allyTeamId === 100 ? blue : red,
     enemyTeam: enemyTeamId === 100 ? blue : red,
-    itemIds,
+    itemIds: validBuildItemIds,
     dataSource: "Riot Match-V5 Challenger winning inventory sample",
     sourceMatch
   };
+}
+
+function verifiedCompletedBuildItemIds(itemIds: string[], itemLookup: Map<string, GameItem>) {
+  if (itemLookup.size === 0) {
+    return null;
+  }
+
+  const items = itemIds.map((itemId) => itemLookup.get(itemId)).filter(Boolean) as GameItem[];
+  const nonTrinketItems = items.filter((item) => !item.tags.includes("Trinket"));
+  const completedItems = nonTrinketItems.filter(isCompletedBuildItem);
+  const boots = nonTrinketItems.filter(isUpgradedBootsItem);
+
+  if (
+    nonTrinketItems.length !== 6 ||
+    completedItems.length !== 5 ||
+    boots.length !== 1 ||
+    new Set(completedItems.map((item) => item.id)).size !== 5
+  ) {
+    return null;
+  }
+
+  return [...completedItems.map((item) => item.id), boots[0].id];
+}
+
+function isCompletedBuildItem(item: GameItem) {
+  return (
+    item.purchasable &&
+    item.goldTotal >= 1600 &&
+    item.into.length === 0 &&
+    item.tags.length > 0 &&
+    !item.tags.includes("Boots") &&
+    !item.tags.includes("Consumable") &&
+    !item.tags.includes("Trinket")
+  );
+}
+
+function isUpgradedBootsItem(item: GameItem) {
+  return item.purchasable && item.name !== "Boots" && item.goldTotal >= 900 && item.tags.includes("Boots") && !item.tags.includes("Consumable") && !item.tags.includes("Trinket");
 }
 
 function toLanePicks(

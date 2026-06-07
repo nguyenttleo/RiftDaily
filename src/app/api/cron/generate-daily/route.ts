@@ -9,7 +9,7 @@ import {
   seededIndex
 } from "@/game/generators/daily";
 import { env, isDatabaseConfigured } from "@/lib/env";
-import { getLatestDataDragonVersion, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
+import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges, warmChampionMatchupSampleCache } from "@/lib/riot/match-v5";
 import type { ChallengeType } from "@/types";
 
@@ -71,14 +71,16 @@ async function generate(request: Request) {
   }
 
   if (mode === "warm-verified" || mode === "warm-samples") {
-    const [publicChampions, summonerSpells] = await Promise.all([
+    const [publicChampions, summonerSpells, gameItems] = await Promise.all([
       getLivePublicChampions(version),
-      getLiveSummonerSpells(version)
+      getLiveSummonerSpells(version),
+      getLiveGameItems(version)
     ]);
     const verified = await getVerifiedRankedMatchChallenges({
       date,
       dataDragonVersion: version,
       publicChampions,
+      gameItems,
       summonerSpells,
       allowLiveMatchupCollection: false,
       forceRefresh: true,
@@ -139,14 +141,16 @@ async function generate(request: Request) {
     });
   }
 
-  const [publicChampions, summonerSpells] = await Promise.all([
+  const [publicChampions, summonerSpells, gameItems] = await Promise.all([
     getLivePublicChampions(version),
-    getLiveSummonerSpells(version)
+    getLiveSummonerSpells(version),
+    getLiveGameItems(version)
   ]);
   const verified = await getVerifiedRankedMatchChallenges({
     date,
     dataDragonVersion: version,
     publicChampions,
+    gameItems,
     summonerSpells,
     allowLiveMatchupCollection: false,
     forceRefresh: url.searchParams.get("force") === "1",
