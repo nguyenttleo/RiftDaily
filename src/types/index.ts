@@ -223,10 +223,13 @@ export interface ItemRecipeChallenge {
   type: "item-recipe";
   date: string;
   resultItem: GameItem;
+  componentIds: string[];
   knownComponents: GameItem[];
   missingComponentId: string;
+  missingComponentIndex: number;
   options: GameItem[];
   allComponents: GameItem[];
+  rounds?: ItemRecipeChallenge[];
 }
 
 export interface GuessEloRound {

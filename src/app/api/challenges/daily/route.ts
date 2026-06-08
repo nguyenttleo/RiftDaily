@@ -249,11 +249,28 @@ function compactBuildRound(round: ItemBuildChallenge): ItemBuildChallenge {
 
 function compactItemRecipeChallenge(challenge: ItemRecipeChallenge): ItemRecipeChallenge {
   return {
-    ...challenge,
+    ...compactItemRecipeRound(challenge),
+    id: challenge.id,
     resultItem: compactGameItem(challenge.resultItem),
     knownComponents: challenge.knownComponents.map(compactGameItem),
     options: challenge.options.map(compactGameItem),
-    allComponents: challenge.allComponents.map(compactGameItem)
+    allComponents: challenge.allComponents.map(compactGameItem),
+    rounds: challenge.rounds?.map((round) => ({
+      ...compactItemRecipeRound(round),
+      options: [],
+      allComponents: []
+    }))
+  };
+}
+
+function compactItemRecipeRound(round: ItemRecipeChallenge): ItemRecipeChallenge {
+  return {
+    ...round,
+    resultItem: compactGameItem(round.resultItem),
+    knownComponents: round.knownComponents.map(compactGameItem),
+    options: round.options.map(compactGameItem),
+    allComponents: round.allComponents.map(compactGameItem),
+    rounds: undefined
   };
 }
 

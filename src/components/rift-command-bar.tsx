@@ -3,8 +3,9 @@
 import {
   ArrowRight,
   CircleSlash,
-  Crosshair,
   Cpu,
+  Grid2X2,
+  Layers,
   MessageSquare,
   PackageSearch,
   Split,
@@ -17,29 +18,37 @@ import type { MouseEvent, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
+export type PlayProduct = "lol" | "tft";
+
 export type PlayMode =
   | "item-build"
   | "item-recipe"
   | "guess-elo"
   | "champion-matchup"
   | "dodge-queue"
-  | "trainer"
-  | "leaderboard";
+  | "leaderboard"
+  | "tft-recipe"
+  | "tft-connections";
 
-const gameNavItems: Array<{ mode: PlayMode; label: string; icon: ReactNode }> = [
+const lolNavItems: Array<{ mode: PlayMode; label: string; icon: ReactNode }> = [
   { mode: "item-build", label: "Build", icon: <PackageSearch size={13} /> },
   { mode: "item-recipe", label: "Recipe", icon: <Split size={13} /> },
   { mode: "guess-elo", label: "ELO", icon: <UsersRound size={13} /> },
   { mode: "champion-matchup", label: "Matchup", icon: <Swords size={13} /> },
   { mode: "dodge-queue", label: "Lobby", icon: <CircleSlash size={13} /> },
-  { mode: "trainer", label: "Trainer", icon: <Crosshair size={13} /> },
   { mode: "leaderboard", label: "Leaderboard", icon: <Trophy size={13} /> }
+];
+
+const tftNavItems: Array<{ mode: PlayMode; label: string; icon: ReactNode }> = [
+  { mode: "tft-recipe", label: "Recipe", icon: <Layers size={13} /> },
+  { mode: "tft-connections", label: "Connections", icon: <Grid2X2 size={13} /> }
 ];
 
 type BrandVariant = "substantial" | "sleek";
 
 export function RiftCommandBar({
   activeMode,
+  activeProduct = "lol",
   brandVariant = "substantial",
   includeGameLinks = true,
   includeInfoLinks = false,
@@ -47,10 +56,13 @@ export function RiftCommandBar({
   homeAnchors = false,
   position = "fixed",
   showCta = true,
+  showProductSwitch = false,
   className,
-  onModeSelect
+  onModeSelect,
+  onProductSelect
 }: {
   activeMode?: PlayMode;
+  activeProduct?: PlayProduct;
   brandVariant?: BrandVariant;
   includeGameLinks?: boolean;
   includeInfoLinks?: boolean;
@@ -58,12 +70,15 @@ export function RiftCommandBar({
   homeAnchors?: boolean;
   position?: "fixed" | "sticky";
   showCta?: boolean;
+  showProductSwitch?: boolean;
   className?: string;
   onModeSelect?: (mode: PlayMode) => void;
+  onProductSelect?: (product: PlayProduct) => void;
 }) {
+  const productNavItems = activeProduct === "tft" ? tftNavItems : lolNavItems;
   const navItems = [
-    ...(includeGameLinks ? gameNavItems : []),
-    ...(!includeGameLinks && includeLeaderboardLink ? gameNavItems.filter((item) => item.mode === "leaderboard") : [])
+    ...(includeGameLinks ? productNavItems : []),
+    ...(!includeGameLinks && includeLeaderboardLink ? lolNavItems.filter((item) => item.mode === "leaderboard") : [])
   ];
 
   return (
@@ -110,13 +125,13 @@ export function RiftCommandBar({
           aria-label="Primary navigation"
           className={cn(
             "order-3 col-span-2 min-w-0 max-w-full items-center overflow-x-auto rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.05),0_12px_32px_rgba(0,0,0,.22)] fine-scrollbar xl:order-none xl:col-span-1",
-            showCta ? "flex gap-0.5" : "mx-2 grid auto-cols-[minmax(5.25rem,1fr)] grid-flow-col gap-1 sm:mx-4 xl:mx-6"
+            showCta ? "flex gap-0.5" : "mx-2 flex gap-1 sm:mx-4 xl:mx-6"
           )}
         >
           {navItems.map((item) => (
             <CommandNavLink
               key={item.mode}
-              href={`/play?mode=${item.mode}`}
+              href={hrefForMode(item.mode, activeProduct)}
               label={item.label}
               icon={item.icon}
               active={activeMode === item.mode}
@@ -131,6 +146,26 @@ export function RiftCommandBar({
               }}
             />
           ))}
+          {showProductSwitch && (
+            <div className="ml-auto inline-grid shrink-0 grid-cols-2 rounded-full border border-[#c89b3c]/25 bg-[#050607]/70 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
+              {(["lol", "tft"] as const).map((product) => (
+                <button
+                  key={product}
+                  type="button"
+                  aria-pressed={activeProduct === product}
+                  onClick={() => onProductSelect?.(product)}
+                  className={cn(
+                    "font-display min-h-8 rounded-full px-3 text-xs font-extrabold uppercase transition sm:min-w-12",
+                    activeProduct === product
+                      ? "bg-[#f5c542] text-[#07101d] shadow-[0_8px_20px_rgba(245,197,66,.2)]"
+                      : "text-[#dce6ff]/65 hover:bg-white/[0.07] hover:text-white"
+                  )}
+                >
+                  {product === "lol" ? "LoL" : "TFT"}
+                </button>
+              ))}
+            </div>
+          )}
           {includeInfoLinks && (
             <>
               <CommandNavLink href={homeAnchors ? "#tech" : "/#tech"} label="Tech" icon={<Cpu size={13} />} roomy={!showCta || !includeGameLinks} />
@@ -161,6 +196,14 @@ export function RiftCommandBar({
       </div>
     </header>
   );
+}
+
+function hrefForMode(mode: PlayMode, product: PlayProduct) {
+  if (mode.startsWith("tft-") || product === "tft") {
+    return `/play?game=tft&mode=${mode}`;
+  }
+
+  return `/play?mode=${mode}`;
 }
 
 function CommandNavLink({

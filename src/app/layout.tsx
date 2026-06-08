@@ -17,7 +17,7 @@ const oxanium = Oxanium({
 
 export const metadata: Metadata = {
   title: "Rift Daily",
-  description: "A polished daily League challenge hub for builds, matchup reads, lobby calls, and mechanics practice."
+  description: "A daily League challenge hub for builds, matchup reads, lobby calls, and TFT puzzles."
 };
 
 export default function RootLayout({

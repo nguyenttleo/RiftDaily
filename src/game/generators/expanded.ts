@@ -13,6 +13,7 @@ import type {
   SkillshotDodgeChallenge,
   VerifiedBuildRound
 } from "@/types";
+import { createRealItemRecipeChallenge } from "@/game/item-recipes";
 
 import { getUtcDateKey, seededIndex } from "./daily";
 
@@ -685,35 +686,7 @@ function isBuildCandidateItem(item: GameItem) {
 }
 
 function generateItemRecipeChallenge(date: string, seed: string, itemCatalog: GameItem[]): ItemRecipeChallenge {
-  const craftable = itemCatalog.filter((item) =>
-    item.from.length >= 2 &&
-    item.from.every((id) => {
-      const component = getItemById(itemCatalog, id);
-      return component && isRecipeComponent(component, itemCatalog);
-    })
-  );
-  const resultItem = craftable[seededIndex(seed, craftable.length)];
-  const componentIds = resultItem.from;
-  const missingComponentId = componentIds[seededIndex(`${seed}:missing`, componentIds.length)];
-  const knownComponents = componentIds.filter((id) => id !== missingComponentId).map((id) => getItemById(itemCatalog, id)).filter(Boolean) as GameItem[];
-  const missing = getItemById(itemCatalog, missingComponentId) ?? knownComponents[0];
-  const distractors = itemCatalog
-    .filter((item) => item.id !== missing.id && item.goldTotal <= Math.max(missing.goldTotal + 500, 900))
-    .slice(0, 80)
-    .sort((a, b) => seededIndex(`${seed}:${a.id}`, 1000) - seededIndex(`${seed}:${b.id}`, 1000))
-    .slice(0, 5);
-  const allComponents = getRecipeComponents(itemCatalog, [missing.id]);
-
-  return {
-    id: `${date}:item-recipe`,
-    type: "item-recipe",
-    date,
-    resultItem,
-    knownComponents,
-    missingComponentId: missing.id,
-    options: [missing, ...distractors].sort((a, b) => a.name.localeCompare(b.name)),
-    allComponents
-  };
+  return createRealItemRecipeChallenge(date, seed, itemCatalog);
 }
 
 function generateGuessEloChallenge(date: string, rounds: GuessEloRound[], unavailableReason?: string): GuessEloChallenge {
@@ -825,43 +798,5 @@ function isBootUpgrade(item: GameItem) {
     (item.tags.includes("Boots") || item.from.some((id) => TIER_TWO_BOOT_IDS.has(id))) &&
     !item.tags.includes("Consumable") &&
     !item.tags.includes("Trinket")
-  );
-}
-
-function getItemById(itemCatalog: GameItem[], id: string) {
-  return itemCatalog.find((item) => item.id === id);
-}
-
-function getRecipeComponents(itemCatalog: GameItem[], includeIds: string[] = []) {
-  const include = new Set(includeIds);
-  const candidates = itemCatalog
-    .filter((item) => isRecipeComponent(item, itemCatalog) || include.has(item.id))
-    .sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
-  const chosen: GameItem[] = [];
-
-  for (const item of candidates) {
-    const existingIndex = chosen.findIndex((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase());
-
-    if (existingIndex === -1) {
-      chosen.push(item);
-    } else if (include.has(item.id) && !include.has(chosen[existingIndex].id)) {
-      chosen[existingIndex] = item;
-    }
-  }
-
-  return chosen;
-}
-
-function isRecipeComponent(item: GameItem, itemCatalog: GameItem[]) {
-  const usedByPurchasableItem = itemCatalog.some((parent) => parent.purchasable && parent.from.includes(item.id));
-
-  return (
-    usedByPurchasableItem &&
-    item.purchasable &&
-    item.goldTotal > 0 &&
-    item.goldTotal <= 1800 &&
-    !item.tags.includes("Consumable") &&
-    !item.tags.includes("Trinket") &&
-    (item.name === "Boots" || !item.tags.includes("Boots"))
   );
 }

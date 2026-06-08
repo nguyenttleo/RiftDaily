@@ -209,7 +209,8 @@ const claimableModeStorageKeys = [
   { gameKey: "guess-elo", keys: ["rift-daily:guess-elo:guest"] },
   { gameKey: "champion-matchup", keys: ["rift-daily:champion-matchup:guest"] },
   { gameKey: "dodge-queue", keys: ["rift-daily:dodge-queue:guest"] },
-  { gameKey: "skillshot-dodge", keys: ["rift-daily:mode-streak:skillshot-dodge:Guest", "rift-daily:mode-streak:skillshot-dodge:guest"] }
+  { gameKey: "tft-recipe", keys: ["rift-daily:tft-recipe:guest"] },
+  { gameKey: "tft-connections", keys: ["rift-daily:tft-connections:guest"] }
 ] as const;
 
 type ClaimableGameKey = (typeof claimableModeStorageKeys)[number]["gameKey"];

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyLinkButton } from "@/components/copy-link-button";
 import {
   applyRankedResult,
   calculateLpDelta,
@@ -37,7 +38,6 @@ const BUILD_MAX_GUESSES = 6;
 const BUILD_RELEVANT_ITEM_LIMIT = 24;
 const BUILD_CHAMPION_NAME_DEFAULT_FONT_REM = 1.5;
 const BUILD_CHAMPION_NAME_MIN_FONT_REM = 0.9;
-const INFINITE_ROUNDS = 48;
 type ItemGuessResult = "correct" | "wrong";
 
 export function ItemBuildGame({
@@ -1667,7 +1667,6 @@ function itemNameKeyForUi(item: GameItem) {
 
 export function ItemRecipeGame({
   challenge,
-  items: itemCatalog = [],
   username = "Guest",
   pageRail = false
 }: {
@@ -1676,7 +1675,7 @@ export function ItemRecipeGame({
   username?: string;
   pageRail?: boolean;
 }) {
-  const generatedRounds = useMemo(() => createRecipeRounds(challenge, itemCatalog), [challenge, itemCatalog]);
+  const generatedRounds = useMemo(() => createRecipeRounds(challenge), [challenge]);
   const rounds = useRandomizedRounds(generatedRounds, "item-recipe", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState("");
@@ -1731,6 +1730,7 @@ export function ItemRecipeGame({
             <Split size={18} />
           </span>
           <h2 className="text-lg font-semibold sm:text-xl">Guess the Recipe</h2>
+          <CopyLinkButton mode="item-recipe" className="ml-auto" />
         </div>
         <div className="hidden sm:block">
           <InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />
@@ -1741,8 +1741,8 @@ export function ItemRecipeGame({
         <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#111722] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.035)] sm:gap-3 sm:p-3">
           <div className="mx-auto h-5 w-px bg-[#3c3421] sm:h-8" />
           <div className="grid grid-cols-4 items-start gap-2 sm:grid-cols-3 sm:gap-3">
-            {round.knownComponents.map((item) => (
-              <ItemShopNode key={item.id} item={item} />
+            {round.knownComponents.map((item, index) => (
+              <ItemShopNode key={`${item.id}:${index}`} item={item} />
             ))}
             <MissingRecipeNode item={selected} submitted={submitted} correct={correct} />
           </div>
@@ -1754,6 +1754,7 @@ export function ItemRecipeGame({
             </div>
           )}
           <div className="flex flex-wrap gap-2">
+            <CopyLinkButton mode="item-recipe" className="sm:hidden" />
             <Button type="button" variant="secondary" disabled={!answer || submitted} onClick={() => { setAnswer(""); setSubmitted(false); }}>
               Clear
             </Button>
@@ -2302,89 +2303,20 @@ async function persistRankedResult(
   }
 }
 
-function createRecipeRounds(base: ItemRecipeChallenge, itemCatalog: GameItem[]) {
-  const craftable = itemCatalog.filter((item) =>
-    item.from.length >= 2 &&
-    item.from.every((id) => {
-      const component = findItem(itemCatalog, id);
-      return component && isRecipeComponentChoice(component, itemCatalog);
-    })
-  );
+function createRecipeRounds(base: ItemRecipeChallenge) {
+  const sharedComponents = base.allComponents.length > 0 ? base.allComponents : base.options;
+  const realRounds = base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 
-  if (craftable.length === 0) {
-    return [{ ...base, allComponents: getRecipeComponentChoices(itemCatalog, [base.missingComponentId]) }];
-  }
-
-  return [
-    base,
-    ...Array.from({ length: INFINITE_ROUNDS }, (_, index) => createGeneratedRecipeRound(base, itemCatalog, craftable, index + 1))
-  ];
-}
-
-function createGeneratedRecipeRound(base: ItemRecipeChallenge, itemCatalog: GameItem[], craftable: GameItem[], round: number): ItemRecipeChallenge {
-  const seed = `${base.date}:recipe-infinite:${round}`;
-  const resultItem = craftable[hashString(`${seed}:result`) % craftable.length];
-  const componentIds = resultItem.from;
-  const missingComponentId = componentIds[hashString(`${seed}:missing`) % componentIds.length];
-  const knownComponents = componentIds.filter((id) => id !== missingComponentId).map((id) => findItem(itemCatalog, id)).filter(Boolean) as GameItem[];
-  const missing = findItem(itemCatalog, missingComponentId) ?? knownComponents[0] ?? base.resultItem;
-  const allComponents = getRecipeComponentChoices(itemCatalog, [missing.id]);
-  const distractors = allComponents
-    .filter((item) => item.id !== missing.id && item.goldTotal <= Math.max(missing.goldTotal + 500, 900))
-    .sort((a, b) => (hashString(`${seed}:${a.id}`) % 1000) - (hashString(`${seed}:${b.id}`) % 1000))
-    .slice(0, 5);
-
-  return {
-    ...base,
-    id: `${base.date}:item-recipe:${round}`,
-    resultItem,
-    knownComponents,
-    missingComponentId: missing.id,
-    options: [missing, ...distractors].sort((a, b) => a.name.localeCompare(b.name)),
-    allComponents
-  };
+  return realRounds.map((round) => ({
+    ...round,
+    options: round.options.length > 0 ? round.options : sharedComponents,
+    allComponents: round.allComponents.length > 0 ? round.allComponents : sharedComponents,
+    rounds: undefined
+  }));
 }
 
 function sortRecipeComponents(items: GameItem[]) {
   return [...items].sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
-}
-
-function findItem(itemCatalog: GameItem[], id: string) {
-  return itemCatalog.find((item) => item.id === id);
-}
-
-function getRecipeComponentChoices(itemCatalog: GameItem[], includeIds: string[] = []) {
-  const include = new Set(includeIds);
-  const candidates = itemCatalog
-    .filter((item) => isRecipeComponentChoice(item, itemCatalog) || include.has(item.id))
-    .sort((a, b) => a.goldTotal - b.goldTotal || a.name.localeCompare(b.name));
-  const chosen: GameItem[] = [];
-
-  for (const item of candidates) {
-    const existingIndex = chosen.findIndex((candidate) => candidate.name.toLowerCase() === item.name.toLowerCase());
-
-    if (existingIndex === -1) {
-      chosen.push(item);
-    } else if (include.has(item.id) && !include.has(chosen[existingIndex].id)) {
-      chosen[existingIndex] = item;
-    }
-  }
-
-  return chosen;
-}
-
-function isRecipeComponentChoice(item: GameItem, itemCatalog: GameItem[]) {
-  const usedByPurchasableItem = itemCatalog.some((parent) => parent.purchasable && parent.from.includes(item.id));
-
-  return (
-    usedByPurchasableItem &&
-    item.purchasable &&
-    item.goldTotal > 0 &&
-    item.goldTotal <= 1800 &&
-    !item.tags.includes("Consumable") &&
-    !item.tags.includes("Trinket") &&
-    (item.name === "Boots" || !item.tags.includes("Boots"))
-  );
 }
 
 type EloRound = GuessEloRound;
@@ -2445,7 +2377,7 @@ export function ChampionMatchupGame({
     <PuzzleFrame
       icon={<Swords size={18} />}
       title="Who Wins More?"
-      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+      headerAccessory={<GameHeaderTools><InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} /><CopyLinkButton mode="champion-matchup" /></GameHeaderTools>}
       playAreaDepth
     >
       {round.unavailableReason ? (
@@ -2652,7 +2584,7 @@ export function GuessEloGame({
     <PuzzleFrame
       icon={<UsersRound size={18} />}
       title="Guess the ELO"
-      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+      headerAccessory={<GameHeaderTools><InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} /><CopyLinkButton mode="guess-elo" /></GameHeaderTools>}
     >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
@@ -3330,7 +3262,7 @@ export function DodgeQueueGame({
     <PuzzleFrame
       icon={<CircleSlash size={18} />}
       title="Dodge or Queue"
-      headerAccessory={<InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} />}
+      headerAccessory={<GameHeaderTools><InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} /><CopyLinkButton mode="dodge-queue" /></GameHeaderTools>}
       playAreaDepth
     >
       {round.unavailableReason ? (
@@ -3452,6 +3384,10 @@ function PuzzleFrame({
       {playAreaDepth ? <div className="play-area-content flex min-h-0 flex-1 flex-col gap-2 sm:gap-3">{content}</div> : content}
     </section>
   );
+}
+
+function GameHeaderTools({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>;
 }
 
 function VerifiedDataUnavailable({ reason }: { reason: string }) {

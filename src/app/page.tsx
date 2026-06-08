@@ -79,7 +79,7 @@ export default async function Home() {
 
       <section className="mx-auto grid max-w-7xl gap-5 px-5 py-14 md:grid-cols-3 md:py-20">
         <InfoCard icon={<ClipboardList />} title="Queue the chaos" text="Everyone gets the same puzzle set, so the excuses start immediately." />
-        <InfoCard icon={<Swords />} title="Make the call" text="Choose builds, solve recipe trees, read cursed loading screens, and dodge whatever is flying at Kennen." />
+        <InfoCard icon={<Swords />} title="Make the call" text="Choose builds, solve recipe trees, read cursed loading screens, and swap into TFT puzzles." />
         <InfoCard icon={<Share2 />} title="Send proof" text="Streaks, leaderboards, and shareable results make your victory annoying in the best way." />
       </section>
 

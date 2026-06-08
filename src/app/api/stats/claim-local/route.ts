@@ -10,7 +10,7 @@ import { authOptions } from "@/lib/auth/options";
 
 export const runtime = "nodejs";
 
-const modeKeySchema = z.enum(["item-build", "item-recipe", "guess-elo", "champion-matchup", "dodge-queue", "skillshot-dodge"]);
+const modeKeySchema = z.enum(["item-build", "item-recipe", "guess-elo", "champion-matchup", "dodge-queue", "tft-recipe", "tft-connections"]);
 const rankTierSchema = z.enum(["Unranked", "Iron", "Bronze", "Silver", "Gold", "Platinum", "Emerald", "Diamond", "Master", "Grandmaster", "Challenger"]);
 const rankDivisionSchema = z.enum(["IV", "III", "II", "I"]);
 

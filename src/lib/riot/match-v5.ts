@@ -37,7 +37,6 @@ const MAX_SOURCES_PER_RANK_BUCKET = 48;
 const RIOT_REQUEST_TIMEOUT_MS = 8000;
 const RIOT_MIN_REQUEST_INTERVAL_MS = 140;
 const RIOT_MAX_RETRY_AFTER_MS = 5000;
-const MAX_COMPACT_PERSISTED_CACHE_BYTES = 2.5 * 1000 * 1000;
 
 let nextRiotRequestAt = 0;
 
@@ -1571,10 +1570,9 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
     from verified_match_cache
     where (expires_at > now() or created_at > now() - interval '48 hours')
       and (cache_key = $1 or cache_key like $2)
-      and pg_column_size(payload) <= $3
     order by exact_match desc, payload_bytes asc
     limit 20`,
-    [cacheKey, compactKeyPattern, MAX_COMPACT_PERSISTED_CACHE_BYTES]
+    [cacheKey, compactKeyPattern]
   );
   const candidates = candidatesResult.rows.map((row) => ({
     cacheKey: row.cache_key,
@@ -1615,7 +1613,29 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
   }
 
   const payloadResult = await query<VerifiedMatchCacheRow & { cache_key: string }>(
-    `select cache_key, payload
+    `select
+      cache_key,
+      jsonb_build_object(
+        'buildRounds', coalesce((
+          select jsonb_agg(round_value #- '{sourceMatch,matchData}')
+          from jsonb_array_elements(coalesce(payload->'buildRounds', '[]'::jsonb)) as build_round(round_value)
+        ), '[]'::jsonb),
+        'guessEloRounds', coalesce((
+          select jsonb_agg(round_value #- '{sourceMatch,matchData}')
+          from jsonb_array_elements(coalesce(payload->'guessEloRounds', '[]'::jsonb)) as guess_elo_round(round_value)
+        ), '[]'::jsonb),
+        'dodgeQueueRounds', coalesce((
+          select jsonb_agg(round_value #- '{sourceMatch,matchData}')
+          from jsonb_array_elements(coalesce(payload->'dodgeQueueRounds', '[]'::jsonb)) as dodge_queue_round(round_value)
+        ), '[]'::jsonb),
+        'championMatchupRounds', coalesce(payload->'championMatchupRounds', '[]'::jsonb),
+        'championWinrateSamples', '{}'::jsonb,
+        'status', coalesce(payload->'status', '"ready"'::jsonb),
+        'message', payload->'message',
+        'guessEloMessage', payload->'guessEloMessage',
+        'dodgeQueueMessage', payload->'dodgeQueueMessage',
+        'championMatchupMessage', payload->'championMatchupMessage'
+      ) as payload
     from verified_match_cache
     where cache_key = any($1::text[])
       and (expires_at > now() or created_at > now() - interval '48 hours')`,

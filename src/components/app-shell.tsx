@@ -15,7 +15,7 @@ import {
 import { LeaderboardPanel } from "@/components/leaderboard-panel";
 import { NexusLoader } from "@/components/nexus-loader";
 import { PromotionModal } from "@/components/promotion-modal";
-import { TrainerPage } from "@/components/trainer-page";
+import { TftPlayShell } from "@/components/tft-play-shell";
 import {
   createInitialRankState,
   nextRankProgress,
@@ -28,21 +28,23 @@ import {
 } from "@/game/scoring";
 import { BUILD_SHARE_PARAM } from "@/lib/build-share";
 import { cn } from "@/lib/utils";
-import { RiftCommandBar, type PlayMode } from "@/components/rift-command-bar";
+import { RiftCommandBar, type PlayMode, type PlayProduct } from "@/components/rift-command-bar";
 import type { DailyChallengeResponse, LeaderboardEntry, UserStats } from "@/types";
 
 type View = PlayMode;
+type Product = PlayProduct;
 
 const defaultView: View = "item-build";
-const viewModes = new Set<View>([
+const defaultProduct: Product = "lol";
+const lolViewModes = new Set<View>([
   "item-build",
   "item-recipe",
   "guess-elo",
   "champion-matchup",
   "dodge-queue",
-  "trainer",
   "leaderboard"
 ]);
+const tftViewModes = new Set<View>(["tft-recipe", "tft-connections"]);
 const ROUND_SYNC_RETRY_DELAY_MS = 2500;
 const ROUND_SYNC_MAX_BLOCKING_ATTEMPTS = 4;
 type DailyRoundLimits = {
@@ -86,9 +88,11 @@ const guestStats: UserStats = {
 };
 
 export function AppShell() {
+  const initialRoute = initialPlayRoute();
   const [daily, setDaily] = useState<DailyChallengeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [view, setView] = useState<View>(defaultView);
+  const [product, setProduct] = useState<Product>(initialRoute.product);
+  const [view, setView] = useState<View>(initialRoute.view);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
@@ -167,17 +171,21 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    if (product !== "lol") {
+      setLoading(false);
+      return;
+    }
+
     void loadDaily();
     void loadLeaderboard();
-  }, [loadDaily, loadLeaderboard]);
+  }, [loadDaily, loadLeaderboard, product]);
 
   useEffect(() => {
     const syncViewFromUrl = () => {
-      const nextView = viewFromSearch(window.location.search);
+      const nextRoute = routeStateFromSearch(window.location.search);
 
-      if (nextView) {
-        setView(nextView);
-      }
+      setProduct(nextRoute.product);
+      setView(nextRoute.view);
     };
 
     syncViewFromUrl();
@@ -189,32 +197,36 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!daily || !hasRecoverableDataGap(daily) || refreshing) {
+    if (product !== "lol" || !daily || !hasRecoverableDataGap(daily) || refreshing) {
       return;
     }
 
     void loadDaily({ blocking: true, recovery: true });
-  }, [daily, loadDaily, refreshing]);
+  }, [daily, loadDaily, product, refreshing]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
   const displayStats = useRankedStats(daily?.stats ?? guestStats);
   const rankState = rankStateFromStats(displayStats);
   const rankProgress = nextRankProgress(rankState);
-  const usesLeftRail = view === "item-build" || view === "item-recipe";
+  const usesLeftRail = product === "lol" && (view === "item-build" || view === "item-recipe");
   const selectView = useCallback((nextView: View) => {
+    const nextProduct = productForView(nextView) ?? product;
+
+    setProduct(nextProduct);
     setView(nextView);
+    replacePlayUrl(nextProduct, nextView);
 
-    const url = new URL(window.location.href);
-    url.searchParams.set("mode", nextView);
-    if (nextView !== "item-build") {
-      url.searchParams.delete(BUILD_SHARE_PARAM);
-    }
-    window.history.replaceState(null, "", url);
-
-    if (daily && hasRecoverableDataGap(daily)) {
+    if (nextProduct === "lol" && daily && hasRecoverableDataGap(daily)) {
       void loadDaily({ blocking: true, recovery: true });
     }
-  }, [daily, loadDaily]);
+  }, [daily, loadDaily, product]);
+  const selectProduct = useCallback((nextProduct: Product) => {
+    const nextView = defaultViewForProduct(nextProduct);
+
+    setProduct(nextProduct);
+    setView(nextView);
+    replacePlayUrl(nextProduct, nextView);
+  }, []);
 
   useEffect(() => {
     const syncStats = () => {
@@ -242,6 +254,16 @@ export function AppShell() {
       window.removeEventListener(rankPromotionEventName, handlePromotion);
     };
   }, []);
+
+  if (product === "tft") {
+    return (
+      <TftPlayShell
+        view={asTftView(view)}
+        onModeSelect={selectView}
+        onProductSelect={selectProduct}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -277,10 +299,13 @@ export function AppShell() {
         >
           <RiftCommandBar
             activeMode={view}
+            activeProduct="lol"
             brandVariant="sleek"
             onModeSelect={selectView}
+            onProductSelect={selectProduct}
             position="sticky"
             showCta={false}
+            showProductSwitch
             className="transition-[box-shadow,filter] duration-200 ease-out"
           />
         </motion.div>
@@ -309,7 +334,6 @@ export function AppShell() {
         {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("guessElo")} />}
         {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("championMatchup")} />}
         {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("dodgeQueue")} />}
-        {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} username={displayStats.username} />}
 
         {view === "leaderboard" && <LeaderboardPanel entries={leaderboard} />}
         </motion.div>
@@ -542,7 +566,7 @@ function ProgressStat({ label, value }: { label: string; value: string }) {
 }
 
 const streakUpdateEventName = "rift-daily:streak-updated";
-const localModeKeys = ["item-build", "item-recipe", "guess-elo", "champion-matchup", "dodge-queue"] as const;
+const localModeKeys = ["item-build", "item-recipe", "guess-elo", "champion-matchup", "dodge-queue", "tft-recipe", "tft-connections"] as const;
 
 type LocalModeStreak = {
   current: number;
@@ -686,9 +710,6 @@ function readLocalModeStreaks(username: string): LocalModeStreak[] {
     keys.add(`rift-daily:${mode}:${normalized}`);
   }
 
-  keys.add(`rift-daily:mode-streak:skillshot-dodge:${username}`);
-  keys.add(`rift-daily:mode-streak:skillshot-dodge:${normalized}`);
-
   return [...keys]
     .map((key) => readLocalModeStreak(key))
     .filter((streak): streak is LocalModeStreak => Boolean(streak));
@@ -730,22 +751,80 @@ function currentGameLabel(view: View) {
     "guess-elo": "Guess the Elo",
     "champion-matchup": "Who Wins More?",
     "dodge-queue": "Dodge or Queue",
-    trainer: "Rift Trainer",
-    leaderboard: "Leaderboard"
+    leaderboard: "Leaderboard",
+    "tft-recipe": "TFT Recipe",
+    "tft-connections": "TFT Connections"
   };
 
   return labels[view];
 }
 
-function viewFromSearch(search: string): View | null {
+function initialPlayRoute() {
+  if (typeof window === "undefined") {
+    return { product: defaultProduct, view: defaultView };
+  }
+
+  return routeStateFromSearch(window.location.search);
+}
+
+function routeStateFromSearch(search: string): { product: Product; view: View } {
   const params = new URLSearchParams(search);
   const mode = params.get("mode") as View | null;
 
   if (params.get(BUILD_SHARE_PARAM)) {
-    return "item-build";
+    return { product: "lol", view: "item-build" };
   }
 
-  return mode && viewModes.has(mode) ? mode : null;
+  if (params.get("game") === "tft" || (mode && tftViewModes.has(mode))) {
+    return {
+      product: "tft",
+      view: mode && tftViewModes.has(mode) ? mode : "tft-recipe"
+    };
+  }
+
+  if (mode && lolViewModes.has(mode)) {
+    return { product: "lol", view: mode };
+  }
+
+  return { product: defaultProduct, view: defaultView };
+}
+
+function defaultViewForProduct(product: Product): View {
+  return product === "tft" ? "tft-recipe" : "item-build";
+}
+
+function productForView(view: View): Product | null {
+  if (tftViewModes.has(view)) {
+    return "tft";
+  }
+
+  if (lolViewModes.has(view)) {
+    return "lol";
+  }
+
+  return null;
+}
+
+function asTftView(view: View): Extract<View, "tft-recipe" | "tft-connections"> {
+  return tftViewModes.has(view) ? view as Extract<View, "tft-recipe" | "tft-connections"> : "tft-recipe";
+}
+
+function replacePlayUrl(product: Product, view: View) {
+  const url = new URL(window.location.href);
+
+  url.searchParams.set("mode", view);
+
+  if (product === "tft") {
+    url.searchParams.set("game", "tft");
+    url.searchParams.delete(BUILD_SHARE_PARAM);
+  } else {
+    url.searchParams.delete("game");
+    if (view !== "item-build") {
+      url.searchParams.delete(BUILD_SHARE_PARAM);
+    }
+  }
+
+  window.history.replaceState(null, "", url);
 }
 
 function currentBuildShareValue() {
