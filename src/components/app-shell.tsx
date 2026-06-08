@@ -43,6 +43,7 @@ const viewModes = new Set<View>([
   "trainer",
   "leaderboard"
 ]);
+const ROUND_SYNC_RETRY_DELAY_MS = 2500;
 
 const guestStats: UserStats = {
   username: "Guest",
@@ -69,39 +70,33 @@ export function AppShell() {
   const [view, setView] = useState<View>(defaultView);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [dataRecoveryAttempts, setDataRecoveryAttempts] = useState(0);
   const [message, setMessage] = useState("");
   const [promotion, setPromotion] = useState<RankPromotionEventDetail | null>(null);
 
-  const loadDaily = useCallback(async (options: { recovery?: boolean } = {}) => {
+  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean; requiredView?: View } = {}) => {
+    const requiredView = options.requiredView ?? viewFromSearch(window.location.search) ?? defaultView;
+    const shouldBlockForRounds = options.blocking ?? true;
+
     setMessage("");
-    if (!options.recovery) {
-      setDataRecoveryAttempts(0);
+    if (shouldBlockForRounds) {
+      setLoading(true);
     }
     setRefreshing(true);
 
     try {
-      const query = new URLSearchParams({ t: String(Date.now()) });
-      const sharedBuild = currentBuildShareValue();
+      let nextDaily = await fetchDailyChallenge();
 
-      if (sharedBuild) {
-        query.set(BUILD_SHARE_PARAM, sharedBuild);
+      while (shouldBlockForRounds && hasRecoverableDataGapForView(nextDaily, requiredView)) {
+        await wait(ROUND_SYNC_RETRY_DELAY_MS);
+        nextDaily = await fetchDailyChallenge();
       }
 
-      const response = await fetch(`/api/challenges/daily?${query.toString()}`, { cache: "no-store" });
-
-      if (!response.ok) {
-        throw new Error("Daily load failed.");
-      }
-
-      const nextDaily = (await response.json()) as DailyChallengeResponse;
       setDaily(nextDaily);
-
-      if (!hasRecoverableDataGap(nextDaily)) {
-        setDataRecoveryAttempts(0);
-      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Daily load failed.");
+      if (shouldBlockForRounds) {
+        setDaily((current) => (current && hasRecoverableDataGapForView(current, requiredView) ? null : current));
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -149,17 +144,12 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!daily || !hasRecoverableDataGapForView(daily, view) || dataRecoveryAttempts >= 4 || refreshing) {
+    if (!daily || !hasRecoverableDataGapForView(daily, view) || refreshing) {
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      setDataRecoveryAttempts((current) => current + 1);
-      void loadDaily({ recovery: true });
-    }, 3500 + dataRecoveryAttempts * 1500);
-
-    return () => window.clearTimeout(timeout);
-  }, [daily, dataRecoveryAttempts, loadDaily, refreshing, view]);
+    void loadDaily({ blocking: true, recovery: true, requiredView: view });
+  }, [daily, loadDaily, refreshing, view]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
   const displayStats = useRankedStats(daily?.stats ?? guestStats);
@@ -175,7 +165,11 @@ export function AppShell() {
       url.searchParams.delete(BUILD_SHARE_PARAM);
     }
     window.history.replaceState(null, "", url);
-  }, []);
+
+    if (daily && hasRecoverableDataGapForView(daily, nextView)) {
+      void loadDaily({ blocking: true, recovery: true, requiredView: nextView });
+    }
+  }, [daily, loadDaily]);
 
   useEffect(() => {
     const syncStats = () => {
@@ -717,18 +711,25 @@ function currentBuildShareValue() {
   return new URLSearchParams(window.location.search).get(BUILD_SHARE_PARAM) ?? "";
 }
 
-function hasRecoverableDataGap(daily: DailyChallengeResponse) {
-  const build = daily.extraChallenges.itemBuild;
+async function fetchDailyChallenge() {
+  const query = new URLSearchParams({ t: String(Date.now()) });
+  const sharedBuild = currentBuildShareValue();
 
-  return (
-    !hasPlayableBuildChallenge(build) ||
-    Boolean(daily.extraChallenges.guessElo.unavailableReason) ||
-    (daily.extraChallenges.guessElo.rounds?.length ?? 0) === 0 ||
-    Boolean(daily.extraChallenges.dodgeQueue.unavailableReason) ||
-    (daily.extraChallenges.dodgeQueue.rounds?.length ?? 0) === 0 ||
-    Boolean(daily.extraChallenges.championMatchup.unavailableReason) ||
-    (daily.extraChallenges.championMatchup.rounds?.length ?? 0) === 0
-  );
+  if (sharedBuild) {
+    query.set(BUILD_SHARE_PARAM, sharedBuild);
+  }
+
+  const response = await fetch(`/api/challenges/daily?${query.toString()}`, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("Daily load failed.");
+  }
+
+  return (await response.json()) as DailyChallengeResponse;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function hasRecoverableDataGapForView(daily: DailyChallengeResponse, view: View) {
