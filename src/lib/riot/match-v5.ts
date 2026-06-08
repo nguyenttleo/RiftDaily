@@ -248,6 +248,13 @@ interface VerifiedMatchCacheCandidateRow {
   exact_match: boolean;
 }
 
+interface CompactPersistedRoundLimits {
+  buildRounds?: number;
+  guessEloRounds?: number;
+  dodgeQueueRounds?: number;
+  championMatchupRounds?: number;
+}
+
 let cachedMatchSet: {
   key: string;
   expiresAt: number;
@@ -270,6 +277,7 @@ export async function getVerifiedRankedMatchChallenges({
   matchHistoryPagesPerSource,
   batchKey = "",
   compactPersistedCache = false,
+  compactRoundLimits,
   forceRefresh = false,
   readOnlyCache = false,
   pinnedBuildRoundId = ""
@@ -287,6 +295,7 @@ export async function getVerifiedRankedMatchChallenges({
   matchHistoryPagesPerSource?: number;
   batchKey?: string;
   compactPersistedCache?: boolean;
+  compactRoundLimits?: CompactPersistedRoundLimits;
   forceRefresh?: boolean;
   readOnlyCache?: boolean;
   pinnedBuildRoundId?: string;
@@ -328,10 +337,12 @@ export async function getVerifiedRankedMatchChallenges({
   const championLookup = createChampionLookup(publicChampions);
   const itemLookup = new Map(gameItems.map((item) => [item.id, item]));
   const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
-  const persistedMemoryCacheKey = compactPersistedCache ? `${persistedCacheKey}:compact:${pinnedBuildRoundId || "default"}` : persistedCacheKey;
+  const persistedMemoryCacheKey = compactPersistedCache ? `${persistedCacheKey}:compact:${pinnedBuildRoundId || "default"}:${compactRoundLimitsKey(compactRoundLimits)}` : persistedCacheKey;
   const persistedVerifiedSet = pruneInvalidBuildRounds(
     await getPersistedVerifiedMatchCache(persistedCacheKey, {
       compact: compactPersistedCache,
+      compactRoundLimits,
+      pinnedBuildRoundId,
       compactKeyPattern: `%:${platform}:${currentPatchPrefix}%verified-rounds`
     }),
     itemLookup
@@ -1528,7 +1539,15 @@ function mergeChampionWinrateSamples(existing: Record<string, BuildWinrateStats>
   return merged;
 }
 
-async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compact?: boolean; compactKeyPattern?: string } = {}) {
+async function getPersistedVerifiedMatchCache(
+  cacheKey: string,
+  options: {
+    compact?: boolean;
+    compactKeyPattern?: string;
+    compactRoundLimits?: CompactPersistedRoundLimits;
+    pinnedBuildRoundId?: string;
+  } = {}
+) {
   if (!isDatabaseConfigured()) {
     return null;
   }
@@ -1537,7 +1556,7 @@ async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compa
     await ensureVerifiedMatchCacheTable();
 
     if (options.compact) {
-      return getCompactPersistedVerifiedMatchCache(cacheKey, options.compactKeyPattern ?? cacheKey);
+      return getCompactPersistedVerifiedMatchCache(cacheKey, options.compactKeyPattern ?? cacheKey, options.compactRoundLimits, options.pinnedBuildRoundId ?? "");
     }
 
     const result = await query<VerifiedMatchCacheRow>(
@@ -1557,7 +1576,16 @@ async function getPersistedVerifiedMatchCache(cacheKey: string, options: { compa
   }
 }
 
-async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKeyPattern: string) {
+async function getCompactPersistedVerifiedMatchCache(
+  cacheKey: string,
+  compactKeyPattern: string,
+  compactRoundLimits?: CompactPersistedRoundLimits,
+  pinnedBuildRoundId = ""
+) {
+  const buildLimit = normalizeCompactRoundLimit(compactRoundLimits?.buildRounds);
+  const guessEloLimit = normalizeCompactRoundLimit(compactRoundLimits?.guessEloRounds);
+  const dodgeQueueLimit = normalizeCompactRoundLimit(compactRoundLimits?.dodgeQueueRounds);
+  const championMatchupLimit = normalizeCompactRoundLimit(compactRoundLimits?.championMatchupRounds);
   const candidatesResult = await query<VerifiedMatchCacheCandidateRow>(
     `select
       cache_key,
@@ -1618,17 +1646,40 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
       jsonb_build_object(
         'buildRounds', coalesce((
           select jsonb_agg(round_value #- '{sourceMatch,matchData}')
-          from jsonb_array_elements(coalesce(payload->'buildRounds', '[]'::jsonb)) as build_round(round_value)
+          from (
+            select round_value
+            from jsonb_array_elements(coalesce(payload->'buildRounds', '[]'::jsonb)) with ordinality as build_round(round_value, ordinal)
+            order by case when $2 <> '' and round_value->>'id' = $2 then 0 else 1 end, ordinal
+            limit $3
+          ) as selected_build_rounds
         ), '[]'::jsonb),
         'guessEloRounds', coalesce((
           select jsonb_agg(round_value #- '{sourceMatch,matchData}')
-          from jsonb_array_elements(coalesce(payload->'guessEloRounds', '[]'::jsonb)) as guess_elo_round(round_value)
+          from (
+            select round_value
+            from jsonb_array_elements(coalesce(payload->'guessEloRounds', '[]'::jsonb)) with ordinality as guess_elo_round(round_value, ordinal)
+            order by ordinal
+            limit $4
+          ) as selected_guess_elo_rounds
         ), '[]'::jsonb),
         'dodgeQueueRounds', coalesce((
           select jsonb_agg(round_value #- '{sourceMatch,matchData}')
-          from jsonb_array_elements(coalesce(payload->'dodgeQueueRounds', '[]'::jsonb)) as dodge_queue_round(round_value)
+          from (
+            select round_value
+            from jsonb_array_elements(coalesce(payload->'dodgeQueueRounds', '[]'::jsonb)) with ordinality as dodge_queue_round(round_value, ordinal)
+            order by ordinal
+            limit $5
+          ) as selected_dodge_queue_rounds
         ), '[]'::jsonb),
-        'championMatchupRounds', coalesce(payload->'championMatchupRounds', '[]'::jsonb),
+        'championMatchupRounds', coalesce((
+          select jsonb_agg(round_value)
+          from (
+            select round_value
+            from jsonb_array_elements(coalesce(payload->'championMatchupRounds', '[]'::jsonb)) with ordinality as champion_matchup_round(round_value, ordinal)
+            order by ordinal
+            limit $6
+          ) as selected_champion_matchup_rounds
+        ), '[]'::jsonb),
         'championWinrateSamples', '{}'::jsonb,
         'status', coalesce(payload->'status', '"ready"'::jsonb),
         'message', payload->'message',
@@ -1639,7 +1690,7 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
     from verified_match_cache
     where cache_key = any($1::text[])
       and (expires_at > now() or created_at > now() - interval '48 hours')`,
-    [selectedKeys]
+    [selectedKeys, pinnedBuildRoundId, buildLimit, guessEloLimit, dodgeQueueLimit, championMatchupLimit]
   );
   const payloadByKey = new Map(payloadResult.rows.map((row) => [row.cache_key, normalizeVerifiedMatchSet(row.payload)]));
   const selectedPayloads = selectedKeys
@@ -1658,6 +1709,23 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
     (merged, payload) => mergeVerifiedChallengeSets(merged, payload),
     selectedPayloads[0]
   );
+}
+
+function normalizeCompactRoundLimit(value?: number) {
+  if (!Number.isFinite(value)) {
+    return 200;
+  }
+
+  return Math.max(1, Math.min(200, Math.floor(value ?? 200)));
+}
+
+function compactRoundLimitsKey(limits?: CompactPersistedRoundLimits) {
+  return [
+    normalizeCompactRoundLimit(limits?.buildRounds),
+    normalizeCompactRoundLimit(limits?.guessEloRounds),
+    normalizeCompactRoundLimit(limits?.dodgeQueueRounds),
+    normalizeCompactRoundLimit(limits?.championMatchupRounds)
+  ].join(":");
 }
 
 function normalizeVerifiedMatchSet(payload: VerifiedMatchChallengeSet): VerifiedMatchChallengeSet {

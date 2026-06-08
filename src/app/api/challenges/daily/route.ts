@@ -83,7 +83,7 @@ export async function GET(request: Request) {
     getUserStats(session?.user?.id, session?.user?.username ?? session?.user?.name ?? "Guest")
   );
   const [staticBody, stats] = await Promise.all([
-    resolveDailyStaticBody(generated, version, requestedBuildRoundId),
+    resolveDailyStaticBody(generated, version, requestedBuildRoundId, roundLimits),
     statsPromise
   ]);
 
@@ -97,8 +97,13 @@ export async function GET(request: Request) {
   return response;
 }
 
-async function resolveDailyStaticBody(generated: DailyChallengeSet, version: string, requestedBuildRoundId = ""): Promise<DailyChallengeStaticBody> {
-  const cacheKey = `${generated.date}:${version}:${isDatabaseConfigured() ? "database" : "local"}:${requestedBuildRoundId || "default"}`;
+async function resolveDailyStaticBody(
+  generated: DailyChallengeSet,
+  version: string,
+  requestedBuildRoundId = "",
+  roundLimits: PublicRoundLimits = DEFAULT_PUBLIC_ROUND_LIMITS
+): Promise<DailyChallengeStaticBody> {
+  const cacheKey = `${generated.date}:${version}:${isDatabaseConfigured() ? "database" : "local"}:${requestedBuildRoundId || "default"}:${roundLimits.itemBuild}:${roundLimits.guessElo}:${roundLimits.championMatchup}:${roundLimits.dodgeQueue}`;
 
   if (cachedDailyStaticBody?.key === cacheKey && cachedDailyStaticBody.expiresAt > Date.now()) {
     return cachedDailyStaticBody.value;
@@ -119,6 +124,12 @@ async function resolveDailyStaticBody(generated: DailyChallengeSet, version: str
       summonerSpells,
       compactPersistedCache: true,
       pinnedBuildRoundId: requestedBuildRoundId,
+      compactRoundLimits: {
+        buildRounds: roundLimits.itemBuild,
+        guessEloRounds: roundLimits.guessElo,
+        dodgeQueueRounds: roundLimits.dodgeQueue,
+        championMatchupRounds: roundLimits.championMatchup
+      },
       readOnlyCache: true
     })
   );
