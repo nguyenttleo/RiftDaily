@@ -44,6 +44,7 @@ const viewModes = new Set<View>([
   "leaderboard"
 ]);
 const ROUND_SYNC_RETRY_DELAY_MS = 2500;
+const ROUND_SYNC_MAX_BLOCKING_ATTEMPTS = 4;
 
 const guestStats: UserStats = {
   username: "Guest",
@@ -73,8 +74,7 @@ export function AppShell() {
   const [message, setMessage] = useState("");
   const [promotion, setPromotion] = useState<RankPromotionEventDetail | null>(null);
 
-  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean; requiredView?: View } = {}) => {
-    const requiredView = options.requiredView ?? viewFromSearch(window.location.search) ?? defaultView;
+  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean } = {}) => {
     const shouldBlockForRounds = options.blocking ?? true;
 
     setMessage("");
@@ -85,17 +85,23 @@ export function AppShell() {
 
     try {
       let nextDaily = await fetchDailyChallenge();
+      let syncAttempts = 0;
 
-      while (shouldBlockForRounds && hasRecoverableDataGapForView(nextDaily, requiredView)) {
+      while (shouldBlockForRounds && hasRecoverableDataGap(nextDaily) && syncAttempts < ROUND_SYNC_MAX_BLOCKING_ATTEMPTS) {
+        syncAttempts += 1;
         await wait(ROUND_SYNC_RETRY_DELAY_MS);
         nextDaily = await fetchDailyChallenge();
+      }
+
+      if (shouldBlockForRounds && hasRecoverableDataGap(nextDaily)) {
+        throw new Error("Rounds are still syncing. Try again shortly.");
       }
 
       setDaily(nextDaily);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Daily load failed.");
       if (shouldBlockForRounds) {
-        setDaily((current) => (current && hasRecoverableDataGapForView(current, requiredView) ? null : current));
+        setDaily((current) => (current && hasRecoverableDataGap(current) ? null : current));
       }
     } finally {
       setLoading(false);
@@ -144,12 +150,12 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!daily || !hasRecoverableDataGapForView(daily, view) || refreshing) {
+    if (!daily || !hasRecoverableDataGap(daily) || refreshing) {
       return;
     }
 
-    void loadDaily({ blocking: true, recovery: true, requiredView: view });
-  }, [daily, loadDaily, refreshing, view]);
+    void loadDaily({ blocking: true, recovery: true });
+  }, [daily, loadDaily, refreshing]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
   const displayStats = useRankedStats(daily?.stats ?? guestStats);
@@ -166,8 +172,8 @@ export function AppShell() {
     }
     window.history.replaceState(null, "", url);
 
-    if (daily && hasRecoverableDataGapForView(daily, nextView)) {
-      void loadDaily({ blocking: true, recovery: true, requiredView: nextView });
+    if (daily && hasRecoverableDataGap(daily)) {
+      void loadDaily({ blocking: true, recovery: true });
     }
   }, [daily, loadDaily]);
 
@@ -732,26 +738,18 @@ function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function hasRecoverableDataGapForView(daily: DailyChallengeResponse, view: View) {
-  const extra = daily.extraChallenges;
+function hasRecoverableDataGap(daily: DailyChallengeResponse) {
+  const build = daily.extraChallenges.itemBuild;
 
-  if (view === "item-build") {
-    return !hasPlayableBuildChallenge(extra.itemBuild);
-  }
-
-  if (view === "guess-elo") {
-    return Boolean(extra.guessElo.unavailableReason) || (extra.guessElo.rounds?.length ?? 0) === 0;
-  }
-
-  if (view === "dodge-queue") {
-    return Boolean(extra.dodgeQueue.unavailableReason) || (extra.dodgeQueue.rounds?.length ?? 0) === 0;
-  }
-
-  if (view === "champion-matchup") {
-    return Boolean(extra.championMatchup.unavailableReason) || (extra.championMatchup.rounds?.length ?? 0) === 0;
-  }
-
-  return false;
+  return (
+    !hasPlayableBuildChallenge(build) ||
+    Boolean(daily.extraChallenges.guessElo.unavailableReason) ||
+    (daily.extraChallenges.guessElo.rounds?.length ?? 0) === 0 ||
+    Boolean(daily.extraChallenges.dodgeQueue.unavailableReason) ||
+    (daily.extraChallenges.dodgeQueue.rounds?.length ?? 0) === 0 ||
+    Boolean(daily.extraChallenges.championMatchup.unavailableReason) ||
+    (daily.extraChallenges.championMatchup.rounds?.length ?? 0) === 0
+  );
 }
 
 function hasPlayableBuildChallenge(build: DailyChallengeResponse["extraChallenges"]["itemBuild"]) {

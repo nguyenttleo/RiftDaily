@@ -333,7 +333,7 @@ export async function getVerifiedRankedMatchChallenges({
   const persistedVerifiedSet = pruneInvalidBuildRounds(
     await getPersistedVerifiedMatchCache(persistedCacheKey, {
       compact: compactPersistedCache,
-      compactKeyPattern: `${date}:${platform}:${currentPatchPrefix}%verified-rounds`
+      compactKeyPattern: `%:${platform}:${currentPatchPrefix}%verified-rounds`
     }),
     itemLookup
   );
@@ -1569,7 +1569,7 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
       jsonb_array_length(coalesce(payload->'championMatchupRounds', '[]'::jsonb))::int as champion_matchup_rounds,
       cache_key = $1 as exact_match
     from verified_match_cache
-    where expires_at > now()
+    where (expires_at > now() or created_at > now() - interval '48 hours')
       and (cache_key = $1 or cache_key like $2)
       and pg_column_size(payload) <= $3
     order by exact_match desc, payload_bytes asc
@@ -1593,15 +1593,19 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
   const buildCandidate = candidates
     .filter((candidate) => candidate.buildRounds > 0)
     .sort((a, b) => b.buildRounds - a.buildRounds || a.bytes - b.bytes)[0];
-  const lobbyCandidate = candidates
-    .filter((candidate) => candidate.guessEloRounds > 0 || candidate.dodgeQueueRounds > 0)
-    .sort((a, b) => (b.guessEloRounds + b.dodgeQueueRounds) - (a.guessEloRounds + a.dodgeQueueRounds) || a.bytes - b.bytes)[0];
+  const guessEloCandidate = candidates
+    .filter((candidate) => candidate.guessEloRounds > 0)
+    .sort((a, b) => b.guessEloRounds - a.guessEloRounds || a.bytes - b.bytes)[0];
+  const dodgeQueueCandidate = candidates
+    .filter((candidate) => candidate.dodgeQueueRounds > 0)
+    .sort((a, b) => b.dodgeQueueRounds - a.dodgeQueueRounds || a.bytes - b.bytes)[0];
   const matchupCandidate = candidates
     .filter((candidate) => candidate.championMatchupRounds > 0)
     .sort((a, b) => b.championMatchupRounds - a.championMatchupRounds || a.bytes - b.bytes)[0];
   const selectedKeys = [...new Set([
     buildCandidate?.cacheKey,
-    lobbyCandidate?.cacheKey,
+    guessEloCandidate?.cacheKey,
+    dodgeQueueCandidate?.cacheKey,
     matchupCandidate?.cacheKey,
     candidates[0]?.cacheKey
   ].filter(Boolean) as string[])];
@@ -1614,7 +1618,7 @@ async function getCompactPersistedVerifiedMatchCache(cacheKey: string, compactKe
     `select cache_key, payload
     from verified_match_cache
     where cache_key = any($1::text[])
-      and expires_at > now()`,
+      and (expires_at > now() or created_at > now() - interval '48 hours')`,
     [selectedKeys]
   );
   const payloadByKey = new Map(payloadResult.rows.map((row) => [row.cache_key, normalizeVerifiedMatchSet(row.payload)]));
