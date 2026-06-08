@@ -409,6 +409,8 @@ export interface DailyChallengeResponse {
   stats: UserStats;
 }
 
+export type DailyChallengeStaticResponse = Omit<DailyChallengeResponse, "stats">;
+
 export interface UserStats {
   username: string;
   currentStreak: number;

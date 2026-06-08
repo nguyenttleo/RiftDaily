@@ -2269,7 +2269,7 @@ async function persistRankedResult(
   roundId: string,
   metadata?: Record<string, unknown>
 ) {
-  if (typeof window === "undefined" || username.trim().toLowerCase() === "guest") {
+  if (typeof window === "undefined") {
     return;
   }
 
@@ -2292,7 +2292,7 @@ async function persistRankedResult(
     if (response.ok) {
       const body = (await response.json()) as { rankState?: unknown };
 
-      if (body.rankState) {
+      if (body.rankState && username.trim().toLowerCase() !== "guest") {
         window.localStorage.setItem(rankedStorageKey(username), JSON.stringify(body.rankState));
       }
 

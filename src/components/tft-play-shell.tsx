@@ -102,7 +102,7 @@ export function TftPlayShell({
       setMessage("");
 
       try {
-        const response = await fetch("/api/tft/daily", { cache: "no-store" });
+        const response = await fetch("/api/tft/daily");
 
         if (!response.ok) {
           throw new Error("TFT load failed.");
@@ -852,7 +852,7 @@ async function persistTftRankedResult(
   roundId: string,
   metadata?: Record<string, unknown>
 ) {
-  if (typeof window === "undefined" || username.trim().toLowerCase() === "guest") {
+  if (typeof window === "undefined") {
     return;
   }
 
@@ -873,7 +873,7 @@ async function persistTftRankedResult(
     if (response.ok) {
       const body = (await response.json()) as { rankState?: unknown };
 
-      if (body.rankState) {
+      if (body.rankState && username.trim().toLowerCase() !== "guest") {
         window.localStorage.setItem(rankedStorageKey(username), JSON.stringify(body.rankState));
       }
 

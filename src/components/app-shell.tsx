@@ -29,7 +29,7 @@ import {
 import { BUILD_SHARE_PARAM } from "@/lib/build-share";
 import { cn } from "@/lib/utils";
 import { RiftCommandBar, type PlayMode, type PlayProduct } from "@/components/rift-command-bar";
-import type { DailyChallengeResponse, LeaderboardEntry, UserStats } from "@/types";
+import type { DailyChallengeStaticResponse, LeaderboardEntry, UserStats } from "@/types";
 
 type View = PlayMode;
 type Product = PlayProduct;
@@ -89,7 +89,8 @@ const guestStats: UserStats = {
 
 export function AppShell() {
   const initialRoute = initialPlayRoute();
-  const [daily, setDaily] = useState<DailyChallengeResponse | null>(null);
+  const [daily, setDaily] = useState<DailyChallengeStaticResponse | null>(null);
+  const [stats, setStats] = useState<UserStats>(guestStats);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [product, setProduct] = useState<Product>(initialRoute.product);
   const [view, setView] = useState<View>(initialRoute.view);
@@ -153,7 +154,7 @@ export function AppShell() {
   }, [loadDaily]);
 
   const loadLeaderboard = useCallback(async () => {
-    const response = await fetch("/api/leaderboard", { cache: "no-store" });
+    const response = await fetch("/api/leaderboard");
 
     if (response.ok) {
       const body = (await response.json()) as { entries: LeaderboardEntry[] };
@@ -165,8 +166,8 @@ export function AppShell() {
     const response = await fetch("/api/stats/me", { cache: "no-store" });
 
     if (response.ok) {
-      const body = (await response.json()) as Pick<DailyChallengeResponse, "stats">;
-      setDaily((current) => (current ? { ...current, stats: body.stats } : current));
+      const body = (await response.json()) as { stats: UserStats };
+      setStats(body.stats);
     }
   }, []);
 
@@ -177,8 +178,9 @@ export function AppShell() {
     }
 
     void loadDaily();
+    void loadStats();
     void loadLeaderboard();
-  }, [loadDaily, loadLeaderboard, product]);
+  }, [loadDaily, loadLeaderboard, loadStats, product]);
 
   useEffect(() => {
     const syncViewFromUrl = () => {
@@ -205,7 +207,7 @@ export function AppShell() {
   }, [daily, loadDaily, product, refreshing]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
-  const displayStats = useRankedStats(daily?.stats ?? guestStats);
+  const displayStats = useRankedStats(stats);
   const rankState = rankStateFromStats(displayStats);
   const rankProgress = nextRankProgress(rankState);
   const usesLeftRail = product === "lol" && (view === "item-build" || view === "item-recipe");
@@ -341,7 +343,6 @@ export function AppShell() {
         <div className="lg:hidden">
           <AuthPanel
             onAuthChange={() => {
-              void loadDaily();
               void loadStats();
               void loadLeaderboard();
             }}
@@ -364,7 +365,6 @@ export function AppShell() {
           />
           <AuthPanel
             onAuthChange={() => {
-              void loadDaily();
               void loadStats();
               void loadLeaderboard();
             }}
@@ -383,7 +383,7 @@ function MobileHub({
   stats,
   rankProgress
 }: {
-  daily: DailyChallengeResponse;
+  daily: DailyChallengeStaticResponse;
   view: View;
   resetCountdown: string;
   stats: UserStats;
@@ -835,7 +835,7 @@ function currentBuildShareValue() {
   return new URLSearchParams(window.location.search).get(BUILD_SHARE_PARAM) ?? "";
 }
 
-async function fetchDailyChallenge(roundLimits: DailyRoundLimits = INITIAL_DAILY_ROUND_LIMITS) {
+async function fetchDailyChallenge(roundLimits: DailyRoundLimits = INITIAL_DAILY_ROUND_LIMITS): Promise<DailyChallengeStaticResponse> {
   const query = new URLSearchParams();
   const sharedBuild = currentBuildShareValue();
 
@@ -848,20 +848,20 @@ async function fetchDailyChallenge(roundLimits: DailyRoundLimits = INITIAL_DAILY
   query.set("matchupRounds", String(roundLimits.championMatchup));
   query.set("dodgeQueueRounds", String(roundLimits.dodgeQueue));
 
-  const response = await fetch(`/api/challenges/daily?${query.toString()}`, { cache: "no-store" });
+  const response = await fetch(`/api/challenges/daily?${query.toString()}`);
 
   if (!response.ok) {
     throw new Error("Daily load failed.");
   }
 
-  return (await response.json()) as DailyChallengeResponse;
+  return (await response.json()) as DailyChallengeStaticResponse;
 }
 
 function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function hasRecoverableDataGap(daily: DailyChallengeResponse) {
+function hasRecoverableDataGap(daily: DailyChallengeStaticResponse) {
   const build = daily.extraChallenges.itemBuild;
 
   return (
@@ -875,7 +875,7 @@ function hasRecoverableDataGap(daily: DailyChallengeResponse) {
   );
 }
 
-function hasPlayableBuildChallenge(build: DailyChallengeResponse["extraChallenges"]["itemBuild"]) {
+function hasPlayableBuildChallenge(build: DailyChallengeStaticResponse["extraChallenges"]["itemBuild"]) {
   const rounds = build.rounds && build.rounds.length > 0 ? build.rounds : [build];
 
   return rounds.some(

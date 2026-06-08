@@ -1,22 +1,21 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
 import {
   ensureDailyChallenge,
   getDailyChallengeByDateType,
-  getRecentAnswerIds,
-  getUserStats
+  getRecentAnswerIds
 } from "@/db/repositories";
 import { abilities, champions } from "@/game/data/champions";
 import {
   createAbilityChallenge,
   createChampionChallenge,
   generateDailyChallengeSet,
+  getUtcDateKey,
   seededIndex
 } from "@/game/generators/daily";
 import { generateExpandedDailyChallenges } from "@/game/generators/expanded";
-import { authOptions } from "@/lib/auth/options";
 import { BUILD_SHARE_PARAM, decodeBuildShareValue } from "@/lib/build-share";
+import { readDailyPlayPayload, writeDailyPlayPayload } from "@/lib/daily-play-payload-cache";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges } from "@/lib/riot/match-v5";
@@ -25,6 +24,7 @@ import type {
   ChampionMatchupRound,
   ChallengeType,
   DailyChallengeResponse,
+  DailyChallengeStaticResponse,
   DodgeQueueRound,
   GameItem,
   GuessEloRound,
@@ -50,6 +50,7 @@ const MAX_PUBLIC_ROUND_LIMITS = {
 const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 const DAILY_CHALLENGE_CACHE_MS = 1000 * 60 * 10;
 const DAILY_STATIC_PAYLOAD_CACHE_MS = 1000 * 60 * 5;
+const DAILY_PLAY_PAYLOAD_CACHE_VERSION = "v3";
 
 type PublicRoundLimits = {
   itemBuild: number;
@@ -59,7 +60,7 @@ type PublicRoundLimits = {
 };
 type DailyChallengeSet = ReturnType<typeof generateDailyChallengeSet>;
 type ResolvedDailyChallengePair = [DailyChallengeSet["ability"], DailyChallengeSet["champion"]];
-type DailyChallengeStaticBody = Omit<DailyChallengeResponse, "stats">;
+type DailyChallengeStaticBody = DailyChallengeStaticResponse;
 
 let cachedDailyChallengePair: {
   key: string;
@@ -76,38 +77,41 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const requestedBuildRoundId = decodeBuildShareValue(url.searchParams.get(BUILD_SHARE_PARAM));
   const roundLimits = parseRoundLimits(url.searchParams);
-  const version = await getLatestDataDragonVersion();
-  const generated = generateDailyChallengeSet(version, env.challengeSalt);
-  const sessionPromise = getServerSession(authOptions);
-  const statsPromise = sessionPromise.then((session) =>
-    getUserStats(session?.user?.id, session?.user?.username ?? session?.user?.name ?? "Guest")
-  );
-  const [staticBody, stats] = await Promise.all([
-    resolveDailyStaticBody(generated, version, requestedBuildRoundId, roundLimits),
-    statsPromise
-  ]);
-
-  const body: DailyChallengeResponse = compactDailyChallengeResponse({
-    ...staticBody,
-    stats
-  }, requestedBuildRoundId, roundLimits);
+  const date = getUtcDateKey();
+  const body = await resolveDailyStaticBody(date, requestedBuildRoundId, roundLimits);
 
   const response = NextResponse.json(body);
-  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Cache-Control", "public, max-age=60, s-maxage=900, stale-while-revalidate=3600");
+  response.headers.set("Vary", "Accept-Encoding");
   return response;
 }
 
 async function resolveDailyStaticBody(
-  generated: DailyChallengeSet,
-  version: string,
+  date: string,
   requestedBuildRoundId = "",
   roundLimits: PublicRoundLimits = DEFAULT_PUBLIC_ROUND_LIMITS
 ): Promise<DailyChallengeStaticBody> {
-  const cacheKey = `${generated.date}:${version}:${isDatabaseConfigured() ? "database" : "local"}:${requestedBuildRoundId || "default"}:${roundLimits.itemBuild}:${roundLimits.guessElo}:${roundLimits.championMatchup}:${roundLimits.dodgeQueue}`;
+  const payloadProfile = dailyPayloadProfile(roundLimits);
+  const cacheKey = dailyPayloadCacheKey(date, requestedBuildRoundId, roundLimits);
 
   if (cachedDailyStaticBody?.key === cacheKey && cachedDailyStaticBody.expiresAt > Date.now()) {
     return cachedDailyStaticBody.value;
   }
+
+  const persistedPayload = await readDailyPlayPayload<DailyChallengeStaticBody>(cacheKey);
+
+  if (persistedPayload) {
+    cachedDailyStaticBody = {
+      key: cacheKey,
+      expiresAt: Date.now() + DAILY_STATIC_PAYLOAD_CACHE_MS,
+      value: persistedPayload
+    };
+
+    return persistedPayload;
+  }
+
+  const version = await getLatestDataDragonVersion();
+  const generated = generateDailyChallengeSet(version, env.challengeSalt, utcDateFromKey(date));
 
   const dataDragonPromise = Promise.all([
     getLivePublicChampions(version),
@@ -161,14 +165,24 @@ async function resolveDailyStaticBody(
     champions: publicChampions,
     items: liveItems
   };
+  const compactValue = compactDailyStaticBody(value, requestedBuildRoundId, roundLimits);
 
   cachedDailyStaticBody = {
     key: cacheKey,
     expiresAt: Date.now() + DAILY_STATIC_PAYLOAD_CACHE_MS,
-    value
+    value: compactValue
   };
+  await writeDailyPlayPayload({
+    cacheKey,
+    product: "lol",
+    date,
+    profile: payloadProfile,
+    dataDragonVersion: version,
+    payload: compactValue,
+    expiresAt: generated.resetAt
+  });
 
-  return value;
+  return compactValue;
 }
 
 async function resolveDailyChallengePair(generated: DailyChallengeSet, version: string): Promise<ResolvedDailyChallengePair> {
@@ -194,6 +208,25 @@ async function resolveDailyChallengePair(generated: DailyChallengeSet, version: 
   };
 
   return value;
+}
+
+function compactDailyStaticBody(
+  body: DailyChallengeStaticBody,
+  requestedBuildRoundId = "",
+  roundLimits: PublicRoundLimits = DEFAULT_PUBLIC_ROUND_LIMITS
+): DailyChallengeStaticBody {
+  const compact = compactDailyChallengeResponse(
+    {
+      ...body,
+      stats: emptyUserStats()
+    },
+    requestedBuildRoundId,
+    roundLimits
+  );
+  const staticBody = { ...compact } as Partial<DailyChallengeResponse>;
+
+  delete staticBody.stats;
+  return staticBody as DailyChallengeStaticBody;
 }
 
 function compactDailyChallengeResponse(
@@ -467,6 +500,44 @@ function parseRoundLimits(searchParams: URLSearchParams): PublicRoundLimits {
     guessElo: parseRoundLimit(searchParams, "guessEloRounds", DEFAULT_PUBLIC_ROUND_LIMITS.guessElo, MAX_PUBLIC_ROUND_LIMITS.guessElo),
     championMatchup: parseRoundLimit(searchParams, "matchupRounds", DEFAULT_PUBLIC_ROUND_LIMITS.championMatchup, MAX_PUBLIC_ROUND_LIMITS.championMatchup),
     dodgeQueue: parseRoundLimit(searchParams, ["dodgeQueueRounds", "lobbyRounds"], DEFAULT_PUBLIC_ROUND_LIMITS.dodgeQueue, MAX_PUBLIC_ROUND_LIMITS.dodgeQueue)
+  };
+}
+
+function dailyPayloadProfile(roundLimits: PublicRoundLimits) {
+  return `lol:${roundLimits.itemBuild}:${roundLimits.guessElo}:${roundLimits.championMatchup}:${roundLimits.dodgeQueue}`;
+}
+
+function dailyPayloadCacheKey(date: string, requestedBuildRoundId: string, roundLimits: PublicRoundLimits) {
+  return [
+    DAILY_PLAY_PAYLOAD_CACHE_VERSION,
+    dailyPayloadProfile(roundLimits),
+    date,
+    requestedBuildRoundId || "default"
+  ].join(":");
+}
+
+function utcDateFromKey(date: string) {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
+function emptyUserStats() {
+  return {
+    username: "Guest",
+    currentStreak: 0,
+    maxStreak: 0,
+    gamesPlayed: 0,
+    wins: 0,
+    winRate: 0,
+    perfectSolves: 0,
+    fastestSolveMs: null,
+    favoriteRole: "Unclaimed",
+    rank: "Unranked",
+    rankTier: "Unranked",
+    rankDivision: null,
+    rankLp: 0,
+    lastLpChange: null,
+    rankedGamesPlayed: 0,
+    rankedWins: 0
   };
 }
 

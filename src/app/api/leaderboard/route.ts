@@ -9,7 +9,10 @@ export async function GET(request: Request) {
   const requestedLimit = Number(searchParams.get("limit") ?? 20);
   const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(50, Math.round(requestedLimit))) : 20;
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     entries: await getLeaderboard(limit)
   });
+  response.headers.set("Cache-Control", "public, max-age=15, s-maxage=30, stale-while-revalidate=120");
+  response.headers.set("Vary", "Accept-Encoding");
+  return response;
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getNextUtcReset, getUtcDateKey, seededIndex } from "@/game/generators/daily";
+import { readDailyPlayPayload, writeDailyPlayPayload } from "@/lib/daily-play-payload-cache";
 import { env } from "@/lib/env";
 import { getLatestDataDragonVersion } from "@/lib/riot/data-dragon";
 import type {
@@ -18,6 +19,7 @@ const DATA_DRAGON_BASE = "https://ddragon.leagueoflegends.com";
 const COMMUNITY_DRAGON_TFT_URL = "https://raw.communitydragon.org/latest/cdragon/tft/en_us.json";
 const TFT_DAILY_CACHE_MS = 1000 * 60 * 60;
 const TFT_CONNECTIONS_ROUND_COUNT = 8;
+const TFT_PLAY_PAYLOAD_CACHE_VERSION = "v2";
 const TFT_COMPONENT_IDS = new Set([
   "TFT_Item_BFSword",
   "TFT_Item_RecurveBow",
@@ -89,18 +91,32 @@ let cachedTftDaily: {
 export async function GET() {
   const body = await resolveTftDaily();
   const response = NextResponse.json(body);
-  response.headers.set("Cache-Control", "public, s-maxage=3600, stale-while-revalidate=7200");
+  response.headers.set("Cache-Control", "public, max-age=60, s-maxage=3600, stale-while-revalidate=7200");
+  response.headers.set("Vary", "Accept-Encoding");
   return response;
 }
 
 async function resolveTftDaily(): Promise<TftDailyResponse> {
-  const version = await getLatestDataDragonVersion();
   const date = getUtcDateKey();
-  const cacheKey = `${date}:${version}`;
+  const cacheKey = tftPayloadCacheKey(date);
 
   if (cachedTftDaily?.key === cacheKey && cachedTftDaily.expiresAt > Date.now()) {
     return cachedTftDaily.value;
   }
+
+  const persistedPayload = await readDailyPlayPayload<TftDailyResponse>(cacheKey);
+
+  if (persistedPayload) {
+    cachedTftDaily = {
+      key: cacheKey,
+      expiresAt: Date.now() + TFT_DAILY_CACHE_MS,
+      value: persistedPayload
+    };
+
+    return persistedPayload;
+  }
+
+  const version = await getLatestDataDragonVersion();
 
   const [itemsPayload, championsPayload, communityPayload] = await Promise.all([
     fetchJson<DataDragonTftPayload<DataDragonTftItem>>(`${DATA_DRAGON_BASE}/cdn/${version}/data/en_US/tft-item.json`),
@@ -133,8 +149,21 @@ async function resolveTftDaily(): Promise<TftDailyResponse> {
     expiresAt: Date.now() + TFT_DAILY_CACHE_MS,
     value
   };
+  await writeDailyPlayPayload({
+    cacheKey,
+    product: "tft",
+    date,
+    profile: `tft:recipes-all:connections-${TFT_CONNECTIONS_ROUND_COUNT}`,
+    dataDragonVersion: version,
+    payload: value,
+    expiresAt: value.resetAt
+  });
 
   return value;
+}
+
+function tftPayloadCacheKey(date: string) {
+  return `${TFT_PLAY_PAYLOAD_CACHE_VERSION}:tft:${date}:recipes-all:connections-${TFT_CONNECTIONS_ROUND_COUNT}`;
 }
 
 async function fetchJson<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {

@@ -8,6 +8,7 @@ import {
   getUtcDateKey,
   seededIndex
 } from "@/game/generators/daily";
+import { pruneExpiredDailyPlayPayloads } from "@/lib/daily-play-payload-cache";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges, warmChampionMatchupSampleCache } from "@/lib/riot/match-v5";
@@ -44,6 +45,25 @@ async function generate(request: Request) {
   const version = await getLatestDataDragonVersion();
   const ability = await ensureChallenge("ability", date, version);
   const champion = await ensureChallenge("champion", date, version);
+
+  if (mode === "warm-play-payloads") {
+    const [playPayloads, prunedPayloads] = await Promise.all([
+      warmPlayPayloads(url),
+      pruneExpiredDailyPlayPayloads()
+    ]);
+
+    return NextResponse.json({
+      ok: playPayloads.every((payload) => payload.ok),
+      date,
+      mode,
+      challenges: {
+        ability,
+        champion
+      },
+      playPayloads,
+      prunedPayloads
+    });
+  }
 
   if (mode === "warm-matchups") {
     const publicChampions = await getLivePublicChampions(version);
@@ -100,9 +120,10 @@ async function generate(request: Request) {
         games: sample.games,
         winRate: sample.winRate
       }));
+    const playPayloads = await warmPlayPayloads(url);
 
     return NextResponse.json({
-      ok: verified.status === "ready",
+      ok: verified.status === "ready" && playPayloads.every((payload) => payload.ok),
       date,
       mode,
       challenges: {
@@ -119,15 +140,18 @@ async function generate(request: Request) {
         topBuildSamples,
         status: verified.status,
         message: verified.message
-      }
+      },
+      playPayloads
     });
   }
 
   const includeVerified = mode === "verified" || url.searchParams.get("verified") === "1";
 
   if (!includeVerified) {
+    const playPayloads = await warmPlayPayloads(url);
+
     return NextResponse.json({
-      ok: true,
+      ok: playPayloads.every((payload) => payload.ok),
       date,
       mode,
       challenges: {
@@ -137,7 +161,8 @@ async function generate(request: Request) {
       verified: {
         skipped: true,
         message: "Daily challenge rows generated. Use mode=warm-matchups for small cache-warming batches."
-      }
+      },
+      playPayloads
     });
   }
 
@@ -160,9 +185,10 @@ async function generate(request: Request) {
     buildSampleMatchCount: numberParam(url, "buildTarget", env.riotBuildSampleMatchCount || 512),
     matchHistoryPagesPerSource: numberParam(url, "pages", env.riotMatchHistoryPagesPerSource || 2)
   });
+  const playPayloads = await warmPlayPayloads(url);
 
   return NextResponse.json({
-    ok: true,
+    ok: playPayloads.every((payload) => payload.ok),
     date,
     challenges: {
       ability,
@@ -175,7 +201,8 @@ async function generate(request: Request) {
       championMatchupRounds: verified.championMatchupRounds.length,
       status: verified.status,
       message: verified.message
-    }
+    },
+    playPayloads
   });
 }
 
@@ -183,6 +210,94 @@ function numberParam(url: URL, key: string, fallback: number) {
   const value = Number(url.searchParams.get(key));
 
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+async function warmPlayPayloads(requestUrl: URL) {
+  const origin = new URL(env.appUrl || requestUrl.origin);
+  const targets = [
+    {
+      label: "lol-initial",
+      path: "/api/challenges/daily?buildRounds=20&guessEloRounds=20&matchupRounds=60&dodgeQueueRounds=20"
+    },
+    {
+      label: "lol-expanded",
+      path: "/api/challenges/daily?buildRounds=50&guessEloRounds=40&matchupRounds=120&dodgeQueueRounds=40"
+    },
+    {
+      label: "tft-daily",
+      path: "/api/tft/daily"
+    }
+  ];
+  const warmed = [];
+
+  for (const target of targets) {
+    warmed.push(await warmPlayPayload(origin, target.label, target.path));
+  }
+
+  return warmed;
+}
+
+async function warmPlayPayload(origin: URL, label: string, path: string) {
+  const url = new URL(path, origin);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        "x-rift-warm": "1"
+      }
+    });
+    const text = await response.text();
+    const payload = parseJson(text);
+
+    return {
+      label,
+      ok: response.ok,
+      status: response.status,
+      bytes: Buffer.byteLength(text, "utf8"),
+      durationMs: Date.now() - startedAt,
+      rounds: payload ? payloadRoundCounts(payload) : undefined
+    };
+  } catch (error) {
+    return {
+      label,
+      ok: false,
+      status: 0,
+      bytes: 0,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : "Payload warm failed."
+    };
+  }
+}
+
+function parseJson(value: string) {
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function payloadRoundCounts(payload: Record<string, unknown>) {
+  const extraChallenges = payload.extraChallenges as Record<string, { rounds?: unknown[] }> | undefined;
+  const recipe = payload.recipe as { rounds?: unknown[] } | undefined;
+  const connections = payload.connections as { rounds?: unknown[] } | undefined;
+
+  if (extraChallenges) {
+    return {
+      build: extraChallenges.itemBuild?.rounds?.length ?? 0,
+      recipe: extraChallenges.itemRecipe?.rounds?.length ?? 0,
+      elo: extraChallenges.guessElo?.rounds?.length ?? 0,
+      matchup: extraChallenges.championMatchup?.rounds?.length ?? 0,
+      lobby: extraChallenges.dodgeQueue?.rounds?.length ?? 0
+    };
+  }
+
+  return {
+    tftRecipes: recipe?.rounds?.length ?? 0,
+    tftConnections: connections?.rounds?.length ?? 0
+  };
 }
 
 async function ensureChallenge(type: ChallengeType, date: string, version: string) {

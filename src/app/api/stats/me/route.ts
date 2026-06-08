@@ -9,7 +9,10 @@ export const runtime = "nodejs";
 export async function GET() {
   const session = await getServerSession(authOptions);
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     stats: await getUserStats(session?.user?.id, session?.user?.username ?? session?.user?.name ?? "Guest")
   });
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  response.headers.set("Vary", "Cookie");
+  return response;
 }
