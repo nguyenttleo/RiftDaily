@@ -35,13 +35,28 @@ import type {
 } from "@/types";
 
 export const runtime = "nodejs";
-const PUBLIC_ROUND_LIMIT = 40;
-const BUILD_PUBLIC_ROUND_LIMIT = 50;
-const GUESS_ELO_ROUNDS_PER_BUCKET = 8;
+const DEFAULT_PUBLIC_ROUND_LIMITS = {
+  itemBuild: 20,
+  guessElo: 20,
+  championMatchup: 60,
+  dodgeQueue: 20
+} as const;
+const MAX_PUBLIC_ROUND_LIMITS = {
+  itemBuild: 50,
+  guessElo: 40,
+  championMatchup: 120,
+  dodgeQueue: 40
+} as const;
 const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 const DAILY_CHALLENGE_CACHE_MS = 1000 * 60 * 10;
 const DAILY_STATIC_PAYLOAD_CACHE_MS = 1000 * 60 * 5;
 
+type PublicRoundLimits = {
+  itemBuild: number;
+  guessElo: number;
+  championMatchup: number;
+  dodgeQueue: number;
+};
 type DailyChallengeSet = ReturnType<typeof generateDailyChallengeSet>;
 type ResolvedDailyChallengePair = [DailyChallengeSet["ability"], DailyChallengeSet["champion"]];
 type DailyChallengeStaticBody = Omit<DailyChallengeResponse, "stats">;
@@ -60,6 +75,7 @@ let cachedDailyStaticBody: {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const requestedBuildRoundId = decodeBuildShareValue(url.searchParams.get(BUILD_SHARE_PARAM));
+  const roundLimits = parseRoundLimits(url.searchParams);
   const version = await getLatestDataDragonVersion();
   const generated = generateDailyChallengeSet(version, env.challengeSalt);
   const sessionPromise = getServerSession(authOptions);
@@ -74,7 +90,7 @@ export async function GET(request: Request) {
   const body: DailyChallengeResponse = compactDailyChallengeResponse({
     ...staticBody,
     stats
-  }, requestedBuildRoundId);
+  }, requestedBuildRoundId, roundLimits);
 
   const response = NextResponse.json(body);
   response.headers.set("Cache-Control", "no-store, max-age=0");
@@ -169,12 +185,16 @@ async function resolveDailyChallengePair(generated: DailyChallengeSet, version: 
   return value;
 }
 
-function compactDailyChallengeResponse(body: DailyChallengeResponse, requestedBuildRoundId = ""): DailyChallengeResponse {
-  const itemBuild = compactItemBuildChallenge(body.extraChallenges.itemBuild, requestedBuildRoundId);
+function compactDailyChallengeResponse(
+  body: DailyChallengeResponse,
+  requestedBuildRoundId = "",
+  roundLimits: PublicRoundLimits = DEFAULT_PUBLIC_ROUND_LIMITS
+): DailyChallengeResponse {
+  const itemBuild = compactItemBuildChallenge(body.extraChallenges.itemBuild, requestedBuildRoundId, roundLimits.itemBuild);
   const itemRecipe = compactItemRecipeChallenge(body.extraChallenges.itemRecipe);
-  const guessEloRounds = selectBalancedGuessEloRounds(body.extraChallenges.guessElo.rounds ?? []).map(compactGuessEloRound);
-  const dodgeQueueRounds = selectPublicRounds(body.extraChallenges.dodgeQueue.rounds ?? [], PUBLIC_ROUND_LIMIT).map(compactDodgeQueueRound);
-  const championMatchup = compactChampionMatchupChallenge(body.extraChallenges.championMatchup);
+  const guessEloRounds = selectBalancedGuessEloRounds(body.extraChallenges.guessElo.rounds ?? [], roundLimits.guessElo).map(compactGuessEloRound);
+  const dodgeQueueRounds = selectPublicRounds(body.extraChallenges.dodgeQueue.rounds ?? [], roundLimits.dodgeQueue).map(compactDodgeQueueRound);
+  const championMatchup = compactChampionMatchupChallenge(body.extraChallenges.championMatchup, roundLimits.championMatchup);
 
   return {
     ...body,
@@ -199,9 +219,9 @@ function compactDailyChallengeResponse(body: DailyChallengeResponse, requestedBu
   };
 }
 
-function compactItemBuildChallenge(challenge: ItemBuildChallenge, requestedBuildRoundId = ""): ItemBuildChallenge {
+function compactItemBuildChallenge(challenge: ItemBuildChallenge, requestedBuildRoundId = "", limit: number): ItemBuildChallenge {
   const sourceRounds = challenge.rounds ?? [];
-  const rounds = selectPublicRoundsWithPinned(sourceRounds, BUILD_PUBLIC_ROUND_LIMIT, requestedBuildRoundId).map(compactBuildRound);
+  const rounds = selectPublicRoundsWithPinned(sourceRounds, limit, requestedBuildRoundId).map(compactBuildRound);
 
   return {
     ...(rounds[0] ?? compactBuildRound(challenge)),
@@ -273,8 +293,8 @@ function compactDodgeQueueRound(round: DodgeQueueRound): DodgeQueueRound {
   };
 }
 
-function compactChampionMatchupChallenge(challenge: ChampionMatchupChallenge): ChampionMatchupChallenge {
-  const rounds = (challenge.rounds ?? []).map(compactChampionMatchupRound);
+function compactChampionMatchupChallenge(challenge: ChampionMatchupChallenge, limit: number): ChampionMatchupChallenge {
+  const rounds = selectPublicRounds(challenge.rounds ?? [], limit).map(compactChampionMatchupRound);
 
   return {
     ...(rounds[0] ?? compactChampionMatchupRound(challenge)),
@@ -348,25 +368,33 @@ function compactSourceMatch<T extends { matchData?: unknown } | undefined>(sourc
   return compact as T;
 }
 
-function selectBalancedGuessEloRounds(rounds: GuessEloRound[]) {
+function selectBalancedGuessEloRounds(rounds: GuessEloRound[], limit: number) {
   const selected: GuessEloRound[] = [];
   const selectedIds = new Set<string>();
+  const baseRoundsPerBucket = Math.floor(limit / GUESS_ELO_BUCKETS.length);
+  const extraBucketRounds = limit % GUESS_ELO_BUCKETS.length;
 
-  for (const bucket of GUESS_ELO_BUCKETS) {
+  for (const [bucketIndex, bucket] of GUESS_ELO_BUCKETS.entries()) {
+    const bucketLimit = baseRoundsPerBucket + (bucketIndex < extraBucketRounds ? 1 : 0);
+
+    if (bucketLimit <= 0) {
+      continue;
+    }
+
     const bucketRounds = rounds.filter((round) => round.answerTier === bucket);
 
-    for (const round of selectPublicRounds(bucketRounds, GUESS_ELO_ROUNDS_PER_BUCKET)) {
+    for (const round of selectPublicRounds(bucketRounds, bucketLimit)) {
       selected.push(round);
       selectedIds.add(round.id);
     }
   }
 
-  if (selected.length < PUBLIC_ROUND_LIMIT) {
+  if (selected.length < limit) {
     const remaining = rounds.filter((round) => !selectedIds.has(round.id));
-    selected.push(...selectPublicRounds(remaining, PUBLIC_ROUND_LIMIT - selected.length));
+    selected.push(...selectPublicRounds(remaining, limit - selected.length));
   }
 
-  return selectPublicRounds(selected, PUBLIC_ROUND_LIMIT);
+  return selectPublicRounds(selected, limit);
 }
 
 function selectPublicRounds<T>(rounds: T[], limit: number) {
@@ -403,6 +431,28 @@ function selectPublicRoundsWithPinned<T extends { id: string }>(rounds: T[], lim
     pinnedRound,
     ...selectPublicRounds(rounds.filter((round) => round.id !== pinnedRound.id), limit - 1)
   ];
+}
+
+function parseRoundLimits(searchParams: URLSearchParams): PublicRoundLimits {
+  return {
+    itemBuild: parseRoundLimit(searchParams, "buildRounds", DEFAULT_PUBLIC_ROUND_LIMITS.itemBuild, MAX_PUBLIC_ROUND_LIMITS.itemBuild),
+    guessElo: parseRoundLimit(searchParams, "guessEloRounds", DEFAULT_PUBLIC_ROUND_LIMITS.guessElo, MAX_PUBLIC_ROUND_LIMITS.guessElo),
+    championMatchup: parseRoundLimit(searchParams, "matchupRounds", DEFAULT_PUBLIC_ROUND_LIMITS.championMatchup, MAX_PUBLIC_ROUND_LIMITS.championMatchup),
+    dodgeQueue: parseRoundLimit(searchParams, ["dodgeQueueRounds", "lobbyRounds"], DEFAULT_PUBLIC_ROUND_LIMITS.dodgeQueue, MAX_PUBLIC_ROUND_LIMITS.dodgeQueue)
+  };
+}
+
+function parseRoundLimit(searchParams: URLSearchParams, keys: string | string[], defaultValue: number, maxValue: number) {
+  const rawValue = (Array.isArray(keys) ? keys : [keys])
+    .map((key) => searchParams.get(key))
+    .find((value): value is string => Boolean(value));
+  const parsed = Number(rawValue);
+
+  if (!Number.isFinite(parsed)) {
+    return defaultValue;
+  }
+
+  return Math.max(1, Math.min(maxValue, Math.floor(parsed)));
 }
 
 async function resolveDailyAbilityChallenge(date: string, version: string) {

@@ -518,6 +518,7 @@ export async function getUserStats(userId?: string | null, username = "Guest"): 
           sum(games_played) as games_played,
           sum(wins) as wins
         from game_mode_stats
+        where user_id = $1
         group by user_id
       ) ms on ms.user_id = u.id
       left join user_rank_state r on r.user_id = u.id

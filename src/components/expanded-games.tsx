@@ -44,12 +44,14 @@ export function ItemBuildGame({
   challenge,
   items = [],
   username = "Guest",
-  pageRail = false
+  pageRail = false,
+  onNeedMoreRounds
 }: {
   challenge: ItemBuildChallenge;
   items?: GameItem[];
   username?: string;
   pageRail?: boolean;
+  onNeedMoreRounds?: () => void;
 }) {
   const generatedRounds = useMemo(() => createBuildRounds(challenge), [challenge]);
   const randomizedBuildRounds = useRandomizedRounds(generatedRounds, "item-build", username, undefined, undefined, buildRoundFirstKey);
@@ -65,6 +67,7 @@ export function ItemBuildGame({
   const [sharedBuildRoundId, setSharedBuildRoundId] = useState("");
   const viewportRestoreRef = useRef<number | null>(null);
   const [streak, recordStreak] = usePersonalModeStreak("item-build", username);
+  const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const rawRound = rounds[roundIndex % rounds.length];
   const hydratedRound = useMemo(() => hydrateItemBuildRound(rawRound, items), [items, rawRound]);
   const round = useMemo(() => normalizeBuildBootRoundForRole(hydratedRound), [hydratedRound]);
@@ -178,7 +181,11 @@ export function ItemBuildGame({
       setSharedBuildRoundId("");
     }
 
-    setRoundIndex((current) => current + 1);
+    setRoundIndex((current) => {
+      const nextIndex = current + 1;
+      requestMoreRoundsIfExhausted(nextIndex);
+      return nextIndex;
+    });
     setSelectedItems([]);
     setSelectedBoots("");
     setGuesses([]);
@@ -2041,6 +2048,23 @@ function InfiniteStreakBar({ round, current, best }: { round: number; current: n
   );
 }
 
+function useRequestMoreRoundsOnExhaustion(roundsLength: number, onNeedMoreRounds?: () => void) {
+  const requestedRef = useRef(false);
+
+  useEffect(() => {
+    requestedRef.current = false;
+  }, [roundsLength]);
+
+  return (nextRoundIndex: number) => {
+    if (!onNeedMoreRounds || requestedRef.current || roundsLength <= 0 || nextRoundIndex < roundsLength) {
+      return;
+    }
+
+    requestedRef.current = true;
+    onNeedMoreRounds();
+  };
+}
+
 function useRandomizedRounds<T extends { id: string }>(
   rounds: T[],
   gameKey: string,
@@ -2366,13 +2390,22 @@ function isRecipeComponentChoice(item: GameItem, itemCatalog: GameItem[]) {
 type EloRound = GuessEloRound;
 type MatchupSide = "left" | "right";
 
-export function ChampionMatchupGame({ challenge, username = "Guest" }: { challenge: ChampionMatchupChallenge; username?: string }) {
+export function ChampionMatchupGame({
+  challenge,
+  username = "Guest",
+  onNeedMoreRounds
+}: {
+  challenge: ChampionMatchupChallenge;
+  username?: string;
+  onNeedMoreRounds?: () => void;
+}) {
   const generatedRounds = useMemo(() => createChampionMatchupRounds(challenge), [challenge]);
   const rounds = useRandomizedRounds(generatedRounds, "champion-matchup", username);
   const [roundIndex, setRoundIndex] = useState(0);
   const [answer, setAnswer] = useState<MatchupSide | "">("");
   const [submitted, setSubmitted] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("champion-matchup", username);
+  const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerSide;
 
@@ -2399,7 +2432,11 @@ export function ChampionMatchupGame({ challenge, username = "Guest" }: { challen
   }
 
   function nextRound() {
-    setRoundIndex((current) => current + 1);
+    setRoundIndex((current) => {
+      const nextIndex = current + 1;
+      requestMoreRoundsIfExhausted(nextIndex);
+      return nextIndex;
+    });
     setAnswer("");
     setSubmitted(false);
   }
@@ -2558,7 +2595,15 @@ function createChampionMatchupRounds(base: ChampionMatchupChallenge): ChampionMa
   return base.rounds && base.rounds.length > 0 ? base.rounds : [base];
 }
 
-export function GuessEloGame({ challenge, username = "Guest" }: { challenge: GuessEloChallenge; username?: string }) {
+export function GuessEloGame({
+  challenge,
+  username = "Guest",
+  onNeedMoreRounds
+}: {
+  challenge: GuessEloChallenge;
+  username?: string;
+  onNeedMoreRounds?: () => void;
+}) {
   const generatedRounds = useMemo(() => createEloRounds(challenge), [challenge]);
   const rounds = useRandomizedRounds(generatedRounds, "guess-elo", username, guessEloAnswerKey);
   const [roundIndex, setRoundIndex] = useState(0);
@@ -2567,6 +2612,7 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
   const [resultModalOpen, setResultModalOpen] = useState(false);
   const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("guess-elo", username);
+  const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerTier;
 
@@ -2591,7 +2637,11 @@ export function GuessEloGame({ challenge, username = "Guest" }: { challenge: Gue
   }
 
   function nextRound() {
-    setRoundIndex((current) => current + 1);
+    setRoundIndex((current) => {
+      const nextIndex = current + 1;
+      requestMoreRoundsIfExhausted(nextIndex);
+      return nextIndex;
+    });
     setAnswer("");
     setSubmitted(false);
     setResultModalOpen(false);
@@ -3224,7 +3274,15 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
   );
 }
 
-export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: DodgeQueueChallenge; username?: string }) {
+export function DodgeQueueGame({
+  challenge,
+  username = "Guest",
+  onNeedMoreRounds
+}: {
+  challenge: DodgeQueueChallenge;
+  username?: string;
+  onNeedMoreRounds?: () => void;
+}) {
   const generatedRounds = useMemo(() => createDodgeQueueRounds(challenge), [challenge]);
   const rounds = useRandomizedRounds(generatedRounds, "dodge-queue", username);
   const [roundIndex, setRoundIndex] = useState(0);
@@ -3233,6 +3291,7 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
   const [resultModalOpen, setResultModalOpen] = useState(false);
   const [matchDataExpanded, setMatchDataExpanded] = useState(false);
   const [streak, recordStreak] = usePersonalModeStreak("dodge-queue", username);
+  const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answer;
 
@@ -3256,7 +3315,11 @@ export function DodgeQueueGame({ challenge, username = "Guest" }: { challenge: D
   }
 
   function nextLobby() {
-    setRoundIndex((current) => current + 1);
+    setRoundIndex((current) => {
+      const nextIndex = current + 1;
+      requestMoreRoundsIfExhausted(nextIndex);
+      return nextIndex;
+    });
     setAnswer("");
     setSubmitted(false);
     setResultModalOpen(false);

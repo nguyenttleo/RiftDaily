@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AuthPanel } from "@/components/auth-panel";
 import {
@@ -45,6 +45,26 @@ const viewModes = new Set<View>([
 ]);
 const ROUND_SYNC_RETRY_DELAY_MS = 2500;
 const ROUND_SYNC_MAX_BLOCKING_ATTEMPTS = 4;
+type DailyRoundLimits = {
+  itemBuild: number;
+  guessElo: number;
+  championMatchup: number;
+  dodgeQueue: number;
+};
+type ExpandableRoundMode = keyof DailyRoundLimits;
+
+const INITIAL_DAILY_ROUND_LIMITS: DailyRoundLimits = {
+  itemBuild: 20,
+  guessElo: 20,
+  championMatchup: 60,
+  dodgeQueue: 20
+};
+const EXPANDED_DAILY_ROUND_LIMITS: DailyRoundLimits = {
+  itemBuild: 50,
+  guessElo: 40,
+  championMatchup: 120,
+  dodgeQueue: 40
+};
 
 const guestStats: UserStats = {
   username: "Guest",
@@ -73,9 +93,11 @@ export function AppShell() {
   const [refreshing, setRefreshing] = useState(false);
   const [message, setMessage] = useState("");
   const [promotion, setPromotion] = useState<RankPromotionEventDetail | null>(null);
+  const roundLimitsRef = useRef<DailyRoundLimits>(INITIAL_DAILY_ROUND_LIMITS);
 
-  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean } = {}) => {
+  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean; roundLimits?: DailyRoundLimits } = {}) => {
     const shouldBlockForRounds = options.blocking ?? true;
+    const roundLimits = options.roundLimits ?? roundLimitsRef.current;
 
     setMessage("");
     if (shouldBlockForRounds) {
@@ -84,13 +106,13 @@ export function AppShell() {
     setRefreshing(true);
 
     try {
-      let nextDaily = await fetchDailyChallenge();
+      let nextDaily = await fetchDailyChallenge(roundLimits);
       let syncAttempts = 0;
 
       while (shouldBlockForRounds && hasRecoverableDataGap(nextDaily) && syncAttempts < ROUND_SYNC_MAX_BLOCKING_ATTEMPTS) {
         syncAttempts += 1;
         await wait(ROUND_SYNC_RETRY_DELAY_MS);
-        nextDaily = await fetchDailyChallenge();
+        nextDaily = await fetchDailyChallenge(roundLimits);
       }
 
       if (shouldBlockForRounds && hasRecoverableDataGap(nextDaily)) {
@@ -108,6 +130,23 @@ export function AppShell() {
       setRefreshing(false);
     }
   }, []);
+
+  const requestMoreRounds = useCallback((mode: ExpandableRoundMode) => {
+    const currentLimits = roundLimitsRef.current;
+    const expandedLimit = EXPANDED_DAILY_ROUND_LIMITS[mode];
+
+    if (currentLimits[mode] >= expandedLimit) {
+      return;
+    }
+
+    const nextLimits = {
+      ...currentLimits,
+      [mode]: expandedLimit
+    };
+
+    roundLimitsRef.current = nextLimits;
+    void loadDaily({ blocking: false, recovery: true, roundLimits: nextLimits });
+  }, [loadDaily]);
 
   const loadLeaderboard = useCallback(async () => {
     const response = await fetch("/api/leaderboard", { cache: "no-store" });
@@ -265,11 +304,11 @@ export function AppShell() {
           )}
         >
 
-        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} items={daily.items} username={displayStats.username} pageRail />}
+        {view === "item-build" && <ItemBuildGame challenge={daily.extraChallenges.itemBuild} items={daily.items} username={displayStats.username} pageRail onNeedMoreRounds={() => requestMoreRounds("itemBuild")} />}
         {view === "item-recipe" && <ItemRecipeGame challenge={daily.extraChallenges.itemRecipe} items={daily.items} username={displayStats.username} pageRail />}
-        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={displayStats.username} />}
-        {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={displayStats.username} />}
-        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={displayStats.username} />}
+        {view === "guess-elo" && <GuessEloGame challenge={daily.extraChallenges.guessElo} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("guessElo")} />}
+        {view === "champion-matchup" && <ChampionMatchupGame challenge={daily.extraChallenges.championMatchup} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("championMatchup")} />}
+        {view === "dodge-queue" && <DodgeQueueGame challenge={daily.extraChallenges.dodgeQueue} username={displayStats.username} onNeedMoreRounds={() => requestMoreRounds("dodgeQueue")} />}
         {view === "trainer" && <TrainerPage dodge={daily.extraChallenges.skillshotDodge} username={displayStats.username} />}
 
         {view === "leaderboard" && <LeaderboardPanel entries={leaderboard} />}
@@ -717,13 +756,18 @@ function currentBuildShareValue() {
   return new URLSearchParams(window.location.search).get(BUILD_SHARE_PARAM) ?? "";
 }
 
-async function fetchDailyChallenge() {
-  const query = new URLSearchParams({ t: String(Date.now()) });
+async function fetchDailyChallenge(roundLimits: DailyRoundLimits = INITIAL_DAILY_ROUND_LIMITS) {
+  const query = new URLSearchParams();
   const sharedBuild = currentBuildShareValue();
 
   if (sharedBuild) {
     query.set(BUILD_SHARE_PARAM, sharedBuild);
   }
+
+  query.set("buildRounds", String(roundLimits.itemBuild));
+  query.set("guessEloRounds", String(roundLimits.guessElo));
+  query.set("matchupRounds", String(roundLimits.championMatchup));
+  query.set("dodgeQueueRounds", String(roundLimits.dodgeQueue));
 
   const response = await fetch(`/api/challenges/daily?${query.toString()}`, { cache: "no-store" });
 
