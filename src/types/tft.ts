@@ -16,8 +16,6 @@ export interface TftUnitRef {
 export interface TftRecipeRound {
   id: string;
   resultItem: TftItemRef;
-  knownComponent: TftItemRef;
-  missingComponent: TftItemRef;
   components: TftItemRef[];
   options: TftItemRef[];
 }

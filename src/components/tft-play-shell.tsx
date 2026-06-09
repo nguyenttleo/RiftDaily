@@ -27,7 +27,14 @@ import {
 } from "@/game/scoring";
 import { cn } from "@/lib/utils";
 import type { UserStats } from "@/types";
-import type { TftConnectionsCategory, TftConnectionsRound, TftDailyResponse, TftItemRef, TftRecipeRound, TftUnitRef } from "@/types/tft";
+import type {
+  TftConnectionsCategory,
+  TftConnectionsRound,
+  TftDailyResponse,
+  TftItemRef,
+  TftRecipeRound,
+  TftUnitRef
+} from "@/types/tft";
 
 type TftMode = Extract<PlayMode, "tft-recipe" | "tft-connections">;
 type TftGameKey = "tft-recipe" | "tft-connections";
@@ -231,34 +238,53 @@ function TftRecipeGame({
   onStatsChange: () => void;
 }) {
   const [roundIndex, setRoundIndex] = useState(0);
-  const [answerId, setAnswerId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [streak, recordResult] = useTftModeProgress("tft-recipe", username, onStatsChange);
   const round = rounds[roundIndex % Math.max(1, rounds.length)];
-  const correct = submitted && answerId === round.missingComponent.id;
+  const correct = submitted && componentKey(selectedIds) === componentKey(round.components.map((component) => component.id));
+  const selectedComponents = selectedIds
+    .map((componentId) => round.options.find((component) => component.id === componentId))
+    .filter((component): component is TftItemRef => Boolean(component));
 
-  function choose(component: TftItemRef) {
+  function addComponent(component: TftItemRef) {
+    if (submitted || selectedIds.length >= 2) {
+      return;
+    }
+
+    setSelectedIds((current) => [...current, component.id]);
+  }
+
+  function removeSelectedComponent(index: number) {
     if (submitted) {
       return;
     }
 
-    const solved = component.id === round.missingComponent.id;
-    setAnswerId(component.id);
+    setSelectedIds((current) => current.filter((_, componentIndex) => componentIndex !== index));
+  }
+
+  function submitRecipe() {
+    if (selectedIds.length !== 2 || submitted) {
+      return;
+    }
+
+    const solved = componentKey(selectedIds) === componentKey(round.components.map((component) => component.id));
+
     setSubmitted(true);
     recordResult(solved, {
-      performanceQuality: solved ? 0.82 : 0.2,
+      performanceQuality: solved ? 0.86 : 0.18,
       roundId: round.id,
       metadata: {
         resultItem: round.resultItem.name,
-        selectedComponent: component.name,
-        answerComponent: round.missingComponent.name
+        selectedComponents: selectedComponents.map((component) => component.name),
+        answerComponents: round.components.map((component) => component.name)
       }
     });
   }
 
   function nextRound() {
     setRoundIndex((current) => current + 1);
-    setAnswerId("");
+    setSelectedIds([]);
     setSubmitted(false);
   }
 
@@ -275,46 +301,59 @@ function TftRecipeGame({
             <div className="font-display text-center text-2xl font-black leading-none text-white sm:text-3xl">{round.resultItem.name}</div>
           </div>
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <TftComponentSlot item={round.knownComponent} />
+            {submitted ? (
+              <TftComponentSlot item={round.components[0]} result={correct ? "correct" : "answer"} />
+            ) : (
+              <TftSelectedComponentSlot item={selectedComponents[0]} label="Component" onRemove={() => removeSelectedComponent(0)} />
+            )}
             <div className="font-display text-xl font-black text-[#c89b3c]">+</div>
             {submitted ? (
-              <TftComponentSlot item={round.missingComponent} result={correct ? "correct" : "answer"} />
+              <TftComponentSlot item={round.components[1]} result={correct ? "correct" : "answer"} />
             ) : (
-              <div className="grid min-h-28 place-items-center rounded-sm border border-dashed border-[#c89b3c]/40 bg-[#c89b3c]/10 text-center font-display text-sm font-black uppercase tracking-[0.12em] text-[#f1d58a]">
-                Missing
-              </div>
+              <TftSelectedComponentSlot item={selectedComponents[1]} label="Component" onRemove={() => removeSelectedComponent(1)} />
             )}
           </div>
           {submitted && (
             <div className={cn("rounded-sm border p-3 text-sm font-semibold", correct ? "border-green-400/40 bg-green-500/14 text-green-100" : "border-red-400/40 bg-red-500/14 text-red-100")}>
-              {correct ? "Correct item slam." : `Answer: ${round.missingComponent.name}`}
+              {correct ? "Correct item slam." : `Answer: ${round.components.map((component) => component.name).join(" + ")}`}
             </div>
           )}
         </div>
 
         <div className="play-inset-panel-depth grid min-h-0 content-start gap-3 rounded-sm border border-white/10 p-3 sm:p-4">
           <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
-            Slam the correct components to make {round.resultItem.name}.
+            Pick both components to make {round.resultItem.name}.
+          </div>
+          <div className="inline-flex min-h-10 w-fit items-center rounded-full border border-white/10 bg-white/5 px-4 text-sm text-[color:var(--muted)]">
+            {selectedIds.length}/2 selected
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {round.options.map((component) => {
-              const selected = answerId === component.id;
-              const answer = submitted && component.id === round.missingComponent.id;
+              const selectedCount = countOccurrences(selectedIds, component.id);
+              const answerCount = countOccurrences(round.components.map((answerComponent) => answerComponent.id), component.id);
+              const selected = selectedCount > 0;
+              const answer = submitted && answerCount > 0;
 
               return (
                 <button
                   key={component.id}
                   type="button"
-                  onClick={() => choose(component)}
-                  disabled={submitted}
+                  onClick={() => addComponent(component)}
+                  disabled={submitted || selectedIds.length >= 2}
                   className={cn(
                     "play-choice-depth play-choice-depth-default group relative grid min-h-28 justify-items-center gap-2 rounded-sm border border-[#3c3421] p-2 text-center transition disabled:cursor-default",
                     !submitted && "hover:-translate-y-0.5 hover:border-[#c89b3c]/70",
-                    selected && correct && "border-green-300/70 bg-green-500/18",
+                    selected && !submitted && "border-[#f5c542]/80 bg-[#c89b3c]/12",
+                    selected && correct && submitted && "border-green-300/70 bg-green-500/18",
                     selected && !correct && submitted && "border-red-300/70 bg-red-500/18",
                     answer && "ring-2 ring-green-300/60"
                   )}
                 >
+                  {selectedCount > 0 && (
+                    <span className="absolute right-2 top-2 rounded-full border border-[#f5c542]/50 bg-[#050607]/85 px-2 py-0.5 text-[10px] font-black text-[#f5c542]">
+                      x{selectedCount}
+                    </span>
+                  )}
                   <TftItemTile item={component} />
                   <div className="text-xs font-bold leading-tight text-white">{component.name}</div>
                 </button>
@@ -322,6 +361,11 @@ function TftRecipeGame({
             })}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            {!submitted && (
+              <Button type="button" onClick={submitRecipe} disabled={selectedIds.length !== 2} icon={<CheckCircle2 size={16} />}>
+                Submit recipe
+              </Button>
+            )}
             {submitted && (
               <Button type="button" onClick={nextRound}>
                 Next recipe
@@ -590,6 +634,28 @@ function TftComponentSlot({ item, result }: { item: TftItemRef; result?: "correc
   );
 }
 
+function TftSelectedComponentSlot({ item, label, onRemove }: { item?: TftItemRef; label: string; onRemove: () => void }) {
+  if (!item) {
+    return (
+      <div className="grid min-h-28 place-items-center rounded-sm border border-dashed border-[#c89b3c]/40 bg-[#c89b3c]/10 p-2 text-center font-display text-sm font-black uppercase tracking-[0.12em] text-[#f1d58a]">
+        {label}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      className="grid min-h-28 justify-items-center gap-2 rounded-sm border border-[#f5c542]/65 bg-[#111722] p-2 text-center transition hover:-translate-y-0.5 hover:border-[#f5c542]"
+      title={`Remove ${item.name}`}
+    >
+      <TftItemTile item={item} />
+      <div className="text-xs font-bold leading-tight text-white">{item.name}</div>
+    </button>
+  );
+}
+
 function TftRoundPill({ label, value }: { label: string; value: string }) {
   return (
     <div className="inline-flex min-h-9 items-center gap-2.5 rounded-full border border-white/10 bg-white/5 px-4 text-sm text-[color:var(--muted)]">
@@ -616,6 +682,36 @@ function categoryColorForIndex(index: number) {
   return tftCategoryColors[index % tftCategoryColors.length];
 }
 
+function componentKey(componentIds: string[]) {
+  return [...componentIds].sort().join("|");
+}
+
+function countOccurrences(values: string[], value: string) {
+  return values.filter((candidate) => candidate === value).length;
+}
+
+function tftModeLabel(view: TftMode) {
+  const labels: Record<TftMode, string> = {
+    "tft-recipe": "TFT Recipe",
+    "tft-connections": "TFT Connections"
+  };
+
+  return labels[view];
+}
+
+function tftModeDescription(view: TftMode) {
+  const descriptions: Record<TftMode, string> = {
+    "tft-recipe": "Current patch craftable TFT items.",
+    "tft-connections": "Hidden current-set unit groups."
+  };
+
+  return descriptions[view];
+}
+
+function tftPoolLabel(setNumber: number) {
+  return `Set ${setNumber}`;
+}
+
 function TftMobileHub({
   daily,
   view,
@@ -635,8 +731,8 @@ function TftMobileHub({
         <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-white">{view === "tft-recipe" ? "TFT Recipe" : "TFT Connections"}</div>
-            <div className="mt-0.5 text-[11px] text-[color:var(--muted)]">Reset {formatTftReset(resetCountdown)} · Set {daily.setNumber} · Patch {daily.dataDragonVersion}</div>
+            <div className="truncate text-sm font-semibold text-white">{tftModeLabel(view)}</div>
+            <div className="mt-0.5 text-[11px] text-[color:var(--muted)]">Reset {formatTftReset(resetCountdown)} - {tftPoolLabel(daily.setNumber)} - Patch {daily.dataDragonVersion}</div>
           </div>
           <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[10px] font-bold uppercase text-[#f2d36b]">
             {stats.rank} · {rankProgress.lp} LP
@@ -673,13 +769,13 @@ function TftSidebar({
         <TftPlayerSidebarGroup stats={stats} progress={rankProgress} />
         <TftSidebarGroup title="Current Set" accent>
           <div className="flex items-center justify-between gap-3">
-            <div className="font-display text-3xl font-black text-white">Set {daily.setNumber}</div>
+            <div className="font-display text-3xl font-black text-white">{tftPoolLabel(daily.setNumber)}</div>
             <div className="rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-3 py-1 text-xs font-bold uppercase text-[#f2d36b]">Live</div>
           </div>
         </TftSidebarGroup>
         <TftSidebarGroup title="Mode">
-          <div className="text-base font-semibold text-white">{view === "tft-recipe" ? "Item Recipe" : "Unit Connections"}</div>
-          <div className="text-sm text-[color:var(--muted)]">{view === "tft-recipe" ? "Current patch craftable TFT items." : "Hidden current-set unit groups."}</div>
+          <div className="text-base font-semibold text-white">{tftModeLabel(view)}</div>
+          <div className="text-sm text-[color:var(--muted)]">{tftModeDescription(view)}</div>
         </TftSidebarGroup>
         <AuthPanel onAuthChange={onAuthChange} />
       </div>

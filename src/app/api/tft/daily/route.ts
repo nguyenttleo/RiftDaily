@@ -19,7 +19,7 @@ const DATA_DRAGON_BASE = "https://ddragon.leagueoflegends.com";
 const COMMUNITY_DRAGON_TFT_URL = "https://raw.communitydragon.org/latest/cdragon/tft/en_us.json";
 const TFT_DAILY_CACHE_MS = 1000 * 60 * 60;
 const TFT_CONNECTIONS_ROUND_COUNT = 8;
-const TFT_PLAY_PAYLOAD_CACHE_VERSION = "v2";
+const TFT_PLAY_PAYLOAD_CACHE_VERSION = "v5";
 const TFT_COMPONENT_IDS = new Set([
   "TFT_Item_BFSword",
   "TFT_Item_RecurveBow",
@@ -153,7 +153,7 @@ async function resolveTftDaily(): Promise<TftDailyResponse> {
     cacheKey,
     product: "tft",
     date,
-    profile: `tft:recipes-all:connections-${TFT_CONNECTIONS_ROUND_COUNT}`,
+    profile: `tft:recipes-two-components:connections-${TFT_CONNECTIONS_ROUND_COUNT}`,
     dataDragonVersion: version,
     payload: value,
     expiresAt: value.resetAt
@@ -163,7 +163,7 @@ async function resolveTftDaily(): Promise<TftDailyResponse> {
 }
 
 function tftPayloadCacheKey(date: string) {
-  return `${TFT_PLAY_PAYLOAD_CACHE_VERSION}:tft:${date}:recipes-all:connections-${TFT_CONNECTIONS_ROUND_COUNT}`;
+  return `${TFT_PLAY_PAYLOAD_CACHE_VERSION}:tft:${date}:recipes-two-components:connections-${TFT_CONNECTIONS_ROUND_COUNT}`;
 }
 
 async function fetchJson<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
@@ -214,15 +214,9 @@ function createTftRecipeRounds(items: CommunityDragonTftItem[], itemLookup: Map<
   const selectedRecipes = seededShuffle(uniqueRecipes, `${env.challengeSalt}:${date}:tft-recipe`);
 
   return selectedRecipes.map((recipe, index) => {
-    const missingIndex = seededIndex(`${env.challengeSalt}:${date}:tft-recipe:${recipe.resultItem.id}:missing`, recipe.components.length);
-    const missingComponent = recipe.components[missingIndex];
-    const knownComponent = recipe.components[missingIndex === 0 ? 1 : 0];
-
     return {
       id: `${date}:tft-recipe:${index}:${recipe.resultItem.id}`,
       resultItem: recipe.resultItem,
-      knownComponent,
-      missingComponent,
       components: recipe.components,
       options: componentOptions
     };
@@ -272,17 +266,18 @@ function createCurrentSetUnits(
   const units = (currentSet?.champions ?? [])
     .map((champion): TftUnitRef | null => {
       const id = champion.apiName ?? "";
+      const name = formatTftUnitName(champion.name);
       const traits = (champion.traits ?? []).filter((trait) => trait && trait !== "Choose Trait");
       const cost = Number(champion.cost ?? 0);
       const imageUrl = championImages.get(id);
 
-      if (!id.startsWith(currentPrefix) || cost < 1 || cost > 5 || traits.length === 0 || !imageUrl || !champion.name) {
+      if (!id.startsWith(currentPrefix) || cost < 1 || cost > 5 || traits.length === 0 || !imageUrl || !name) {
         return null;
       }
 
       return {
         id,
-        name: champion.name,
+        name,
         cost,
         role: formatUnitRole(champion.role),
         traits,
@@ -455,6 +450,10 @@ function seededShuffle<T>(values: T[], seed: string) {
     const right = seededIndex(`${seed}:${JSON.stringify(b)}`, 100000);
     return left - right;
   });
+}
+
+function formatTftUnitName(name?: string) {
+  return name?.trim() ?? "";
 }
 
 function formatUnitRole(role?: string | null) {
