@@ -99,10 +99,12 @@ export function AppShell() {
   const [message, setMessage] = useState("");
   const [promotion, setPromotion] = useState<RankPromotionEventDetail | null>(null);
   const roundLimitsRef = useRef<DailyRoundLimits>(INITIAL_DAILY_ROUND_LIMITS);
+  const viewRef = useRef<View>(initialRoute.view);
 
-  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean; roundLimits?: DailyRoundLimits } = {}) => {
+  const loadDaily = useCallback(async (options: { blocking?: boolean; recovery?: boolean; roundLimits?: DailyRoundLimits; view?: View } = {}) => {
     const shouldBlockForRounds = options.blocking ?? true;
     const roundLimits = options.roundLimits ?? roundLimitsRef.current;
+    const blockingView = options.view ?? viewRef.current;
 
     setMessage("");
     if (shouldBlockForRounds) {
@@ -114,13 +116,13 @@ export function AppShell() {
       let nextDaily = await fetchDailyChallenge(roundLimits);
       let syncAttempts = 0;
 
-      while (shouldBlockForRounds && hasRecoverableDataGap(nextDaily) && syncAttempts < ROUND_SYNC_MAX_BLOCKING_ATTEMPTS) {
+      while (shouldBlockForRounds && hasRecoverableDataGapForView(nextDaily, blockingView) && syncAttempts < ROUND_SYNC_MAX_BLOCKING_ATTEMPTS) {
         syncAttempts += 1;
         await wait(ROUND_SYNC_RETRY_DELAY_MS);
         nextDaily = await fetchDailyChallenge(roundLimits);
       }
 
-      if (shouldBlockForRounds && hasRecoverableDataGap(nextDaily)) {
+      if (shouldBlockForRounds && hasRecoverableDataGapForView(nextDaily, blockingView)) {
         throw new Error("Rounds are still syncing. Try again shortly.");
       }
 
@@ -128,7 +130,7 @@ export function AppShell() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Daily load failed.");
       if (shouldBlockForRounds) {
-        setDaily((current) => (current && hasRecoverableDataGap(current) ? null : current));
+        setDaily((current) => (current && hasRecoverableDataGapForView(current, blockingView) ? null : current));
       }
     } finally {
       setLoading(false);
@@ -172,12 +174,16 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
     if (product !== "lol") {
       setLoading(false);
       return;
     }
 
-    void loadDaily();
+    void loadDaily({ view: viewRef.current });
     void loadStats();
     void loadLeaderboard();
   }, [loadDaily, loadLeaderboard, loadStats, product]);
@@ -199,12 +205,12 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (product !== "lol" || !daily || !hasRecoverableDataGap(daily) || refreshing) {
+    if (product !== "lol" || !daily || !hasRecoverableDataGapForView(daily, view) || refreshing) {
       return;
     }
 
-    void loadDaily({ blocking: true, recovery: true });
-  }, [daily, loadDaily, product, refreshing]);
+    void loadDaily({ blocking: true, recovery: true, view });
+  }, [daily, loadDaily, product, refreshing, view]);
 
   const resetCountdown = useResetCountdown(daily?.resetAt);
   const displayStats = useRankedStats(stats);
@@ -218,8 +224,8 @@ export function AppShell() {
     setView(nextView);
     replacePlayUrl(nextProduct, nextView);
 
-    if (nextProduct === "lol" && daily && hasRecoverableDataGap(daily)) {
-      void loadDaily({ blocking: true, recovery: true });
+    if (nextProduct === "lol" && daily && hasRecoverableDataGapForView(daily, nextView)) {
+      void loadDaily({ blocking: true, recovery: true, view: nextView });
     }
   }, [daily, loadDaily, product]);
   const selectProduct = useCallback((nextProduct: Product) => {
@@ -861,18 +867,12 @@ function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function hasRecoverableDataGap(daily: DailyChallengeStaticResponse) {
-  const build = daily.extraChallenges.itemBuild;
+function hasRecoverableDataGapForView(daily: DailyChallengeStaticResponse, view: View) {
+  if (view !== "item-build") {
+    return false;
+  }
 
-  return (
-    !hasPlayableBuildChallenge(build) ||
-    Boolean(daily.extraChallenges.guessElo.unavailableReason) ||
-    (daily.extraChallenges.guessElo.rounds?.length ?? 0) === 0 ||
-    Boolean(daily.extraChallenges.dodgeQueue.unavailableReason) ||
-    (daily.extraChallenges.dodgeQueue.rounds?.length ?? 0) === 0 ||
-    Boolean(daily.extraChallenges.championMatchup.unavailableReason) ||
-    (daily.extraChallenges.championMatchup.rounds?.length ?? 0) === 0
-  );
+  return !hasPlayableBuildChallenge(daily.extraChallenges.itemBuild);
 }
 
 function hasPlayableBuildChallenge(build: DailyChallengeStaticResponse["extraChallenges"]["itemBuild"]) {
