@@ -1585,7 +1585,7 @@ select:focus-visible {
   position: absolute;
   right: 1rem;
   top: 1rem;
-  z-index: 2;
+  z-index: 6;
   display: grid;
   height: 2.25rem;
   width: 2.25rem;
@@ -1641,6 +1641,7 @@ select:focus-visible {
   width: min(100%, 31rem);
   place-items: center;
   padding: clamp(0.3rem, 1vw, 0.7rem) 0 clamp(5.3rem, 12vw, 6rem);
+  pointer-events: none;
 }
 
 .promotion-stage__ring {
@@ -1776,6 +1777,8 @@ select:focus-visible {
 }
 
 .promotion-modal__footer {
+  position: relative;
+  z-index: 5;
   margin-top: 0.75rem;
   display: flex;
   flex-wrap: wrap;
@@ -1805,6 +1808,7 @@ select:focus-visible {
 
 .promotion-action {
   min-height: 2.75rem;
+  cursor: pointer;
   border: 1px solid rgba(255, 230, 140, 0.72);
   border-radius: 999px;
   background: linear-gradient(180deg, #ffe27a, #f3b923 58%, #c98a13);

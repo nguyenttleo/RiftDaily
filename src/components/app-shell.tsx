@@ -550,7 +550,7 @@ function TodaySidebarGroup({
               <div key={`${entry.rank}-${entry.username}:sidebar`} className="grid grid-cols-[1.35rem_minmax(0,1fr)_auto] items-center gap-2 text-sm">
                 <span className="font-display text-xs font-bold text-[#c89b3c]">#{entry.rank}</span>
                 <span className="truncate font-semibold text-white" title={entry.username}>{entry.username}</span>
-                <span className="text-xs text-[color:var(--muted)]">{entry.currentStreak} streak</span>
+                <span className="text-xs text-[color:var(--muted)]">{entry.currentRank} - {entry.currentRankLp} LP</span>
               </div>
             ))
           ) : (

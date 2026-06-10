@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Grid2X2, Layers, Trophy, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,6 +38,19 @@ import type {
 
 type TftMode = Extract<PlayMode, "tft-recipe" | "tft-connections">;
 type TftGameKey = "tft-recipe" | "tft-connections";
+type TftRecipeQueueEntry = {
+  round: TftRecipeRound;
+  offset: number;
+  roundNumber: number;
+};
+type TftRecipeHistoryEntry = {
+  id: string;
+  roundNumber: number;
+  resultItem: TftItemRef;
+  components: TftItemRef[];
+  selectedComponents: TftItemRef[];
+  correct: boolean;
+};
 type TftCategoryColor = {
   border: string;
   bgTop: string;
@@ -240,12 +253,45 @@ function TftRecipeGame({
   const [roundIndex, setRoundIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [recipeHistory, setRecipeHistory] = useState<TftRecipeHistoryEntry[]>([]);
   const [streak, recordResult] = useTftModeProgress("tft-recipe", username, onStatsChange);
-  const round = rounds[roundIndex % Math.max(1, rounds.length)];
-  const correct = submitted && componentKey(selectedIds) === componentKey(round.components.map((component) => component.id));
+  const totalRounds = rounds.length;
+  const round = totalRounds > 0 ? rounds[roundIndex % totalRounds] : null;
+  const currentRoundNumber = totalRounds > 0 ? (roundIndex % totalRounds) + 1 : 0;
+  const queueRounds = useMemo<TftRecipeQueueEntry[]>(() => {
+    if (rounds.length === 0) {
+      return [];
+    }
+
+    const visibleCount = Math.min(7, rounds.length);
+
+    return Array.from({ length: visibleCount }, (_, offset) => {
+      const sourceIndex = (roundIndex + offset) % rounds.length;
+
+      return {
+        round: rounds[sourceIndex],
+        offset,
+        roundNumber: sourceIndex + 1
+      };
+    });
+  }, [roundIndex, rounds]);
+  const answerComponentIds = round?.components.map((component) => component.id) ?? [];
+  const correct = Boolean(round && submitted && componentKey(selectedIds) === componentKey(answerComponentIds));
   const selectedComponents = selectedIds
-    .map((componentId) => round.options.find((component) => component.id === componentId))
+    .map((componentId) => round?.options.find((component) => component.id === componentId))
     .filter((component): component is TftItemRef => Boolean(component));
+
+  if (!round) {
+    return (
+      <TftFrame icon={<Layers size={18} />} title="TFT Recipe" accessory={<TftHeaderTools><TftRoundPill label={`Set ${setNumber}`} value="0" /><TftMiniStreak current={streak.current} best={streak.best} /></TftHeaderTools>}>
+        <div className="grid flex-1 place-items-center rounded-sm border border-white/10 bg-white/5 p-6 text-sm text-[color:var(--muted)]">
+          TFT recipes are still syncing.
+        </div>
+      </TftFrame>
+    );
+  }
+
+  const activeRound = round;
 
   function addComponent(component: TftItemRef) {
     if (submitted || selectedIds.length >= 2) {
@@ -268,16 +314,27 @@ function TftRecipeGame({
       return;
     }
 
-    const solved = componentKey(selectedIds) === componentKey(round.components.map((component) => component.id));
+    const solved = componentKey(selectedIds) === componentKey(answerComponentIds);
 
     setSubmitted(true);
+    setRecipeHistory((current) => [
+      {
+        id: `${activeRound.id}:${Date.now()}`,
+        roundNumber: currentRoundNumber,
+        resultItem: activeRound.resultItem,
+        components: activeRound.components,
+        selectedComponents,
+        correct: solved
+      },
+      ...current
+    ].slice(0, 4));
     recordResult(solved, {
       performanceQuality: solved ? 0.86 : 0.18,
-      roundId: round.id,
+      roundId: activeRound.id,
       metadata: {
-        resultItem: round.resultItem.name,
+        resultItem: activeRound.resultItem.name,
         selectedComponents: selectedComponents.map((component) => component.name),
-        answerComponents: round.components.map((component) => component.name)
+        answerComponents: activeRound.components.map((component) => component.name)
       }
     });
   }
@@ -292,89 +349,205 @@ function TftRecipeGame({
     <TftFrame
       icon={<Layers size={18} />}
       title="TFT Recipe"
-      accessory={<TftHeaderTools><TftRoundPill label={`Set ${setNumber}`} value={String((roundIndex % Math.max(1, rounds.length)) + 1)} /><TftMiniStreak current={streak.current} best={streak.best} /><CopyLinkButton mode="tft-recipe" product="tft" /></TftHeaderTools>}
+      accessory={<TftHeaderTools><TftRoundPill label={`Set ${setNumber}`} value={`${currentRoundNumber}/${totalRounds}`} /><TftMiniStreak current={streak.current} best={streak.best} /><CopyLinkButton mode="tft-recipe" product="tft" /></TftHeaderTools>}
     >
-      <div className="grid flex-1 gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
-        <div className="play-panel-depth grid content-start gap-3 rounded-sm border border-[#3c3421] p-3 sm:p-4">
-          <div className="grid justify-items-center gap-3 rounded-sm border border-white/10 bg-[#050607]/74 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.045)]">
-            <TftItemTile item={round.resultItem} size="large" />
-            <div className="font-display text-center text-2xl font-black leading-none text-white sm:text-3xl">{round.resultItem.name}</div>
-          </div>
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            {submitted ? (
-              <TftComponentSlot item={round.components[0]} result={correct ? "correct" : "answer"} />
-            ) : (
-              <TftSelectedComponentSlot item={selectedComponents[0]} label="Component" onRemove={() => removeSelectedComponent(0)} />
-            )}
-            <div className="font-display text-xl font-black text-[#c89b3c]">+</div>
-            {submitted ? (
-              <TftComponentSlot item={round.components[1]} result={correct ? "correct" : "answer"} />
-            ) : (
-              <TftSelectedComponentSlot item={selectedComponents[1]} label="Component" onRemove={() => removeSelectedComponent(1)} />
-            )}
-          </div>
-          {submitted && (
-            <div className={cn("rounded-sm border p-3 text-sm font-semibold", correct ? "border-green-400/40 bg-green-500/14 text-green-100" : "border-red-400/40 bg-red-500/14 text-red-100")}>
-              {correct ? "Correct item slam." : `Answer: ${round.components.map((component) => component.name).join(" + ")}`}
+      <div className="grid flex-1 gap-3 lg:min-h-0 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)]">
+        <TftRecipeQueuePanel queue={queueRounds} history={recipeHistory} submitted={submitted} />
+
+        <div className="grid gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={round.id}
+              initial={{ opacity: 0, x: 18, scale: 0.985 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: -18, scale: 0.985 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="play-panel-depth grid min-h-0 content-start gap-3 rounded-sm border border-[#3c3421] p-3 sm:p-4"
+            >
+              <div className="grid min-h-36 content-center justify-items-center gap-3 rounded-sm border border-white/10 bg-[#050607]/74 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.045)] sm:min-h-40">
+                <TftItemTile item={round.resultItem} size="hero" />
+                <div className="font-display max-w-full text-center text-xl font-black leading-none text-white sm:text-2xl">{round.resultItem.name}</div>
+              </div>
+              <div className="grid min-h-32 grid-cols-[1fr_auto_1fr] items-stretch gap-2">
+                {submitted ? (
+                  <TftComponentSlot item={round.components[0]} result={correct ? "correct" : "answer"} />
+                ) : (
+                  <TftSelectedComponentSlot item={selectedComponents[0]} label="Slot 1" onRemove={() => removeSelectedComponent(0)} />
+                )}
+                <div className="grid place-items-center font-display text-xl font-black text-[#c89b3c]">+</div>
+                {submitted ? (
+                  <TftComponentSlot item={round.components[1]} result={correct ? "correct" : "answer"} />
+                ) : (
+                  <TftSelectedComponentSlot item={selectedComponents[1]} label="Slot 2" onRemove={() => removeSelectedComponent(1)} />
+                )}
+              </div>
+              <AnimatePresence>
+                {submitted && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    className={cn("rounded-sm border p-3 text-sm font-semibold", correct ? "border-green-400/40 bg-green-500/14 text-green-100" : "border-red-400/40 bg-red-500/14 text-red-100")}
+                  >
+                    {correct ? "Correct item slam." : `Answer: ${round.components.map((component) => component.name).join(" + ")}`}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          </AnimatePresence>
+
+          <div className="play-inset-panel-depth grid min-h-0 gap-3 rounded-sm border border-white/10 p-3 sm:p-4 lg:grid-rows-[auto_auto_minmax(0,1fr)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">Component bench</div>
+              <div className="inline-flex min-h-9 items-center rounded-full border border-white/10 bg-white/5 px-3 text-sm text-[color:var(--muted)]">
+                {selectedIds.length}/2
+              </div>
             </div>
-          )}
-        </div>
+            <div className="border-y border-white/10 py-3">
+              {!submitted && (
+                <Button type="button" onClick={submitRecipe} disabled={selectedIds.length !== 2} icon={<CheckCircle2 size={17} />} className="min-h-12 w-full px-5 text-base">
+                  Submit
+                </Button>
+              )}
+              {submitted && (
+                <Button type="button" onClick={nextRound} className="min-h-12 w-full px-5 text-base">
+                  Next
+                </Button>
+              )}
+            </div>
+            <div className="grid min-h-0 grid-cols-2 content-start gap-2 lg:grid-rows-4">
+              {round.options.map((component) => {
+                const selectedCount = countOccurrences(selectedIds, component.id);
+                const answerCount = countOccurrences(answerComponentIds, component.id);
+                const selected = selectedCount > 0;
+                const answer = submitted && answerCount > 0;
 
-        <div className="play-inset-panel-depth grid min-h-0 content-start gap-3 rounded-sm border border-white/10 p-3 sm:p-4">
-          <div className="font-display text-base font-extrabold tracking-tight text-white sm:text-xl">
-            Pick both components to make {round.resultItem.name}.
-          </div>
-          <div className="inline-flex min-h-10 w-fit items-center rounded-full border border-white/10 bg-white/5 px-4 text-sm text-[color:var(--muted)]">
-            {selectedIds.length}/2 selected
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {round.options.map((component) => {
-              const selectedCount = countOccurrences(selectedIds, component.id);
-              const answerCount = countOccurrences(round.components.map((answerComponent) => answerComponent.id), component.id);
-              const selected = selectedCount > 0;
-              const answer = submitted && answerCount > 0;
-
-              return (
-                <button
-                  key={component.id}
-                  type="button"
-                  onClick={() => addComponent(component)}
-                  disabled={submitted || selectedIds.length >= 2}
-                  className={cn(
-                    "play-choice-depth play-choice-depth-default group relative grid min-h-28 justify-items-center gap-2 rounded-sm border border-[#3c3421] p-2 text-center transition disabled:cursor-default",
-                    !submitted && "hover:-translate-y-0.5 hover:border-[#c89b3c]/70",
-                    selected && !submitted && "border-[#f5c542]/80 bg-[#c89b3c]/12",
-                    selected && correct && submitted && "border-green-300/70 bg-green-500/18",
-                    selected && !correct && submitted && "border-red-300/70 bg-red-500/18",
-                    answer && "ring-2 ring-green-300/60"
-                  )}
-                >
-                  {selectedCount > 0 && (
-                    <span className="absolute right-2 top-2 rounded-full border border-[#f5c542]/50 bg-[#050607]/85 px-2 py-0.5 text-[10px] font-black text-[#f5c542]">
-                      x{selectedCount}
-                    </span>
-                  )}
-                  <TftItemTile item={component} />
-                  <div className="text-xs font-bold leading-tight text-white">{component.name}</div>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {!submitted && (
-              <Button type="button" onClick={submitRecipe} disabled={selectedIds.length !== 2} icon={<CheckCircle2 size={16} />}>
-                Submit recipe
-              </Button>
-            )}
-            {submitted && (
-              <Button type="button" onClick={nextRound}>
-                Next recipe
-              </Button>
-            )}
+                return (
+                  <motion.button
+                    layout
+                    key={component.id}
+                    type="button"
+                    onClick={() => addComponent(component)}
+                    disabled={submitted || selectedIds.length >= 2}
+                    className={cn(
+                      "play-choice-depth play-choice-depth-default group relative grid min-h-24 content-center justify-items-center gap-2 rounded-sm border border-[#3c3421] p-2 text-center transition disabled:cursor-default sm:min-h-28",
+                      !submitted && "hover:-translate-y-0.5 hover:border-[#c89b3c]/70",
+                      selected && !submitted && "border-[#f5c542]/80 bg-[#c89b3c]/12",
+                      selected && correct && submitted && "border-green-300/70 bg-green-500/18",
+                      selected && !correct && submitted && "border-red-300/70 bg-red-500/18",
+                      answer && "ring-2 ring-green-300/60"
+                    )}
+                    whileTap={!submitted && selectedIds.length < 2 ? { scale: 0.98 } : undefined}
+                  >
+                    {selectedCount > 0 && (
+                      <span className="absolute right-2 top-2 rounded-full border border-[#f5c542]/50 bg-[#050607]/85 px-2 py-0.5 text-[10px] font-black text-[#f5c542]">
+                        x{selectedCount}
+                      </span>
+                    )}
+                    <TftItemTile item={component} size="large" />
+                    <div className="text-xs font-bold leading-tight text-white sm:text-sm">{component.name}</div>
+                  </motion.button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
     </TftFrame>
+  );
+}
+
+function TftRecipeQueuePanel({ queue, history, submitted }: { queue: TftRecipeQueueEntry[]; history: TftRecipeHistoryEntry[]; submitted: boolean }) {
+  return (
+    <aside className="play-inset-panel-depth grid content-start gap-3 rounded-sm border border-white/10 p-3 sm:p-4 xl:min-h-0">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-display text-base font-black text-white">Recipe Queue</div>
+          <div className="text-xs text-[color:var(--muted)]">{queue.length > 0 ? `${queue.length} visible` : "Empty"}</div>
+        </div>
+        <div className={cn("rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.08em]", submitted ? "border-[#c89b3c]/45 bg-[#c89b3c]/12 text-[#f5c542]" : "border-white/10 bg-white/5 text-[color:var(--muted)]")}>
+          {submitted ? "Scored" : "Live"}
+        </div>
+      </div>
+
+      <div className="grid gap-2">
+        <AnimatePresence initial={false} mode="popLayout">
+          {queue.map((entry) => (
+            <TftRecipeQueueCard key={entry.round.id} entry={entry} />
+          ))}
+        </AnimatePresence>
+      </div>
+
+      <div className="border-t border-white/10 pt-3">
+        <div className="mb-2 text-xs font-bold uppercase tracking-[0.1em] text-[color:var(--muted)]">Recent</div>
+        {history.length === 0 ? (
+          <div className="rounded-sm border border-dashed border-white/10 bg-white/[0.035] p-3 text-xs text-[color:var(--muted)]">No results yet.</div>
+        ) : (
+          <div className="grid gap-2">
+            <AnimatePresence initial={false}>
+              {history.map((entry) => (
+                <TftRecipeHistoryCard key={entry.id} entry={entry} />
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function TftRecipeQueueCard({ entry }: { entry: TftRecipeQueueEntry }) {
+  const active = entry.offset === 0;
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: active ? 1 : 0.985 }}
+      exit={{ opacity: 0, y: -10, scale: 0.96 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-sm border p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.045)]",
+        active ? "border-[#f5c542]/68 bg-[#c89b3c]/13" : "border-white/10 bg-white/[0.045]"
+      )}
+    >
+      <div className={cn("absolute inset-y-2 left-0 w-0.5 rounded-r-full", active ? "bg-[#f5c542]" : "bg-white/12")} />
+      <TftItemTile item={entry.round.resultItem} />
+      <div className="min-w-0">
+        <div className="truncate text-sm font-bold text-white" title={entry.round.resultItem.name}>{entry.round.resultItem.name}</div>
+        <div className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[color:var(--muted)]">{active ? "Now" : `Queue +${entry.offset}`}</div>
+      </div>
+      <div className="font-display text-xs font-black text-[#c89b3c]">#{entry.roundNumber}</div>
+    </motion.div>
+  );
+}
+
+function TftRecipeHistoryCard({ entry }: { entry: TftRecipeHistoryEntry }) {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: -12, scale: 0.98 }}
+      animate={{ opacity: 1, x: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 12, scale: 0.98 }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      className={cn("grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-sm border p-2", entry.correct ? "border-green-400/28 bg-green-500/10" : "border-red-400/28 bg-red-500/10")}
+    >
+      <TftItemTile item={entry.resultItem} />
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="truncate text-sm font-bold text-white" title={entry.resultItem.name}>{entry.resultItem.name}</div>
+          <span className={cn("shrink-0 text-[10px] font-black uppercase", entry.correct ? "text-green-200" : "text-red-200")}>{entry.correct ? "Hit" : "Miss"}</span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-[color:var(--muted)]">
+          #{entry.roundNumber} - {entry.components.map((component) => component.name).join(" + ")}
+        </div>
+        {!entry.correct && entry.selectedComponents.length > 0 && (
+          <div className="mt-0.5 truncate text-[11px] text-red-100/80">
+            Picked {entry.selectedComponents.map((component) => component.name).join(" + ")}
+          </div>
+        )}
+      </div>
+    </motion.div>
   );
 }
 
@@ -606,16 +779,16 @@ function TftFrame({
   );
 }
 
-function TftItemTile({ item, size = "normal" }: { item: TftItemRef; size?: "normal" | "large" }) {
+function TftItemTile({ item, size = "normal" }: { item: TftItemRef; size?: "normal" | "large" | "hero" }) {
   return (
     <div
       className={cn(
         "grid place-items-center rounded-sm border border-[#c89b3c]/32 bg-[#050607]/75 shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_10px_26px_rgba(0,0,0,.28)]",
-        size === "large" ? "h-20 w-20 sm:h-24 sm:w-24" : "h-12 w-12"
+        size === "hero" ? "h-20 w-20 sm:h-24 sm:w-24" : size === "large" ? "h-14 w-14 sm:h-16 sm:w-16" : "h-10 w-10 sm:h-11 sm:w-11"
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-16 w-16 sm:h-20 sm:w-20" : "h-9 w-9")} />
+      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "hero" ? "h-16 w-16 sm:h-20 sm:w-20" : size === "large" ? "h-11 w-11 sm:h-12 sm:w-12" : "h-7 w-7 sm:h-8 sm:w-8")} />
     </div>
   );
 }
@@ -624,12 +797,12 @@ function TftComponentSlot({ item, result }: { item: TftItemRef; result?: "correc
   return (
     <div
       className={cn(
-        "grid min-h-28 justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center",
+        "grid min-h-32 content-center justify-items-center gap-2 rounded-sm border bg-[#111722] p-2 text-center",
         result === "correct" ? "border-green-300/65" : result === "answer" ? "border-[#c89b3c]/65" : "border-[#3c3421]"
       )}
     >
-      <TftItemTile item={item} />
-      <div className="text-xs font-bold leading-tight text-white">{item.name}</div>
+      <TftItemTile item={item} size="large" />
+      <div className="text-xs font-bold leading-tight text-white sm:text-sm">{item.name}</div>
     </div>
   );
 }
@@ -637,7 +810,7 @@ function TftComponentSlot({ item, result }: { item: TftItemRef; result?: "correc
 function TftSelectedComponentSlot({ item, label, onRemove }: { item?: TftItemRef; label: string; onRemove: () => void }) {
   if (!item) {
     return (
-      <div className="grid min-h-28 place-items-center rounded-sm border border-dashed border-[#c89b3c]/40 bg-[#c89b3c]/10 p-2 text-center font-display text-sm font-black uppercase tracking-[0.12em] text-[#f1d58a]">
+      <div className="grid min-h-32 place-items-center rounded-sm border border-dashed border-[#c89b3c]/40 bg-[#c89b3c]/10 p-2 text-center font-display text-sm font-black uppercase tracking-[0.12em] text-[#f1d58a]">
         {label}
       </div>
     );
@@ -647,11 +820,11 @@ function TftSelectedComponentSlot({ item, label, onRemove }: { item?: TftItemRef
     <button
       type="button"
       onClick={onRemove}
-      className="grid min-h-28 justify-items-center gap-2 rounded-sm border border-[#f5c542]/65 bg-[#111722] p-2 text-center transition hover:-translate-y-0.5 hover:border-[#f5c542]"
+      className="grid min-h-32 content-center justify-items-center gap-2 rounded-sm border border-[#f5c542]/65 bg-[#111722] p-2 text-center transition hover:-translate-y-0.5 hover:border-[#f5c542]"
       title={`Remove ${item.name}`}
     >
-      <TftItemTile item={item} />
-      <div className="text-xs font-bold leading-tight text-white">{item.name}</div>
+      <TftItemTile item={item} size="large" />
+      <div className="text-xs font-bold leading-tight text-white sm:text-sm">{item.name}</div>
     </button>
   );
 }

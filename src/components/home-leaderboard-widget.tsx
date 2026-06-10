@@ -4,7 +4,6 @@ import { Crown, Medal, RefreshCw, Trophy } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { formatMilliseconds } from "@/lib/utils";
 import type { LeaderboardEntry } from "@/types";
 
 interface LeaderboardResponse {
@@ -83,7 +82,7 @@ export function HomeLeaderboardWidget() {
       </div>
 
       <div className="relative mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-4">
-        <span className="text-xs text-[#94a3b8]">Ranked by streak, best streak, perfect runs, and win rate.</span>
+        <span className="text-xs text-[#94a3b8]">Ranked by current rank and LP.</span>
         <Link
           href="/play?mode=leaderboard"
           className="font-display inline-flex min-h-10 items-center justify-center rounded-md border border-[#f5c542]/40 bg-[#f5c542]/12 px-4 text-sm font-black text-[#f5c542] transition hover:-translate-y-0.5 hover:bg-[#f5c542] hover:text-[#090b10]"
@@ -105,18 +104,18 @@ function HomeLeaderboardRow({ entry }: { entry: LeaderboardEntry }) {
         <div className="truncate font-bold text-white" title={entry.username}>
           {entry.username}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#94a3b8]">
-          <span>{entry.gamesPlayed} games</span>
-          <span>{entry.winRate}% win</span>
-          <span>{formatMilliseconds(entry.fastestSolveMs)}</span>
-        </div>
+        <div className="mt-0.5 truncate text-[11px] font-semibold text-[#f5c542]">{formatCurrentRank(entry)}</div>
       </div>
       <div className="text-right">
-        <div className="font-display text-2xl font-black leading-none text-white">{entry.currentStreak}</div>
-        <div className="mt-0.5 text-[10px] uppercase tracking-[0.08em] text-[#94a3b8]">Streak</div>
+        <div className="font-display text-xl font-black leading-none text-white">{entry.currentRankLp}</div>
+        <div className="mt-0.5 text-[10px] uppercase tracking-[0.08em] text-[#94a3b8]">LP</div>
       </div>
     </div>
   );
+}
+
+function formatCurrentRank(entry: LeaderboardEntry) {
+  return `${entry.currentRank} - ${entry.currentRankLp} LP`;
 }
 
 function LeaderboardSkeleton() {

@@ -433,6 +433,14 @@ export interface UserStats {
 export interface LeaderboardEntry {
   rank: number;
   username: string;
+  currentRank: string;
+  currentRankTier: string;
+  currentRankDivision: string | null;
+  currentRankLp: number;
+  peakRank: string;
+  peakRankTier: string;
+  peakRankDivision: string | null;
+  peakRankLp: number;
   currentStreak: number;
   maxStreak: number;
   gamesPlayed: number;

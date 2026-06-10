@@ -40,6 +40,9 @@ interface StatsRow {
   rank_last_lp_change?: number | null;
   rank_games_played?: number | null;
   rank_wins?: number | null;
+  peak_rank_tier?: string | null;
+  peak_rank_division?: string | null;
+  peak_rank_lp?: number | null;
 }
 
 interface ChallengeRow {
@@ -553,6 +556,48 @@ export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
          sum(wins) as wins
        from game_mode_stats
        group by user_id
+     ),
+     rank_candidates as (
+       select user_id, tier, division, lp
+       from user_rank_state
+       union all
+       select user_id, tier_before as tier, division_before as division, lp_before as lp
+       from ranked_game_results
+       union all
+       select user_id, tier_after as tier, division_after as division, lp_after as lp
+       from ranked_game_results
+     ),
+     peak_rank as (
+       select user_id, tier, division, lp
+       from (
+         select
+           user_id,
+           tier,
+           division,
+           lp,
+           row_number() over (
+             partition by user_id
+             order by
+               (
+                 case
+                   when tier = 'Iron' then 1 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Bronze' then 5 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Silver' then 9 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Gold' then 13 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Platinum' then 17 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Emerald' then 21 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Diamond' then 25 + case division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+                   when tier = 'Master' then 29
+                   when tier = 'Grandmaster' then 30
+                   when tier = 'Challenger' then 31
+                   else 0
+                 end
+               ) * 10000 + coalesce(lp, 0) desc,
+               coalesce(lp, 0) desc
+           ) as peak_order
+         from rank_candidates
+       ) ranked
+       where peak_order = 1
      )
      select
         u.username,
@@ -567,12 +612,39 @@ export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
         coalesce(ms.current_streak, 0) as mode_current_streak,
         coalesce(ms.max_streak, 0) as mode_max_streak,
         coalesce(ms.games_played, 0) as mode_games_played,
-        coalesce(ms.wins, 0) as mode_wins
+        coalesce(ms.wins, 0) as mode_wins,
+        coalesce(r.tier, 'Unranked') as rank_tier,
+        r.division as rank_division,
+        coalesce(r.lp, 0) as rank_lp,
+        r.last_lp_change as rank_last_lp_change,
+        coalesce(r.games_played, 0) as rank_games_played,
+        coalesce(r.wins, 0) as rank_wins,
+        (
+          case
+            when r.tier = 'Iron' then 1 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Bronze' then 5 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Silver' then 9 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Gold' then 13 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Platinum' then 17 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Emerald' then 21 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Diamond' then 25 + case r.division when 'IV' then 0 when 'III' then 1 when 'II' then 2 when 'I' then 3 else 0 end
+            when r.tier = 'Master' then 29
+            when r.tier = 'Grandmaster' then 30
+            when r.tier = 'Challenger' then 31
+            else 0
+          end
+        ) * 10000 + coalesce(r.lp, 0) as current_rank_score,
+        p.tier as peak_rank_tier,
+        p.division as peak_rank_division,
+        p.lp as peak_rank_lp
       from users u
       left join user_stats s on s.user_id = u.id
       left join mode_stats ms on ms.user_id = u.id
+      left join user_rank_state r on r.user_id = u.id
+      left join peak_rank p on p.user_id = u.id
       where coalesce(s.games_played, 0) + coalesce(ms.games_played, 0) > 0
-      order by greatest(coalesce(s.current_streak, 0), coalesce(ms.current_streak, 0)) desc,
+      order by current_rank_score desc,
+               greatest(coalesce(s.current_streak, 0), coalesce(ms.current_streak, 0)) desc,
                greatest(coalesce(s.max_streak, 0), coalesce(ms.max_streak, 0)) desc,
                coalesce(s.perfect_solves, 0) desc,
                case
@@ -588,9 +660,23 @@ export async function getLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
 
   return result.rows.map((row, index) => {
     const stats = normalizeStatsRow(row.username, row);
+    const peakRankState = normalizeRankState({
+      tier: row.peak_rank_tier ?? stats.rankTier,
+      division: row.peak_rank_division,
+      lp: row.peak_rank_lp ?? stats.rankLp
+    });
+
     return {
       rank: index + 1,
       username: stats.username,
+      currentRank: stats.rank,
+      currentRankTier: stats.rankTier,
+      currentRankDivision: stats.rankDivision,
+      currentRankLp: stats.rankLp,
+      peakRank: displayRankName(peakRankState),
+      peakRankTier: peakRankState.tier,
+      peakRankDivision: peakRankState.division,
+      peakRankLp: peakRankState.lp,
       currentStreak: stats.currentStreak,
       maxStreak: stats.maxStreak,
       gamesPlayed: stats.gamesPlayed,
