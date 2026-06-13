@@ -180,7 +180,7 @@ export function TftPlayShell({
 
   if (loading) {
     return (
-      <main className="grid min-h-screen place-items-center overflow-hidden bg-[#050607] px-4">
+      <main className="grid min-h-screen place-items-center overflow-hidden bg-[var(--background)] px-4">
         <NexusLoader />
       </main>
     );
@@ -188,14 +188,14 @@ export function TftPlayShell({
 
   if (!daily) {
     return (
-      <main className="grid min-h-screen place-items-center px-4">
-        <div className="rounded-md border border-red-400/30 bg-red-500/12 p-4 text-red-100">{message || "Unable to load TFT."}</div>
+      <main className="grid min-h-screen place-items-center bg-[var(--background)] px-4">
+        <div className="rounded-xl border border-[rgba(224,98,108,.35)] bg-[rgba(224,98,108,.1)] px-5 py-4 text-sm font-medium text-[#ffd2d6]">{message || "Unable to load TFT."}</div>
       </main>
     );
   }
 
   return (
-    <main className="grid min-h-dvh items-start overflow-x-clip bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
+    <main className="grid min-h-dvh items-start overflow-x-clip bg-[var(--background)] lg:grid-cols-[minmax(0,1fr)_19rem]">
       <section className="grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 transition-[gap] duration-300 ease-out sm:gap-3 sm:p-4 lg:grid-rows-[auto_minmax(0,1fr)]">
         <motion.div
           layout
@@ -900,14 +900,14 @@ function TftMobileHub({
 }) {
   return (
     <div className="lg:hidden">
-      <section className="relative shrink-0 overflow-hidden rounded-lg border border-[#c89b3c]/36 bg-[linear-gradient(180deg,rgba(20,28,42,.9),rgba(8,12,20,.92))] p-2.5 shadow-[0_12px_30px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.05)]">
-        <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
+      <section className="relative shrink-0 overflow-hidden rounded-xl border border-[var(--line-gold)] bg-[var(--surface-1)] p-2.5 shadow-[var(--shadow-sm)]">
+        <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-white">{tftModeLabel(view)}</div>
             <div className="mt-0.5 text-[11px] text-[color:var(--muted)]">Reset {formatTftReset(resetCountdown)} - {tftPoolLabel(daily.setNumber)} - Patch {daily.dataDragonVersion}</div>
           </div>
-          <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[10px] font-bold uppercase text-[#f2d36b]">
+          <span className="shrink-0 rounded-full border border-[var(--line-gold)] bg-[rgba(243,198,77,.1)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--gold)]">
             {stats.rank} · {rankProgress.lp} LP
           </span>
         </div>
@@ -932,10 +932,10 @@ function TftSidebar({
   onAuthChange: () => void;
 }) {
   return (
-    <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(45,212,191,.12),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
+    <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[var(--line)] bg-[linear-gradient(180deg,#0c0f16_0%,#08090e_60%,var(--background)_100%)] p-3 lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--teal)]/40 to-transparent" />
       <div className="relative">
-        <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">TFT</h1>
+        <h1 className="font-display text-xl font-extrabold tracking-tight text-[var(--foreground)]">TFT</h1>
         <div className="mt-1 text-[11px] text-[color:var(--muted)]">Reset {formatTftReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
       </div>
       <div className="relative flex min-h-0 flex-col gap-2 overflow-y-auto pr-1 pb-1 fine-scrollbar">
@@ -943,7 +943,7 @@ function TftSidebar({
         <TftSidebarGroup title="Current Set" accent>
           <div className="flex items-center justify-between gap-3">
             <div className="font-display text-3xl font-black text-white">{tftPoolLabel(daily.setNumber)}</div>
-            <div className="rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-3 py-1 text-xs font-bold uppercase text-[#f2d36b]">Live</div>
+            <div className="rounded-full border border-[var(--line-gold)] bg-[rgba(243,198,77,.1)] px-3 py-1 text-xs font-bold uppercase text-[var(--gold)]">Live</div>
           </div>
         </TftSidebarGroup>
         <TftSidebarGroup title="Mode">
@@ -974,7 +974,7 @@ function TftPlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress
           <div className="min-w-0">
             <div className="truncate font-display text-2xl font-black leading-none text-white" title={stats.rank}>{stats.rank}</div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <div className="font-display text-lg font-bold text-[#f5c542]">{progress.lp} LP</div>
+              <div className="font-display text-lg font-bold text-[var(--gold)]">{progress.lp} LP</div>
               {typeof lpDelta === "number" && (
                 <div className={cn("text-xs font-bold", lpDelta >= 0 ? "text-green-300" : "text-red-300")}>
                   {lpDelta > 0 ? "+" : ""}
@@ -983,12 +983,12 @@ function TftPlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress
               )}
             </div>
           </div>
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 text-[#f5c542] shadow-[0_0_24px_rgba(245,197,66,.14)]">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-[var(--line-gold)] bg-[rgba(243,198,77,.1)] text-[var(--gold)]">
             <Trophy size={22} />
           </div>
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-          <div className="h-1.5 rounded-full bg-[#f5c542] transition-all" style={{ width: `${progress.percent}%` }} />
+          <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,var(--gold-deep),var(--gold))] transition-all" style={{ width: `${progress.percent}%` }} />
         </div>
         <div className="mt-1.5 text-[11px] text-[color:var(--muted)]">
           {stats.rank === "Unranked"
@@ -1014,12 +1014,12 @@ function TftSidebarGroup({ title, children, accent = false }: { title: string; c
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(16,24,36,.84),rgba(7,10,15,.9))] p-3 shadow-[0_18px_50px_rgba(0,0,0,.26),inset_0_1px_0_rgba(255,255,255,.045)]",
-        accent ? "border-[#c89b3c]/30" : "border-white/10"
+        "relative overflow-hidden rounded-xl border bg-[var(--surface-1)] p-3 shadow-[var(--shadow-sm)]",
+        accent ? "border-[var(--line-gold)]" : "border-[var(--line)]"
       )}
     >
-      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/16 to-transparent" />
-      <div className="font-display text-[11px] font-bold uppercase tracking-[0.1em] text-[#c89b3c]">{title}</div>
+      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+      <div className="font-display text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--gold)]">{title}</div>
       <div className="mt-2.5 grid gap-3">{children}</div>
     </section>
   );

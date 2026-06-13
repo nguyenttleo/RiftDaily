@@ -59,37 +59,34 @@ export function SuggestionForm() {
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-50 grid w-[min(calc(100vw-2rem),17rem)] gap-3 rounded-lg border border-[#c89b3c]/30 bg-[#0b111b]/95 p-3 shadow-[0_18px_60px_rgba(0,0,0,.45),inset_0_1px_0_rgba(255,255,255,.06)] backdrop-blur-md">
+      <div className="fixed bottom-4 right-4 z-50 grid w-[min(calc(100vw-2rem),17rem)] gap-3 rounded-2xl border border-[var(--line)] bg-[rgba(11,13,20,.92)] p-3.5 shadow-[var(--shadow-lg)] backdrop-blur-md">
         <div>
-          <div className="font-display text-sm font-bold text-[#f8fafc]">Email suggestions</div>
-          <div className="mt-1 text-xs leading-snug text-[#94a3b8]">Send feedback directly to the developer.</div>
+          <div className="font-display text-sm font-bold text-[var(--foreground)]">Email suggestions</div>
+          <div className="mt-1 text-xs leading-snug text-[var(--muted)]">Send feedback directly to the developer.</div>
         </div>
-        <a
-          href={emailHref}
-          className="font-display inline-flex min-h-9 items-center justify-center rounded-md border border-[#c89b3c]/45 px-4 text-sm font-bold text-[#f5c542] transition hover:border-[#f5c542] hover:bg-[#f5c542]/10"
-        >
+        <a href={emailHref} className="btn-ghost min-h-9 px-4 text-sm">
           Email
         </a>
       </div>
 
-      <form onSubmit={submit} className="grid gap-4 rounded-lg border border-white/10 bg-[#111827] p-4 sm:p-5">
+      <form onSubmit={submit} className="surface grid gap-4 p-4 sm:p-6">
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="grid gap-2 text-sm text-[#94a3b8]">
+        <label className="grid gap-2 text-sm font-medium text-[var(--muted)]">
           Name
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Optional"
-            className="min-h-11 rounded-md border border-white/10 bg-[#050914] px-3 text-[#f8fafc] placeholder:text-[#64748b]"
+            className="min-h-11 rounded-xl border border-[var(--line)] bg-[var(--background-deep)] px-3 text-[var(--foreground)] outline-none transition focus:border-[var(--line-gold)] placeholder:text-[var(--muted-soft)]"
           />
         </label>
-        <label className="grid gap-2 text-sm text-[#94a3b8]">
+        <label className="grid gap-2 text-sm font-medium text-[var(--muted)]">
           Email or Discord
           <input
             value={contact}
             onChange={(event) => setContact(event.target.value)}
             placeholder="Optional"
-            className="min-h-11 rounded-md border border-white/10 bg-[#050914] px-3 text-[#f8fafc] placeholder:text-[#64748b]"
+            className="min-h-11 rounded-xl border border-[var(--line)] bg-[var(--background-deep)] px-3 text-[var(--foreground)] outline-none transition focus:border-[var(--line-gold)] placeholder:text-[var(--muted-soft)]"
           />
         </label>
       </div>
@@ -98,7 +95,7 @@ export function SuggestionForm() {
         <select
           value={type}
           onChange={(event) => setType(event.target.value)}
-          className="min-h-11 rounded-md border border-white/10 bg-[#050914] px-3 text-[#f8fafc]"
+          className="min-h-11 rounded-xl border border-[var(--line)] bg-[var(--background-deep)] px-3 text-[var(--foreground)] outline-none transition focus:border-[var(--line-gold)]"
         >
           {suggestionTypes.map((option) => (
             <option key={option}>{option}</option>
@@ -113,7 +110,7 @@ export function SuggestionForm() {
           minLength={10}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Tell me what is broken, funny, unfair, cursed, or secretly brilliant."
-          className="min-h-36 resize-y rounded-md border border-white/10 bg-[#050914] p-3 text-[#f8fafc] placeholder:text-[#64748b]"
+          className="min-h-36 resize-y rounded-xl border border-[var(--line)] bg-[var(--background-deep)] p-3 text-[var(--foreground)] outline-none transition focus:border-[var(--line-gold)] placeholder:text-[var(--muted-soft)]"
         />
       </label>
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center">
@@ -121,7 +118,7 @@ export function SuggestionForm() {
           {status === "sending" ? "Sending" : "Submit suggestion"}
         </Button>
         {detail && (
-          <span className={status === "error" ? "text-sm text-red-200" : "text-sm text-[#f5c542]"}>{detail}</span>
+          <span className={status === "error" ? "text-sm text-[#ffb4ba]" : "text-sm text-[var(--gold)]"}>{detail}</span>
         )}
       </div>
       </form>

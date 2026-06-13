@@ -103,13 +103,13 @@ export function SearchableSelect({ label, placeholder, options, value, onChange,
           onBlur={() => {
             blurTimer.current = window.setTimeout(() => setOpen(false), 120);
           }}
-          className="min-h-11 w-full rounded-md border border-[color:var(--line)] bg-[#111111] py-2 pl-9 pr-3 text-[color:var(--foreground)] placeholder:text-[color:var(--muted)]"
+          className="min-h-11 w-full rounded-lg border border-[color:var(--line)] bg-[var(--background-deep)] py-2 pl-9 pr-3 text-[color:var(--foreground)] outline-none transition focus:border-[var(--line-gold)] placeholder:text-[color:var(--muted)]"
         />
       </div>
 
       {open && !disabled && dropdownRect && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed z-[80] overflow-y-auto rounded-md border border-[color:var(--line)] bg-[#161616] p-1 shadow-2xl fine-scrollbar"
+          className="fixed z-[80] overflow-y-auto rounded-xl border border-[color:var(--line)] bg-[var(--panel-strong)] p-1.5 shadow-[var(--shadow-lg)] fine-scrollbar"
           style={{
             left: dropdownRect.left,
             width: dropdownRect.width,
@@ -125,8 +125,8 @@ export function SearchableSelect({ label, placeholder, options, value, onChange,
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => choose(option)}
                 className={cn(
-                  "grid min-h-11 w-full grid-cols-[2rem_1fr_auto] items-center gap-2 rounded-md px-2 text-left text-sm transition hover:bg-white/7",
-                  option.id === value && "bg-[color:var(--gold)]/18 text-[color:var(--gold-bright)]"
+                  "grid min-h-11 w-full grid-cols-[2rem_1fr_auto] items-center gap-2 rounded-lg px-2 text-left text-sm transition hover:bg-white/[0.06]",
+                  option.id === value && "bg-[rgba(243,198,77,.14)] text-[color:var(--gold)]"
                 )}
               >
                 {option.imageUrl ? (

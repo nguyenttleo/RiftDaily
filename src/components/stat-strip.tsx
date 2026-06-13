@@ -20,7 +20,7 @@ export function StatStrip({ stats }: { stats: UserStats }) {
         const Icon = item.icon;
 
         return (
-          <div key={item.label} className="rounded-md border border-[color:var(--line)] bg-white/6 p-3">
+          <div key={item.label} className="rounded-xl border border-[color:var(--line)] bg-[var(--surface-1)] p-3">
             <div className="flex items-center gap-2 text-xs uppercase text-[color:var(--muted)]">
               <Icon size={14} />
               {item.label}

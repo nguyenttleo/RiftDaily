@@ -10,13 +10,15 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
 
   return (
-    <section className="min-h-[calc(100dvh-5rem)] rounded-lg border border-[color:var(--line)] bg-[color:var(--panel)] p-3 sm:p-4 lg:min-h-0 lg:rounded-md">
-      <div className="mb-4 flex items-center gap-2">
-        <Crown size={18} className="text-[color:var(--gold-bright)]" />
-        <h2 className="text-lg font-semibold">Leaderboard</h2>
+    <section className="min-h-[calc(100dvh-5rem)] rounded-2xl border border-[color:var(--line)] bg-[color:var(--panel)] p-4 shadow-[var(--shadow-md)] sm:p-5 lg:min-h-0">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--line-gold)] bg-[rgba(243,198,77,.08)] text-[var(--gold)]">
+          <Crown size={16} />
+        </span>
+        <h2 className="font-display text-lg font-bold">Leaderboard</h2>
       </div>
       {entries.length === 0 && (
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-[color:var(--muted)]">
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-1)] p-4 text-sm text-[color:var(--muted)]">
           No verified scores yet. Sign in and lock a few runs to start filling this board.
         </div>
       )}
@@ -27,7 +29,7 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
               key={`${entry.rank}-${entry.username}:mobile`}
               type="button"
               onClick={() => setSelectedEntry(entry)}
-              className="rounded-lg border border-[color:var(--line)] bg-white/6 p-3 text-left transition hover:border-[#c89b3c]/45 hover:bg-white/9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c89b3c]/55"
+              className="rounded-lg border border-[color:var(--line)] bg-white/6 p-3 text-left transition hover:border-[var(--line-gold)] hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(243,198,77,.5)]"
               aria-label={`Open ${entry.username} leaderboard details`}
             >
               <div className="flex items-center justify-between gap-3">
@@ -39,7 +41,7 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
                   <div className="mt-1 truncate text-base font-bold">{entry.username}</div>
                 </div>
                 <div className="text-right">
-                  <div className="font-display text-lg font-bold text-[#f5c542]">{entry.currentRank}</div>
+                  <div className="font-display text-lg font-bold text-[var(--gold)]">{entry.currentRank}</div>
                   <div className="text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{entry.currentRankLp} LP</div>
                 </div>
               </div>
@@ -61,7 +63,7 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
                   key={`${entry.rank}-${entry.username}`}
                   type="button"
                   onClick={() => setSelectedEntry(entry)}
-                  className="grid grid-cols-[4rem_1fr_12rem] items-center gap-2 rounded-md border border-[color:var(--line)] bg-white/6 p-2 text-left text-sm transition hover:border-[#c89b3c]/45 hover:bg-white/9 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c89b3c]/55"
+                  className="grid grid-cols-[4rem_1fr_12rem] items-center gap-2 rounded-md border border-[color:var(--line)] bg-white/6 p-2 text-left text-sm transition hover:border-[var(--line-gold)] hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(243,198,77,.5)]"
                   aria-label={`Open ${entry.username} leaderboard details`}
                 >
                   <div className="flex items-center gap-2 font-semibold text-[color:var(--gold-bright)]">
@@ -70,7 +72,7 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
                   </div>
                   <div className="truncate font-semibold">{entry.username}</div>
                   <div className="min-w-0">
-                    <div className="truncate font-semibold text-[#f5c542]" title={formatCurrentRank(entry)}>{entry.currentRank}</div>
+                    <div className="truncate font-semibold text-[var(--gold)]" title={formatCurrentRank(entry)}>{entry.currentRank}</div>
                     <div className="text-xs text-[color:var(--muted)]">{entry.currentRankLp} LP</div>
                   </div>
                 </button>
@@ -87,18 +89,18 @@ export function LeaderboardPanel({ entries }: { entries: LeaderboardEntry[] }) {
 function LeaderboardPlayerModal({ entry, onClose }: { entry: LeaderboardEntry; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/72 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="relative w-full max-w-md rounded-lg border border-[#c89b3c]/35 bg-[linear-gradient(180deg,rgba(18,27,44,.98),rgba(5,8,16,.99))] p-4 text-left shadow-[0_28px_90px_rgba(0,0,0,.55)]" role="dialog" aria-modal="true" aria-labelledby="leaderboard-player-title">
+      <section className="relative w-full max-w-md rounded-2xl border border-[color:var(--line)] bg-[color:var(--panel)] p-5 text-left shadow-[var(--shadow-lg)]" role="dialog" aria-modal="true" aria-labelledby="leaderboard-player-title">
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-white/6 text-white/75 transition hover:border-[#c89b3c]/45 hover:bg-[#c89b3c]/12 hover:text-white"
+          className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full border border-[var(--line)] bg-[var(--surface-1)] text-white/75 transition hover:border-[var(--line-gold)] hover:bg-[rgba(243,198,77,.12)] hover:text-white"
           aria-label="Close player details"
         >
           <X size={16} />
         </button>
 
         <div className="pr-10">
-          <div className="text-xs font-bold uppercase tracking-[0.12em] text-[#c89b3c]">Leaderboard #{entry.rank}</div>
+          <div className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--gold)]">Leaderboard #{entry.rank}</div>
           <h3 id="leaderboard-player-title" className="mt-1 truncate font-display text-2xl font-black text-white" title={entry.username}>{entry.username}</h3>
         </div>
 
@@ -126,7 +128,7 @@ function LeaderboardPlayerModal({ entry, onClose }: { entry: LeaderboardEntry; o
 function LeaderboardDetailStat({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="min-w-0 rounded-md border border-white/10 bg-black/20 p-2">
-      <div className={accent ? "truncate font-display text-base font-black text-[#f5c542]" : "truncate font-semibold text-[color:var(--foreground)]"} title={value}>{value}</div>
+      <div className={accent ? "truncate font-display text-base font-black text-[var(--gold)]" : "truncate font-semibold text-[color:var(--foreground)]"} title={value}>{value}</div>
       <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.08em] text-[color:var(--muted)]">{label}</div>
     </div>
   );

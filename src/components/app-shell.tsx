@@ -276,7 +276,7 @@ export function AppShell() {
 
   if (loading) {
     return (
-      <main className="grid min-h-screen place-items-center overflow-hidden bg-[#050607] px-4">
+      <main className="grid min-h-screen place-items-center overflow-hidden bg-[var(--background)] px-4">
         <NexusLoader />
         {promotion && <PromotionModal key={`${promotion.toRank}:${promotion.lp}:${promotion.lpChange ?? 0}`} promotion={promotion} onClose={() => setPromotion(null)} />}
       </main>
@@ -285,8 +285,8 @@ export function AppShell() {
 
   if (!daily) {
     return (
-      <main className="grid min-h-screen place-items-center px-4">
-        <div className="rounded-md border border-red-400/30 bg-red-500/12 p-4 text-red-100">{message || "Unable to load."}</div>
+      <main className="grid min-h-screen place-items-center bg-[var(--background)] px-4">
+        <div className="rounded-xl border border-[rgba(224,98,108,.35)] bg-[rgba(224,98,108,.1)] px-5 py-4 text-sm font-medium text-[#ffd2d6]">{message || "Unable to load."}</div>
       </main>
     );
   }
@@ -294,7 +294,7 @@ export function AppShell() {
   const compactLobbyLayout = view === "dodge-queue";
 
   return (
-    <main className="grid min-h-dvh items-start overflow-x-clip bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
+    <main className="grid min-h-dvh items-start overflow-x-clip bg-[var(--background)] lg:grid-cols-[minmax(0,1fr)_19rem]">
       <section
         className={cn(
           "grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] transition-[grid-template-columns,gap] duration-300 ease-out",
@@ -361,10 +361,10 @@ export function AppShell() {
         </div>
       </section>
 
-      <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[#c89b3c]/20 bg-[radial-gradient(circle_at_20%_0%,rgba(200,155,60,.14),transparent_26%),linear-gradient(180deg,#101620_0%,#070a0f_48%,#050607_100%)] p-3 shadow-[-28px_0_90px_rgba(0,0,0,.45)] lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#f5c542]/60 to-transparent" />
+      <aside className="relative hidden h-[calc(100dvh-1rem)] self-start overflow-hidden border-l border-[var(--line)] bg-[linear-gradient(180deg,#0c0f16_0%,#08090e_60%,var(--background)_100%)] p-3 lg:sticky lg:top-2 lg:flex lg:flex-col lg:gap-3">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--gold)]/45 to-transparent" />
         <div className="relative">
-          <h1 className="font-display text-2xl font-black tracking-normal text-[color:var(--gold-bright)] drop-shadow-[0_0_18px_rgba(245,197,66,.18)]">Stats</h1>
+          <h1 className="font-display text-xl font-extrabold tracking-tight text-[var(--foreground)]">Stats</h1>
           <div className="mt-1 text-[11px] text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
         </div>
         <div className="relative flex min-h-0 flex-col gap-2 overflow-y-auto pr-1 pb-1 fine-scrollbar">
@@ -409,7 +409,7 @@ function MobileHub({
               <div className="truncate text-sm font-semibold text-white">{view === "leaderboard" ? "Leaderboard" : currentGameLabel(view)}</div>
               <div className="mt-0.5 text-[11px] text-[color:var(--muted)]">Reset {formatReset(resetCountdown)} · Patch {daily.dataDragonVersion}</div>
             </div>
-            <span className="shrink-0 rounded-full border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-2 py-1 text-[10px] font-bold uppercase text-[#f2d36b]">
+            <span className="shrink-0 rounded-full border border-[var(--line-gold)] bg-[rgba(243,198,77,.1)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--gold)]">
               {stats.rank} · {stats.rankLp} LP
             </span>
           </div>
@@ -438,13 +438,12 @@ function HubCard({ title, children, accent = false }: { title?: string; children
   return (
     <section
       className={cn(
-        "relative shrink-0 overflow-hidden rounded-lg border bg-[linear-gradient(180deg,rgba(20,28,42,.9),rgba(8,12,20,.92))] p-2.5 shadow-[0_12px_30px_rgba(0,0,0,.24),inset_0_1px_0_rgba(255,255,255,.05)]",
-        accent ? "border-[#c89b3c]/36" : "border-white/10"
+        "relative shrink-0 overflow-hidden rounded-xl border bg-[var(--surface-1)] p-2.5 shadow-[var(--shadow-sm)]",
+        accent ? "border-[var(--line-gold)]" : "border-[var(--line)]"
       )}
     >
-      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/18 to-transparent" />
-      {accent && <div className="pointer-events-none absolute -right-8 -top-10 h-24 w-24 rounded-full bg-[#c89b3c]/12 blur-2xl" />}
-      {title && <div className="font-display text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">{title}</div>}
+      <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+      {title && <div className="font-display text-xs font-bold uppercase tracking-[0.12em] text-[var(--gold)]">{title}</div>}
       {children}
     </section>
   );
@@ -454,13 +453,12 @@ function SidebarGroup({ title, children, accent = false }: { title: string; chil
   return (
     <section
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(16,24,36,.84),rgba(7,10,15,.9))] p-3 shadow-[0_18px_50px_rgba(0,0,0,.26),inset_0_1px_0_rgba(255,255,255,.045)]",
-        accent ? "border-[#c89b3c]/30" : "border-white/10"
+        "relative overflow-hidden rounded-xl border bg-[var(--surface-1)] p-3 shadow-[var(--shadow-sm)]",
+        accent ? "border-[var(--line-gold)]" : "border-[var(--line)]"
       )}
     >
-      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/16 to-transparent" />
-      {accent && <div className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full bg-[#c89b3c]/10 blur-3xl" />}
-      <div className="font-display text-[11px] font-bold uppercase tracking-[0.1em] text-[#c89b3c]">{title}</div>
+      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/14 to-transparent" />
+      <div className="font-display text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--gold)]">{title}</div>
       <div className="mt-2.5 grid gap-3">{children}</div>
     </section>
   );
@@ -495,7 +493,7 @@ function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: R
           )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <div className="font-display text-lg font-bold text-[#f5c542]">{progress.lp} LP</div>
+          <div className="font-display text-lg font-bold text-[var(--gold)]">{progress.lp} LP</div>
           {typeof lpDelta === "number" && (
             <div className={cn("text-xs font-bold", lpDelta >= 0 ? "text-green-300" : "text-red-300")}>
               {lpDelta > 0 ? "+" : ""}
@@ -507,7 +505,7 @@ function PlayerSidebarGroup({ stats, progress }: { stats: UserStats; progress: R
           </div>
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-          <div className="h-1.5 rounded-full bg-[#f5c542] transition-all" style={{ width: `${progress.percent}%` }} />
+          <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,var(--gold-deep),var(--gold))] transition-all" style={{ width: `${progress.percent}%` }} />
         </div>
         <div className="mt-1.5 text-[11px] text-[color:var(--muted)]">
           {stats.rank === "Unranked"
@@ -553,7 +551,7 @@ function TodaySidebarGroup({
           {preview.length > 0 ? (
             preview.map((entry) => (
               <div key={`${entry.rank}-${entry.username}:sidebar`} className="grid grid-cols-[1.35rem_minmax(0,1fr)_auto] items-center gap-2 text-sm">
-                <span className="font-display text-xs font-bold text-[#c89b3c]">#{entry.rank}</span>
+                <span className="font-display text-xs font-bold text-[var(--gold)]">#{entry.rank}</span>
                 <span className="truncate font-semibold text-white" title={entry.username}>{entry.username}</span>
                 <span className="text-xs text-[color:var(--muted)]">{entry.currentRank} - {entry.currentRankLp} LP</span>
               </div>

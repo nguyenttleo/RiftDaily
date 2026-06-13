@@ -79,13 +79,13 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
   }
 
   if (status === "loading") {
-    return <div className="h-10 w-40 animate-pulse rounded-md bg-white/10" />;
+    return <div className="h-10 w-40 animate-pulse rounded-lg bg-white/10" />;
   }
 
   if (session?.user) {
     return (
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <div className="rounded-md border border-[color:var(--line)] bg-white/6 px-3 py-2 text-sm">
+        <div className="rounded-lg border border-[color:var(--line)] bg-[var(--surface-1)] px-3 py-2 text-sm">
           {session.user.username ?? session.user.name}
         </div>
         <Button
@@ -107,11 +107,10 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
   return (
     <form
       onSubmit={submit}
-      className="relative grid w-full gap-2 overflow-hidden rounded-xl border border-[#c89b3c]/24 bg-[linear-gradient(180deg,rgba(17,24,34,.96),rgba(7,10,15,.96))] p-3 shadow-[0_18px_46px_rgba(0,0,0,.36),inset_0_1px_0_rgba(255,255,255,.06)]"
+      className="relative grid w-full gap-2 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--surface-1)] p-3.5 shadow-[var(--shadow-md)]"
     >
-      <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#c89b3c]/10 blur-2xl" />
       <div>
-        <div className="font-display text-sm font-semibold text-[color:var(--gold-bright)]">Save progress</div>
+        <div className="font-display text-sm font-bold text-[color:var(--gold)]">Save progress</div>
       </div>
 
       {!expanded && (
@@ -124,17 +123,17 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
 
       {expanded && (
         <>
-      <div className="flex items-center gap-1 rounded-md bg-white/6 p-1">
+      <div className="flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--background-deep)] p-1">
         <button
           type="button"
-          className={`min-h-8 flex-1 rounded-md px-2 text-sm ${mode === "signin" ? "bg-[color:var(--gold)] text-[#11141c]" : "text-[color:var(--muted)]"}`}
+          className={`min-h-8 flex-1 rounded-md px-2 text-sm font-semibold transition ${mode === "signin" ? "bg-[color:var(--gold)] text-[#14110a]" : "text-[color:var(--muted)] hover:text-white"}`}
           onClick={() => setMode("signin")}
         >
           Sign in
         </button>
         <button
           type="button"
-          className={`min-h-8 flex-1 rounded-md px-2 text-sm ${mode === "register" ? "bg-[color:var(--gold)] text-[#11141c]" : "text-[color:var(--muted)]"}`}
+          className={`min-h-8 flex-1 rounded-md px-2 text-sm font-semibold transition ${mode === "register" ? "bg-[color:var(--gold)] text-[#14110a]" : "text-[color:var(--muted)] hover:text-white"}`}
           onClick={() => setMode("register")}
         >
           Create
@@ -143,14 +142,14 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
 
       {mode === "register" && (
         <label className="grid gap-1.5">
-          <span className="font-display text-xs font-bold uppercase tracking-[0.08em] text-[#c89b3c]">Display Name</span>
+          <span className="font-display text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted)]">Display Name</span>
           <input
             value={username}
             onChange={(event) => setUsername(event.target.value)}
             placeholder="Display Name"
             minLength={3}
             maxLength={24}
-            className="min-h-10 rounded-md border border-[color:var(--line)] bg-[#080a0f] px-3 text-sm"
+            className="min-h-10 rounded-lg border border-[color:var(--line)] bg-[var(--background-deep)] px-3 text-sm outline-none transition focus:border-[var(--line-gold)]"
             required
           />
         </label>
@@ -163,7 +162,7 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
           onChange={(event) => setEmail(event.target.value)}
           placeholder="Email"
           type="email"
-          className="min-h-10 rounded-md border border-[color:var(--line)] bg-[#080a0f] px-3 text-sm"
+          className="min-h-10 rounded-lg border border-[color:var(--line)] bg-[var(--background-deep)] px-3 text-sm outline-none transition focus:border-[var(--line-gold)]"
           required
         />
       </label>
@@ -177,7 +176,7 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
           minLength={8}
           maxLength={128}
           aria-describedby={mode === "register" ? "password-requirements" : undefined}
-          className="min-h-10 rounded-md border border-[color:var(--line)] bg-[#080a0f] px-3 text-sm"
+          className="min-h-10 rounded-lg border border-[color:var(--line)] bg-[var(--background-deep)] px-3 text-sm outline-none transition focus:border-[var(--line-gold)]"
           required
         />
       </label>
@@ -187,7 +186,7 @@ export function AuthPanel({ onAuthChange }: { onAuthChange: () => void }) {
         </p>
       )}
 
-      {message && <p className="text-sm text-red-200">{message}</p>}
+      {message && <p className="text-sm text-[#ffb4ba]">{message}</p>}
 
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={busy} icon={mode === "register" ? <UserPlus size={16} /> : <LogIn size={16} />} className="w-full sm:w-auto">
