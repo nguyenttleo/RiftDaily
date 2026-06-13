@@ -54,6 +54,7 @@ export function RiftCommandBar({
   includeInfoLinks = false,
   includeLeaderboardLink = false,
   homeAnchors = false,
+  compact = false,
   position = "fixed",
   showCta = true,
   showProductSwitch = false,
@@ -68,6 +69,7 @@ export function RiftCommandBar({
   includeInfoLinks?: boolean;
   includeLeaderboardLink?: boolean;
   homeAnchors?: boolean;
+  compact?: boolean;
   position?: "fixed" | "sticky";
   showCta?: boolean;
   showProductSwitch?: boolean;
@@ -92,10 +94,11 @@ export function RiftCommandBar({
     >
       <div
         className={cn(
-          "mx-auto grid min-h-[4.25rem] grid-cols-[1fr_auto] items-center gap-2 py-2 md:min-h-[4.75rem]",
+          "mx-auto grid grid-cols-[1fr_auto] items-center gap-2",
+          compact ? "min-h-12 py-1 md:min-h-14" : "min-h-[4.25rem] py-2 md:min-h-[4.75rem]",
           showCta
             ? "w-[calc(100%_-_1rem)] max-w-[82.5rem] md:w-[calc(100%_-_3rem)] xl:grid-cols-[minmax(9rem,1fr)_minmax(0,auto)_minmax(8rem,1fr)] xl:gap-4"
-            : "w-full max-w-none px-4 sm:px-5 xl:grid-cols-[auto_minmax(0,1fr)] xl:gap-5"
+            : cn("w-full max-w-none xl:grid-cols-[auto_minmax(0,1fr)]", compact ? "px-2 sm:px-3 xl:gap-3" : "px-4 sm:px-5 xl:gap-5")
         )}
       >
         <Link
@@ -124,8 +127,9 @@ export function RiftCommandBar({
         <nav
           aria-label="Primary navigation"
           className={cn(
-            "order-3 col-span-2 min-w-0 max-w-full items-center overflow-x-auto rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.05),0_12px_32px_rgba(0,0,0,.22)] fine-scrollbar xl:order-none xl:col-span-1",
-            showCta ? "flex gap-0.5" : "mx-2 flex gap-1 sm:mx-4 xl:mx-6"
+            "order-3 col-span-2 min-w-0 max-w-full items-center overflow-x-auto rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025))] shadow-[inset_0_1px_0_rgba(255,255,255,.05),0_12px_32px_rgba(0,0,0,.22)] fine-scrollbar xl:order-none xl:col-span-1",
+            compact ? "p-1" : "p-1.5",
+            showCta ? "flex gap-0.5" : cn("flex gap-1", compact ? "mx-1 sm:mx-2 xl:mx-3" : "mx-2 sm:mx-4 xl:mx-6")
           )}
         >
           {navItems.map((item) => (
@@ -135,7 +139,7 @@ export function RiftCommandBar({
               label={item.label}
               icon={item.icon}
               active={activeMode === item.mode}
-              roomy={!showCta}
+              roomy={!showCta && !compact}
               onClick={(event) => {
                 if (!onModeSelect) {
                   return;
@@ -147,7 +151,7 @@ export function RiftCommandBar({
             />
           ))}
           {showProductSwitch && (
-            <div className="ml-auto inline-grid shrink-0 grid-cols-2 rounded-full border border-[#c89b3c]/25 bg-[#050607]/70 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
+            <div className={cn("ml-auto inline-grid shrink-0 grid-cols-2 rounded-full border border-[#c89b3c]/25 bg-[#050607]/70 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]", compact ? "p-0.5" : "p-1")}>
               {(["lol", "tft"] as const).map((product) => (
                 <button
                   key={product}
@@ -155,7 +159,8 @@ export function RiftCommandBar({
                   aria-pressed={activeProduct === product}
                   onClick={() => onProductSelect?.(product)}
                   className={cn(
-                    "font-display min-h-8 rounded-full px-3 text-xs font-extrabold uppercase transition sm:min-w-12",
+                    "font-display rounded-full text-xs font-extrabold uppercase transition sm:min-w-12",
+                    compact ? "min-h-7 px-2.5" : "min-h-8 px-3",
                     activeProduct === product
                       ? "bg-[#f5c542] text-[#07101d] shadow-[0_8px_20px_rgba(245,197,66,.2)]"
                       : "text-[#dce6ff]/65 hover:bg-white/[0.07] hover:text-white"

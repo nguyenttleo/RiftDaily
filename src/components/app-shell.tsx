@@ -291,11 +291,14 @@ export function AppShell() {
     );
   }
 
+  const compactLobbyLayout = view === "dodge-queue";
+
   return (
     <main className="grid min-h-dvh items-start overflow-x-clip bg-[#050607] lg:grid-cols-[minmax(0,1fr)_19rem]">
       <section
         className={cn(
-          "grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2 p-2 transition-[grid-template-columns,gap] duration-300 ease-out sm:gap-3 sm:p-4",
+          "grid min-h-dvh min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] transition-[grid-template-columns,gap] duration-300 ease-out",
+          compactLobbyLayout ? "gap-0.5 p-0.5 sm:gap-1 sm:p-1" : "gap-2 p-2 sm:gap-3 sm:p-4",
           usesLeftRail
             ? "xl:grid-cols-[minmax(18rem,21rem)_minmax(0,1fr)] xl:grid-rows-[auto_minmax(0,1fr)] xl:items-start"
             : "lg:grid-rows-[auto_minmax(0,1fr)]"
@@ -310,6 +313,7 @@ export function AppShell() {
             activeMode={view}
             activeProduct="lol"
             brandVariant="sleek"
+            compact={compactLobbyLayout}
             onModeSelect={selectView}
             onProductSelect={selectProduct}
             position="sticky"

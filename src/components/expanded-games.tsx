@@ -3464,15 +3464,17 @@ export function DodgeQueueGame({
       icon={<CircleSlash size={18} />}
       title="Dodge or Queue"
       headerAccessory={<GameHeaderTools><InfiniteStreakBar round={roundIndex + 1} current={streak.current} best={streak.best} /><CopyLinkButton mode="dodge-queue" /></GameHeaderTools>}
+      compactHeader
       playAreaDepth
     >
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className={cn("grid flex-1 content-start gap-2 lg:min-h-0", submitted ? "lg:grid-rows-[auto_auto_auto]" : "lg:grid-rows-[auto_auto]")}>
+      <div className={cn("grid flex-1 gap-2 lg:min-h-0", submitted ? "lg:grid-rows-[minmax(0,1fr)_auto_auto]" : "lg:grid-rows-[minmax(0,1fr)_auto]")}>
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
+          fitViewport
           bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => {
             const mastery = findPlayerMastery(masteryState.players, {
               teamId: round.sourceMatch?.allyTeamId,
@@ -3569,6 +3571,7 @@ function PuzzleFrame({
   kicker,
   headerAccessory,
   children,
+  compactHeader = false,
   playAreaDepth = false
 }: {
   icon: ReactNode;
@@ -3576,14 +3579,15 @@ function PuzzleFrame({
   kicker?: string;
   headerAccessory?: ReactNode;
   children: ReactNode;
+  compactHeader?: boolean;
   playAreaDepth?: boolean;
 }) {
   const content = (
     <>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <div className={cn("flex flex-wrap items-center", compactHeader ? "gap-x-3 gap-y-1" : "gap-x-5 gap-y-2")}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-[#c89b3c]">{icon}</span>
-          <h2 className="truncate text-lg font-semibold sm:text-xl">{title}</h2>
+          <h2 className={cn("truncate font-semibold", compactHeader ? "text-base sm:text-lg" : "text-lg sm:text-xl")}>{title}</h2>
           {kicker && <span className="text-xs text-[color:var(--muted)] sm:text-sm">{kicker}</span>}
         </div>
         {headerAccessory ? <div className="flex min-w-0 shrink-0">{headerAccessory}</div> : null}
@@ -3595,11 +3599,18 @@ function PuzzleFrame({
   return (
     <section
       className={cn(
-        "flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] sm:gap-3 sm:p-4 lg:h-full lg:min-h-0 lg:rounded-sm",
+        "flex h-auto min-h-[calc(100dvh-5rem)] flex-col gap-2 rounded-lg border border-[#3c3421] bg-[#071018] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,.05)] lg:h-full lg:min-h-0 lg:rounded-sm",
+        compactHeader ? "sm:p-3" : "sm:gap-3 sm:p-4",
         playAreaDepth && "play-area-depth bg-transparent shadow-none"
       )}
     >
-      {playAreaDepth ? <div className="play-area-content flex min-h-0 flex-1 flex-col gap-2 sm:gap-3">{content}</div> : content}
+      {playAreaDepth ? (
+        <div className={cn("play-area-content flex min-h-0 flex-1 flex-col", compactHeader ? "gap-1.5 sm:gap-2" : "gap-2 sm:gap-3")}>
+          {content}
+        </div>
+      ) : (
+        content
+      )}
     </section>
   );
 }
@@ -3636,6 +3647,7 @@ function DraftScreen({
   blueBans,
   redBans,
   hiddenLabel = "Locked",
+  fitViewport = false,
   masteryStatus = "idle"
 }: {
   blueName: string;
@@ -3645,10 +3657,16 @@ function DraftScreen({
   blueBans: Array<OptionItem | undefined>;
   redBans: Array<OptionItem | undefined>;
   hiddenLabel?: string;
+  fitViewport?: boolean;
   masteryStatus?: MatchMasteryLoadStatus;
 }) {
   return (
-    <div className="play-panel-depth grid min-h-0 gap-2 rounded-sm border border-[#3c3421] p-2 md:grid-cols-[1fr_4rem_1fr] lg:h-[clamp(22rem,calc(100dvh-15rem),30rem)] xl:grid-cols-[1fr_5rem_1fr]">
+    <div
+      className={cn(
+        "play-panel-depth grid min-h-0 gap-2 rounded-sm border border-[#3c3421] p-2 md:grid-cols-[1fr_4rem_1fr] lg:h-full xl:grid-cols-[1fr_5rem_1fr]",
+        fitViewport && "draft-fit-viewport"
+      )}
+    >
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
       <div className="grid place-items-center text-center">
         <MatchupVsMark compact />
@@ -3738,10 +3756,12 @@ function DraftPickCard({
     <div className="play-card-depth relative min-h-[7.1rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[7.5rem] lg:h-full lg:min-h-0">
       {pick?.splashUrl && (
         <div
-          className="absolute inset-0 bg-cover bg-center opacity-[0.7]"
+          className="absolute inset-0 opacity-[0.78]"
           style={{
             backgroundImage: `url(${pick.splashUrl})`,
-            backgroundPosition: championSplashPosition(pick)
+            backgroundPosition: championLobbySplashPosition(pick),
+            backgroundRepeat: "no-repeat",
+            backgroundSize: "100% auto"
           }}
         />
       )}
@@ -3823,7 +3843,7 @@ function DraftInlineSpellStack({ spells }: { spells: SummonerSpellRef[] }) {
 
 function BanIcon({ pick }: { pick?: OptionItem }) {
   return (
-    <div className="relative h-7 w-7 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722]">
+    <div className="relative h-10 w-10 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:h-11 sm:w-11">
       {pick?.imageUrl && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={pick.imageUrl} alt="" className="h-full w-full object-cover grayscale" />
@@ -3845,6 +3865,24 @@ function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[],
     ...(playerName ? { playerName } : {}),
     ...(mastery ? { mastery } : {})
   };
+}
+
+function championLobbySplashPosition(champion: OptionItem) {
+  const position = championSplashPosition(champion);
+  const match = position.match(/^(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%$/);
+
+  if (!match) {
+    return position;
+  }
+
+  const [, xRaw, yRaw] = match;
+  const y = Number(yRaw);
+
+  if (!Number.isFinite(y)) {
+    return position;
+  }
+
+  return `${xRaw}% ${Math.max(18, Math.min(30, y - 6))}%`;
 }
 
 const laneLabels = ["Top", "Jungle", "Mid", "Bot", "Supp"] as const;

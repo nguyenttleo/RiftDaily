@@ -276,6 +276,18 @@ select:focus-visible {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
 }
 
+@media (min-width: 1024px) {
+  .draft-fit-viewport {
+    height: clamp(33.25rem, calc(100dvh - 11.75rem), 38rem);
+  }
+}
+
+@media (min-width: 1024px) and (min-height: 900px) {
+  .draft-fit-viewport {
+    height: 100%;
+  }
+}
+
 .play-inset-panel-depth {
   position: relative;
   overflow: hidden;
