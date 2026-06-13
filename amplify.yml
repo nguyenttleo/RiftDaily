@@ -3,6 +3,7 @@ frontend:
   phases:
     preBuild:
       commands:
+        - rm -rf security .codex-security-dev*.log
         - npm ci
     build:
       commands:

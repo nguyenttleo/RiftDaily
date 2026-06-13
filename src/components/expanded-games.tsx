@@ -3372,7 +3372,7 @@ function EloTeamRow({
         return (
           <div data-elo-player-card key={`${side}:${lane.role}`} className="relative min-h-[12.5rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[13.25rem] lg:h-full lg:min-h-0">
             <div
-              className="absolute inset-0 opacity-48"
+              className="absolute inset-0 opacity-[0.8]"
               style={{
                 backgroundImage: `url(${lane.champion.splashUrl})`,
                 backgroundPosition: championSplashPosition(lane.champion, "portrait"),
@@ -3469,7 +3469,7 @@ export function DodgeQueueGame({
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
+      <div className={cn("grid flex-1 content-start gap-2 lg:min-h-0", submitted ? "lg:grid-rows-[auto_auto_auto]" : "lg:grid-rows-[auto_auto]")}>
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
@@ -3503,7 +3503,7 @@ export function DodgeQueueGame({
             onClick={() => lockCall("dodge")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/55 disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              "font-display min-h-10 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/55 disabled:cursor-default sm:min-h-12 sm:px-4 sm:text-lg lg:min-h-11",
               !submitted && "hover:-translate-y-0.5 hover:ring-2 hover:ring-red-300/45 hover:shadow-[0_0_22px_rgba(248,113,113,.18)] hover:brightness-110",
               answer === "dodge"
                 ? "border-red-300 bg-red-500 text-white ring-2 ring-red-300/55"
@@ -3517,7 +3517,7 @@ export function DodgeQueueGame({
             onClick={() => lockCall("queue")}
             disabled={submitted}
             className={cn(
-              "font-display min-h-11 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300/55 disabled:cursor-default sm:min-h-14 sm:px-4 sm:text-lg",
+              "font-display min-h-10 rounded-sm border px-3 text-base font-extrabold transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-300/55 disabled:cursor-default sm:min-h-12 sm:px-4 sm:text-lg lg:min-h-11",
               !submitted && "hover:-translate-y-0.5 hover:ring-2 hover:ring-green-300/45 hover:shadow-[0_0_22px_rgba(74,222,128,.18)] hover:brightness-110",
               answer === "queue"
                 ? "border-green-300 bg-green-500 text-[#071018] ring-2 ring-green-300/55"
@@ -3527,20 +3527,18 @@ export function DodgeQueueGame({
             Queue
           </button>
         </div>
+        {submitted && (
         <div className="flex flex-wrap gap-2">
           <ResultPill submitted={submitted} correct={correct} answer={round.answer === "queue" ? "Queue" : "Dodge"} />
-          {submitted && (
-            <Button type="button" variant="secondary" onClick={() => setResultModalOpen(true)}>
-              Result
-            </Button>
-          )}
-          {submitted && round.sourceMatch && (
+          <Button type="button" variant="secondary" onClick={() => setResultModalOpen(true)}>
+            Result
+          </Button>
+          {round.sourceMatch && (
             <MatchDataToggleButton expanded={matchDataExpanded} onClick={() => setMatchDataExpanded((current) => !current)} />
           )}
-          {submitted && (
-            <NextLobbyButton onClick={nextLobby} />
-          )}
+          <NextLobbyButton onClick={nextLobby} />
         </div>
+        )}
         {submitted && matchDataExpanded && <MatchProofCard sourceMatch={round.sourceMatch} />}
         {submitted && resultModalOpen && (
           <VerifiedAnswerModal
@@ -3650,7 +3648,7 @@ function DraftScreen({
   masteryStatus?: MatchMasteryLoadStatus;
 }) {
   return (
-    <div className="play-panel-depth grid gap-2 rounded-sm border border-[#3c3421] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
+    <div className="play-panel-depth grid min-h-0 gap-2 rounded-sm border border-[#3c3421] p-2 md:grid-cols-[1fr_4rem_1fr] lg:h-[clamp(21rem,calc(100dvh-16.75rem),30rem)] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
       <div className="grid place-items-center text-center">
         <MatchupVsMark compact />
@@ -3676,13 +3674,13 @@ function DraftTeam({
   masteryStatus: MatchMasteryLoadStatus;
 }) {
   return (
-    <div className="grid gap-1.5 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
-      <div className={cn("flex items-center gap-4 sm:gap-5", side === "red" ? "justify-end" : "justify-start")}>
+    <div className="grid gap-1.5 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-2 lg:h-full">
+      <div className={cn("flex items-center gap-3 sm:gap-4", side === "red" ? "justify-end" : "justify-start")}>
         {side === "red" && <BanCluster bans={bans} />}
         <DraftTeamNamePlate side={side} name={name} />
         {side === "blue" && <BanCluster bans={bans} />}
       </div>
-      <div className="grid gap-1.5 md:min-h-0 md:grid-rows-5 md:gap-2">
+      <div className="grid gap-1.5 md:min-h-0 md:grid-rows-5">
         {Array.from({ length: 5 }).map((_, index) => (
           <DraftPickCard key={index} side={side} pick={picks[index]} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
         ))}
@@ -3690,7 +3688,6 @@ function DraftTeam({
     </div>
   );
 }
-
 function DraftTeamNamePlate({ side, name }: { side: "blue" | "red"; name: string }) {
   const teamTone = side === "blue" ? "blue" : "red";
 
@@ -3738,10 +3735,10 @@ function DraftPickCard({
   const mirrored = side === "blue";
 
   return (
-    <div className="play-card-depth relative min-h-[9.75rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[10.75rem]">
+    <div className="play-card-depth relative min-h-[7.1rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[7.5rem] lg:h-full lg:min-h-0">
       {pick?.splashUrl && (
         <div
-          className="absolute inset-0 bg-cover bg-center opacity-38"
+          className="absolute inset-0 bg-cover bg-center opacity-[0.7]"
           style={{
             backgroundImage: `url(${pick.splashUrl})`,
             backgroundPosition: championSplashPosition(pick)
@@ -3757,22 +3754,18 @@ function DraftPickCard({
         )}
       />
       <div className={cn("absolute inset-x-0 bottom-0 h-px", mirrored ? "bg-gradient-to-l from-[#c89b3c]/45 via-transparent to-transparent" : "bg-gradient-to-r from-[#c89b3c]/45 via-transparent to-transparent")} />
-
-      {pick && <ChampionMasteryPanel masteries={pick.mastery} status={masteryStatus} align={mirrored ? "left" : "right"} variant="side" />}
+      {pick && <ChampionMasteryPanel masteries={pick.mastery} status={masteryStatus} align={mirrored ? "left" : "right"} variant="draft" />}
 
       <div
         className={cn(
-          "relative grid h-full min-h-20 items-center gap-2 p-2 sm:min-h-24 sm:gap-3 sm:p-2.5",
-          mirrored ? "pl-10 sm:pl-11" : "pr-10 sm:pr-11",
+          "relative grid h-full min-h-16 items-center gap-2 p-2 sm:min-h-[4.75rem] sm:gap-3 sm:p-2.5 lg:min-h-0",
           mirrored
-            ? "grid-cols-[auto_minmax(0,1fr)_3.25rem] sm:grid-cols-[auto_minmax(0,1fr)_4rem]"
-            : "grid-cols-[3.25rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_auto]"
+            ? "grid-cols-[minmax(0,1fr)_3rem] sm:grid-cols-[minmax(0,1fr)_3.5rem]"
+            : "grid-cols-[3rem_minmax(0,1fr)] sm:grid-cols-[3.5rem_minmax(0,1fr)]"
         )}
       >
-        {mirrored && (pick?.spells ? <DraftSpellStack spells={pick.spells} align="left" /> : <DraftSpellSpacer align="left" />)}
-
         {!mirrored && (
-        <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-16 sm:w-16">
+        <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-14 sm:w-14">
           {pick?.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -3782,22 +3775,28 @@ function DraftPickCard({
         </div>
         )}
 
-        <div className={cn("min-w-0", mirrored && "text-right")}>
+        <div className={cn("min-w-0", mirrored ? "pl-[5.75rem] text-right sm:pl-[6.5rem]" : "pr-[5.75rem] sm:pr-[6.5rem]")}>
           <div className={cn("flex min-w-0 flex-wrap items-center gap-1.5", mirrored ? "justify-end" : "justify-start")}>
             <span className="rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
               {displayLaneLabel(pick?.sublabel)}
             </span>
           </div>
-          <div className="mt-1 truncate font-display text-base font-black leading-none text-white sm:text-xl">{pick?.label ?? hiddenLabel}</div>
-          {pick?.playerName && (
-            <div title={pick.playerName} className="mt-1 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5] sm:text-xs">
-              {pick.playerName}
+          <div className={cn("mt-1 flex min-w-0 items-center gap-2", mirrored ? "justify-end" : "justify-start")}>
+            {!mirrored && pick?.spells && <DraftInlineSpellStack spells={pick.spells} />}
+            <div className="min-w-0">
+              <div className="truncate font-display text-base font-black leading-none text-white sm:text-xl">{pick?.label ?? hiddenLabel}</div>
+              {pick?.playerName && (
+                <div title={pick.playerName} className="mt-1 truncate text-[11px] font-semibold tracking-[0.02em] text-[#9fb7d5] sm:text-xs">
+                  {pick.playerName}
+                </div>
+              )}
             </div>
-          )}
+            {mirrored && pick?.spells && <DraftInlineSpellStack spells={pick.spells} />}
+          </div>
         </div>
 
-        {mirrored ? (
-          <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-16 sm:w-16">
+        {mirrored && (
+          <div className="relative h-12 w-12 overflow-hidden rounded-sm border border-[#3c3421] bg-[#071018] shadow-[0_10px_26px_rgba(0,0,0,.35)] sm:h-14 sm:w-14">
             {pick?.imageUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={pick.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -3805,29 +3804,21 @@ function DraftPickCard({
               <div className="grid h-full w-full place-items-center text-sm text-[#c89b3c]">?</div>
             )}
           </div>
-        ) : (
-          pick?.spells ? <DraftSpellStack spells={pick.spells} align="right" /> : <DraftSpellSpacer align="right" />
         )}
       </div>
     </div>
   );
 }
 
-function DraftSpellStack({ spells, align }: { spells: SummonerSpellRef[]; align: "left" | "right" }) {
+function DraftInlineSpellStack({ spells }: { spells: SummonerSpellRef[] }) {
   return (
-    <div className={cn("grid gap-1", align === "right" ? "justify-items-end" : "justify-items-start")}>
-      <div className="grid gap-1">
-        {spells.map((spell) => (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] bg-[#050607] shadow-[0_8px_18px_rgba(0,0,0,.32)] sm:h-7 sm:w-7" />
-        ))}
-      </div>
+    <div className="grid shrink-0 gap-1">
+      {spells.map((spell) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-5 w-5 rounded-sm border border-[#3c3421] bg-[#050607] shadow-[0_8px_18px_rgba(0,0,0,.32)] sm:h-6 sm:w-6" />
+      ))}
     </div>
   );
-}
-
-function DraftSpellSpacer({ align }: { align: "left" | "right" }) {
-  return <div aria-hidden="true" className={cn("h-[3.25rem] w-6 sm:h-[3.75rem] sm:w-7", align === "right" ? "justify-self-end" : "justify-self-start")} />;
 }
 
 function BanIcon({ pick }: { pick?: OptionItem }) {
@@ -4047,7 +4038,7 @@ function ChampionMasteryPanel({
   masteries?: ChampionMasterySnapshot[];
   status: MatchMasteryLoadStatus;
   align?: "left" | "right";
-  variant?: "inline" | "side";
+  variant?: "inline" | "side" | "draft";
 }) {
   const topMasteries = masteries?.slice(0, 3) ?? [];
   const emptyLabel =
@@ -4081,6 +4072,37 @@ function ChampionMasteryPanel({
         ) : (
           <div className="mt-1 text-center text-[9px] font-bold leading-tight text-[#c8daf4]">
             {status === "loading" ? "..." : "--"}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (variant === "draft") {
+    return (
+      <div
+        className={cn(
+          "absolute inset-y-1 z-10 grid w-[5.75rem] grid-rows-3 gap-0.5 bg-transparent drop-shadow-[0_2px_5px_rgba(0,0,0,.95)] sm:w-[6.5rem] sm:gap-1",
+          align === "left" ? "left-2" : "right-2"
+        )}
+      >
+        {topMasteries.length > 0 ? (
+          topMasteries.map((mastery) => (
+            <div
+              key={mastery.champion.id}
+              title={`${mastery.champion.name}: level ${mastery.championLevel}, ${mastery.championPoints.toLocaleString()} mastery points`}
+              className="grid min-h-0 grid-cols-[1.125rem_minmax(0,1fr)] items-center gap-1 sm:grid-cols-[1.25rem_minmax(0,1fr)] xl:grid-cols-[1.5rem_minmax(0,1fr)]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={mastery.champion.squareUrl} alt={mastery.champion.name} className="h-[18px] w-[18px] rounded-[2px] border border-[#c89b3c]/55 object-cover shadow-[0_1px_4px_rgba(0,0,0,.8)] sm:h-5 sm:w-5 xl:h-6 xl:w-6" />
+              <div className="min-w-0 truncate text-[9px] font-black leading-none text-[#f5d982] sm:text-[10px] xl:text-[11px]">
+                L{mastery.championLevel} <span className="text-[#d6e5ff]">{compactNumber(mastery.championPoints)}</span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="row-span-3 grid min-h-0 items-center truncate text-[9px] font-bold leading-none text-[#c8daf4]">
+            {status === "loading" ? "Loading mastery..." : status === "error" ? "Mastery unavailable" : "No mastery data"}
           </div>
         )}
       </div>
