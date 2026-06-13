@@ -76,14 +76,14 @@ Redeploy after changing those values so auth callbacks and public links use the 
 The app generates deterministic daily content on demand. Keep the daily row generator fast:
 
 ```text
-GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily
+POST https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily
 Authorization: Bearer YOUR_CRON_SECRET
 ```
 
 Build Champion Matchup cache in small batches so Amplify does not time out:
 
 ```text
-GET https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1
+POST https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1
 Authorization: Bearer YOUR_CRON_SECRET
 ```
 
@@ -97,10 +97,12 @@ The warm response includes how many current-patch matches were processed and how
 
 ```powershell
 Invoke-WebRequest `
+  -Method Post `
   -Uri "https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily" `
   -Headers @{ Authorization = "Bearer YOUR_CRON_SECRET" }
 
 Invoke-WebRequest `
+  -Method Post `
   -Uri "https://YOUR-AMPLIFY-DOMAIN/api/cron/generate-daily?mode=warm-matchups&target=12&sources=1&pages=1" `
   -Headers @{ Authorization = "Bearer YOUR_CRON_SECRET" }
 ```

@@ -3,6 +3,7 @@
 import { ArrowRight, CheckCircle2, CircleSlash, Copy, PackageSearch, Split, Swords, TrendingUp, UsersRound, X, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { CopyLinkButton } from "@/components/copy-link-button";
@@ -16,9 +17,11 @@ import {
   rankedStorageKey
 } from "@/game/scoring";
 import { BUILD_SHARE_PARAM, decodeBuildShareValue, encodeBuildShareCode } from "@/lib/build-share";
+import { championSplashPosition } from "@/lib/champion-splash-position";
 import { splitRiotId } from "@/lib/riot-id";
 import { cn } from "@/lib/utils";
 import type {
+  ChampionMasterySnapshot,
   ChampionMatchupChallenge,
   ChampionMatchupRound,
   DodgeQueueChallenge,
@@ -29,6 +32,7 @@ import type {
   ItemBuildChallenge,
   ItemRecipeChallenge,
   OptionItem,
+  PlayerMasterySnapshot,
   PublicChampion,
   SummonerSpellRef,
   VerifiedMatchData
@@ -39,6 +43,13 @@ const BUILD_RELEVANT_ITEM_LIMIT = 24;
 const BUILD_CHAMPION_NAME_DEFAULT_FONT_REM = 1.5;
 const BUILD_CHAMPION_NAME_MIN_FONT_REM = 0.9;
 type ItemGuessResult = "correct" | "wrong";
+type MatchMasteryLoadStatus = "idle" | "loading" | "ready" | "error";
+type MatchMasteryLoadState = {
+  status: MatchMasteryLoadStatus;
+  players: PlayerMasterySnapshot[];
+};
+
+const matchMasteryCache = new Map<string, PlayerMasterySnapshot[]>();
 
 export function ItemBuildGame({
   challenge,
@@ -521,7 +532,7 @@ function BuildTargetCard({
         className="absolute inset-0 bg-cover opacity-[0.36]"
         style={{
           backgroundImage: `url(${round.champion.splashUrl})`,
-          backgroundPosition: championSplashPosition(round.champion.name)
+          backgroundPosition: championSplashPosition(round.champion)
         }}
       />
       <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,7,11,.94),rgba(5,7,11,.78)_55%,rgba(5,7,11,.52)),radial-gradient(circle_at_82%_18%,rgba(116,236,255,.16),transparent_32%)]" />
@@ -882,11 +893,13 @@ function BuildWordleModal({
           <div className="text-xs uppercase text-[#c89b3c]">Target Build</div>
           <div className="mt-2 grid grid-cols-6 gap-1 sm:gap-2">
             {targetBuild.map((item) => (
-              <div key={item.id} className="grid min-h-16 place-items-center rounded-md border border-green-400/45 bg-green-500/12 p-1 text-center">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
-                <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
-              </div>
+              <ItemTooltip key={item.id} item={item} className="min-w-0">
+                <div className="grid min-h-16 place-items-center rounded-md border border-green-400/45 bg-green-500/12 p-1 text-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.imageUrl} alt="" className="h-8 w-8 object-contain" />
+                  <span className="line-clamp-2 text-[10px] font-semibold leading-tight">{item.name}</span>
+                </div>
+              </ItemTooltip>
             ))}
           </div>
         </div>
@@ -1793,39 +1806,40 @@ export function ItemRecipeGame({
               : undefined;
 
             return (
-              <button
-                key={item.id}
-                type="button"
-                disabled={submitted}
-                onClick={() => {
-                  if (!submitted) {
-                    setAnswer(item.id);
-                  }
-                }}
-                className={cn(
-                  "play-choice-depth relative grid min-h-20 content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
-                  result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-                  result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
-                  !result && (answer === item.id ? "play-choice-depth-selected border-[#c89b3c] ring-2 ring-[#c89b3c]/35" : "play-choice-depth-default border-[#26313f]"),
-                  submitted && !result && "opacity-55"
-                )}
-                title={`${item.name} - ${item.goldTotal}g`}
-              >
-                {result === "correct" && (
-                  <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
-                    <CheckCircle2 size={13} />
-                  </span>
-                )}
-                {result === "wrong" && (
-                  <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
-                    <XCircle size={13} />
-                  </span>
-                )}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-14 sm:w-14" />
-                <span className="line-clamp-2 text-center text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
-                <span className={cn("text-[10px] sm:text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{item.goldTotal}g</span>
-              </button>
+              <ItemTooltip key={item.id} item={item} side="bottom" className="h-full min-w-0">
+                <button
+                  type="button"
+                  disabled={submitted}
+                  onClick={() => {
+                    if (!submitted) {
+                      setAnswer(item.id);
+                    }
+                  }}
+                  className={cn(
+                    "play-choice-depth relative grid h-full w-full min-h-20 content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:z-10 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-28 sm:gap-2 sm:p-2",
+                    result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+                    result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+                    !result && (answer === item.id ? "play-choice-depth-selected border-[#c89b3c] ring-2 ring-[#c89b3c]/35" : "play-choice-depth-default border-[#26313f]"),
+                    submitted && !result && "opacity-55"
+                  )}
+                  aria-label={`${item.name}, ${formatItemGold(item.goldTotal)} gold`}
+                >
+                  {result === "correct" && (
+                    <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
+                      <CheckCircle2 size={13} />
+                    </span>
+                  )}
+                  {result === "wrong" && (
+                    <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+                      <XCircle size={13} />
+                    </span>
+                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-14 sm:w-14" />
+                  <span className="line-clamp-2 text-center text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
+                  <span className={cn("text-[10px] sm:text-[11px]", result === "wrong" ? "text-[#9ca3af]" : "text-[#c89b3c]")}>{formatItemGold(item.goldTotal)}g</span>
+                </button>
+              </ItemTooltip>
             );
           })}
         </div>
@@ -1867,13 +1881,13 @@ function BuildSlot({
   label: string;
   onRemove?: () => void;
 }) {
-  return (
+  const slot = (
     <button
       type="button"
       onClick={onRemove}
       disabled={!onRemove}
       className={cn(
-        "group relative grid min-h-9 place-items-center rounded-sm border bg-[#111722] p-0.5 text-center transition disabled:cursor-default sm:min-h-16 sm:p-1.5",
+        "group relative grid h-full w-full min-h-9 place-items-center rounded-sm border bg-[#111722] p-0.5 text-center transition disabled:cursor-default sm:min-h-16 sm:p-1.5",
         item && !submitted && "border-[#c89b3c] bg-[#c89b3c]/10 shadow-[inset_0_0_0_1px_rgba(245,197,66,.18)]",
         !item && "border-dashed border-[#394150]",
         submitted && (correct ? "border-green-400/70 bg-green-500/18" : "border-[#394150] bg-[#151b26] grayscale")
@@ -1895,6 +1909,12 @@ function BuildSlot({
       )}
     </button>
   );
+
+  return item ? (
+    <ItemTooltip item={item} className="min-w-0">
+      {slot}
+    </ItemTooltip>
+  ) : slot;
 }
 
 function ItemChoiceCard({
@@ -1911,39 +1931,41 @@ function ItemChoiceCard({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={cn(
-        "play-choice-depth relative grid h-full min-h-[6.25rem] content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[7.35rem] sm:gap-1.5 sm:p-2 xl:min-h-[8rem]",
-        result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-        result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
-        !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
-        selected && "ring-2 ring-[#c89b3c]/35",
-        disabled && !result && "opacity-35"
-      )}
-      title={item.name}
-    >
-      {selected && (
-        <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
-          <CheckCircle2 size={13} />
-        </span>
-      )}
-      {!selected && result === "correct" && (
-        <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
-          <CheckCircle2 size={13} />
-        </span>
-      )}
-      {!selected && result === "wrong" && (
-        <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
-          <XCircle size={13} />
-        </span>
-      )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-11 w-11 object-contain sm:h-14 sm:w-14 xl:h-16 xl:w-16" />
-      <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-[13px]">{item.name}</span>
-    </button>
+    <ItemTooltip item={item} side="bottom" className="h-full min-w-0">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onClick}
+        className={cn(
+          "play-choice-depth relative grid h-full w-full min-h-[6.25rem] content-center justify-items-center gap-1 overflow-hidden rounded-sm border p-1.5 text-center transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[7.35rem] sm:gap-1.5 sm:p-2 xl:min-h-[8rem]",
+          result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+          result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+          !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
+          selected && "ring-2 ring-[#c89b3c]/35",
+          disabled && !result && "opacity-35"
+        )}
+        aria-label={`${item.name}, ${formatItemGold(item.goldTotal)} gold`}
+      >
+        {selected && (
+          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
+            <CheckCircle2 size={13} />
+          </span>
+        )}
+        {!selected && result === "correct" && (
+          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-green-400 text-[#071018]">
+            <CheckCircle2 size={13} />
+          </span>
+        )}
+        {!selected && result === "wrong" && (
+          <span className="absolute right-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+            <XCircle size={13} />
+          </span>
+        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={item.imageUrl} alt="" className="h-11 w-11 object-contain sm:h-14 sm:w-14 xl:h-16 xl:w-16" />
+        <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-[13px]">{item.name}</span>
+      </button>
+    </ItemTooltip>
   );
 }
 
@@ -1961,55 +1983,59 @@ function BootChoiceCard({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "play-choice-depth relative grid h-full min-h-[5.5rem] grid-cols-[2.5rem_1fr] items-center gap-2 overflow-hidden rounded-sm border p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[6.25rem] sm:grid-cols-[3rem_1fr] sm:gap-2.5 sm:p-2.5 xl:min-h-[6.6rem]",
-        result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
-        result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
-        !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
-        selected && "ring-2 ring-[#c89b3c]/35",
-        disabled && !result && "opacity-35"
-      )}
-      title={item.name}
-    >
-      {selected && (
-        <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
-          <CheckCircle2 size={11} />
-        </span>
-      )}
-      {!selected && result === "correct" && (
-        <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-green-400 text-[#071018]">
-          <CheckCircle2 size={11} />
-        </span>
-      )}
-      {!selected && result === "wrong" && (
-        <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
-          <XCircle size={11} />
-        </span>
-      )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-12 sm:w-12" />
-      <span className="min-w-0 whitespace-normal break-words text-xs font-semibold leading-tight sm:text-sm">{item.name}</span>
-    </button>
+    <ItemTooltip item={item} side="bottom" className="h-full min-w-0">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(
+          "play-choice-depth relative grid h-full w-full min-h-[5.5rem] grid-cols-[2.5rem_1fr] items-center gap-2 overflow-hidden rounded-sm border p-2 text-left transition duration-150 hover:scale-[1.025] hover:border-[#c89b3c] disabled:cursor-not-allowed sm:min-h-[6.25rem] sm:grid-cols-[3rem_1fr] sm:gap-2.5 sm:p-2.5 xl:min-h-[6.6rem]",
+          result === "correct" && "play-choice-depth-correct border-green-400/70 shadow-[inset_0_0_0_1px_rgba(74,222,128,.22)]",
+          result === "wrong" && "play-choice-depth-wrong border-[#394150] grayscale",
+          !result && (selected ? "play-choice-depth-selected border-[#c89b3c] shadow-[inset_0_0_0_1px_rgba(245,197,66,.25)]" : "play-choice-depth-default border-[#26313f]"),
+          selected && "ring-2 ring-[#c89b3c]/35",
+          disabled && !result && "opacity-35"
+        )}
+        aria-label={`${item.name}, ${formatItemGold(item.goldTotal)} gold`}
+      >
+        {selected && (
+          <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-[#c89b3c] text-[#071018]">
+            <CheckCircle2 size={11} />
+          </span>
+        )}
+        {!selected && result === "correct" && (
+          <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full bg-green-400 text-[#071018]">
+            <CheckCircle2 size={11} />
+          </span>
+        )}
+        {!selected && result === "wrong" && (
+          <span className="absolute right-1.5 top-1.5 grid h-4 w-4 place-items-center rounded-full border border-[#5b6472] bg-[#111722] text-[#9ca3af]">
+            <XCircle size={11} />
+          </span>
+        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={item.imageUrl} alt="" className="h-10 w-10 object-contain sm:h-12 sm:w-12" />
+        <span className="min-w-0 whitespace-normal break-words text-xs font-semibold leading-tight sm:text-sm">{item.name}</span>
+      </button>
+    </ItemTooltip>
   );
 }
 
 function ItemShopNode({ item, size = "normal" }: { item: GameItem; size?: "normal" | "large" }) {
   return (
-    <div className={cn("grid justify-items-center gap-1 rounded-sm border border-[#3c3421] bg-[#111722] p-1.5 text-center sm:p-2", size === "large" && "min-w-28 p-2 sm:min-w-36 sm:p-3")}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-12 w-12 sm:h-16 sm:w-16" : "h-9 w-9 sm:h-12 sm:w-12")} />
-      <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
-      <span className="text-[9px] text-[#c89b3c] sm:text-[10px]">{item.goldTotal}g</span>
-    </div>
+    <ItemTooltip item={item} className={cn("min-w-0", size === "large" && "mx-auto")}>
+      <div className={cn("grid justify-items-center gap-1 rounded-sm border border-[#3c3421] bg-[#111722] p-1.5 text-center sm:p-2", size === "large" && "min-w-28 p-2 sm:min-w-36 sm:p-3")}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={item.imageUrl} alt="" className={cn("object-contain", size === "large" ? "h-12 w-12 sm:h-16 sm:w-16" : "h-9 w-9 sm:h-12 sm:w-12")} />
+        <span className="line-clamp-2 text-[10px] font-semibold leading-tight sm:text-xs">{item.name}</span>
+        <span className="text-[9px] text-[#c89b3c] sm:text-[10px]">{formatItemGold(item.goldTotal)}g</span>
+      </div>
+    </ItemTooltip>
   );
 }
 
 function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; submitted: boolean; correct: boolean }) {
-  return (
+  const node = (
     <div
       className={cn(
         "grid min-h-28 justify-items-center gap-1 rounded-sm border border-dashed bg-[#111722] p-2 text-center",
@@ -2021,7 +2047,7 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={item.imageUrl} alt="" className="h-12 w-12 object-contain" />
           <span className="line-clamp-2 text-xs font-semibold leading-tight">{item.name}</span>
-          <span className="text-[10px] text-[#c89b3c]">{item.goldTotal}g</span>
+          <span className="text-[10px] text-[#c89b3c]">{formatItemGold(item.goldTotal)}g</span>
         </>
       ) : (
         <>
@@ -2031,6 +2057,144 @@ function MissingRecipeNode({ item, submitted, correct }: { item?: GameItem; subm
       )}
     </div>
   );
+
+  return item ? (
+    <ItemTooltip item={item} className="min-w-0">
+      {node}
+    </ItemTooltip>
+  ) : node;
+}
+
+function ItemTooltip({
+  item,
+  children,
+  className,
+  side = "top"
+}: {
+  item: GameItem;
+  children: ReactNode;
+  className?: string;
+  side?: "top" | "bottom";
+}) {
+  const description = getItemTooltipDescription(item);
+  const descriptionHtml = item.descriptionHtml?.trim();
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+
+  useEffect(() => {
+    setPortalRoot(document.body);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const panel = panelRef.current;
+
+      if (!trigger || !panel) {
+        return;
+      }
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const gap = 8;
+      const margin = 12;
+      const panelWidth = panelRect.width;
+      const panelHeight = panelRect.height;
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const spaceAbove = triggerRect.top - margin;
+      const spaceBelow = viewportHeight - triggerRect.bottom - margin;
+      const shouldOpenBelow =
+        side === "bottom"
+          ? panelHeight + gap <= spaceBelow || spaceBelow >= spaceAbove
+          : panelHeight + gap > spaceAbove && spaceBelow > spaceAbove;
+      const unclampedTop = shouldOpenBelow ? triggerRect.bottom + gap : triggerRect.top - panelHeight - gap;
+      const unclampedLeft = triggerRect.left + triggerRect.width / 2 - panelWidth / 2;
+
+      setPosition({
+        left: clampNumber(unclampedLeft, margin, Math.max(margin, viewportWidth - panelWidth - margin)),
+        top: clampNumber(unclampedTop, margin, Math.max(margin, viewportHeight - panelHeight - margin))
+      });
+    };
+
+    updatePosition();
+    const frame = window.requestAnimationFrame(updatePosition);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open, side]);
+
+  const tooltip = (
+    <div
+      ref={panelRef}
+      role="tooltip"
+      className="item-tooltip-panel lol-item-tooltip pointer-events-none fixed z-[1000] w-[21rem] max-w-[calc(100vw-1.5rem)] max-h-[calc(100vh-1.5rem)] overflow-y-auto rounded-sm p-3 text-left text-xs fine-scrollbar"
+      style={{ left: position.left, top: position.top }}
+    >
+      <div className="grid grid-cols-[2.75rem_minmax(0,1fr)] gap-3">
+        <div className="lol-item-tooltip-icon">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.imageUrl} alt="" className="h-full w-full object-contain" />
+        </div>
+        <div className="min-w-0">
+          <div className="font-display text-base font-black leading-tight text-[#f0e6d2]">{item.name}</div>
+          <div className="mt-1 flex items-center gap-1.5 font-display text-[12px] font-bold text-[#c8aa6e]">
+            <span className="lol-item-gold-dot" aria-hidden="true" />
+            {formatItemGold(item.goldTotal)}
+          </div>
+        </div>
+      </div>
+      {descriptionHtml ? (
+        <div className="lol-item-description mt-3" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
+      ) : (
+        <p className="lol-item-description mt-3 whitespace-normal break-words">{description}</p>
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      ref={triggerRef}
+      className={cn("item-tooltip-shell relative", className)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocusCapture={() => setOpen(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+
+        if (!event.currentTarget.contains(nextTarget)) {
+          setOpen(false);
+        }
+      }}
+    >
+      {children}
+      {portalRoot && open ? createPortal(tooltip, portalRoot) : null}
+    </div>
+  );
+}
+
+function getItemTooltipDescription(item: GameItem) {
+  return item.description?.trim() || item.plaintext?.trim() || "No item description available.";
+}
+
+function formatItemGold(value: number) {
+  return value.toLocaleString("en-US");
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function InfiniteStreakBar({ round, current, best }: { round: number; current: number; best: number }) {
@@ -2460,7 +2624,13 @@ function MatchupChampionCard({
 
   return (
     <article className={cn("play-card-depth relative min-h-0 overflow-hidden rounded-sm border bg-[#071018]", tone)}>
-      <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${pick.champion.splashUrl})` }} />
+      <div
+        className="absolute inset-0 bg-cover"
+        style={{
+          backgroundImage: `url(${pick.champion.splashUrl})`,
+          backgroundPosition: championSplashPosition(pick.champion)
+        }}
+      />
       <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(5,6,7,.98),rgba(5,6,7,.58)_45%,rgba(5,6,7,.18))]" />
       <div className="relative flex h-full min-h-[18rem] flex-col justify-between p-3 sm:min-h-[24rem] sm:p-4 lg:min-h-[28rem] lg:p-5">
         <div className={cn("grid gap-1.5", side === "left" ? "justify-items-end text-right" : "justify-items-start text-left")}>
@@ -2547,6 +2717,7 @@ export function GuessEloGame({
   const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answerTier;
+  const masteryState = useMatchChampionMasteries(round.sourceMatch?.matchId);
 
   function choose(option: string) {
     if (submitted) {
@@ -2589,10 +2760,10 @@ export function GuessEloGame({
       {round.unavailableReason ? (
         <VerifiedDataUnavailable reason={round.unavailableReason} />
       ) : (
-      <div className="grid flex-1 gap-2 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)_auto_auto] lg:gap-4">
-        <div className="grid gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-3 lg:min-h-0 lg:grid-rows-2">
-          <EloTeamRow side="Blue Team" lanes={round.lanes} />
-          <EloTeamRow side="Red Team" lanes={round.enemyLanes} />
+      <div className="grid min-h-[calc(100dvh-16rem)] flex-1 gap-2 grid-rows-[minmax(0,1fr)_auto_auto] sm:min-h-[calc(100dvh-14.5rem)] lg:min-h-0 lg:gap-4">
+        <div data-elo-teams-panel className="grid min-h-0 gap-2 rounded-sm border border-[#3c3421] bg-[#071018] p-2 sm:p-3 lg:grid-rows-2">
+          <EloTeamRow side="Blue Team" teamId={100} lanes={round.lanes} masteryState={masteryState} />
+          <EloTeamRow side="Red Team" teamId={200} lanes={round.enemyLanes} masteryState={masteryState} />
         </div>
         <div className="grid grid-cols-2 gap-1.5 sm:gap-2 lg:[grid-template-columns:repeat(auto-fit,minmax(10.75rem,1fr))]">
           {round.options.map((option) => (
@@ -3149,12 +3320,22 @@ const DRAFT_TEAM_ART = {
   red: "https://raw.communitydragon.org/latest/game/assets/characters/nexus/hud/nexus_red_square.png"
 } as const;
 
-function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] }) {
+function EloTeamRow({
+  side,
+  teamId,
+  lanes,
+  masteryState
+}: {
+  side: string;
+  teamId: 100 | 200;
+  lanes: EloRound["lanes"];
+  masteryState: MatchMasteryLoadState;
+}) {
   const teamTone = side.toLowerCase().includes("blue") ? "blue" : "red";
   const sideWords = side.split(" ");
 
   return (
-    <div className="grid grid-cols-2 gap-1.5 sm:min-h-0 sm:grid-cols-[5rem_repeat(5,minmax(0,1fr))] sm:gap-2">
+    <div className="grid min-h-0 grid-cols-2 gap-1.5 sm:grid-cols-[5rem_repeat(5,minmax(0,1fr))] sm:gap-2">
       <div
         data-elo-team-label={teamTone}
         className={cn(
@@ -3179,29 +3360,48 @@ function EloTeamRow({ side, lanes }: { side: string; lanes: EloRound["lanes"] })
           </span>
         </div>
       </div>
-      {lanes.map((lane) => (
-        <div key={`${side}:${lane.role}`} className="relative min-h-24 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-0">
-          <div className="absolute inset-0 bg-cover bg-center opacity-48" style={{ backgroundImage: `url(${lane.champion.splashUrl})` }} />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/55 to-transparent" />
-          <div className="relative flex h-full min-h-0 flex-col justify-end p-2 sm:p-2">
-            <span className="w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
-              {displayLaneLabel(lane.role)}
-            </span>
-            <span className="truncate text-sm font-bold leading-tight sm:text-base">{lane.champion.name}</span>
-            {lane.playerName && (
-              <span title={lane.playerName} className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-[#9fb7d5]">
-                {lane.playerName}
+      {lanes.map((lane) => {
+        const playerMastery = findPlayerMastery(masteryState.players, {
+          teamId,
+          role: lane.role,
+          playerName: lane.playerName,
+          champion: lane.champion
+        });
+        const mastery = lane.mastery ?? playerMastery?.topChampions;
+
+        return (
+          <div data-elo-player-card key={`${side}:${lane.role}`} className="relative min-h-[12.5rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[13.25rem] lg:h-full lg:min-h-0">
+            <div
+              className="absolute inset-0 opacity-48"
+              style={{
+                backgroundImage: `url(${lane.champion.splashUrl})`,
+                backgroundPosition: championSplashPosition(lane.champion, "portrait"),
+                backgroundRepeat: "no-repeat",
+                backgroundSize: "auto 100%"
+              }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#050607] via-[#050607]/55 to-transparent" />
+            <ChampionMasteryPanel masteries={mastery} status={masteryState.status} align="right" variant="side" />
+            <div className="relative flex h-full min-h-0 flex-col justify-end p-2 pr-10 sm:p-2 sm:pr-11">
+              <span className="w-fit rounded-sm border border-[#c89b3c]/35 bg-[#c89b3c]/12 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-[#c89b3c]">
+                {displayLaneLabel(lane.role)}
               </span>
-            )}
-            <div className="mt-1 flex gap-1">
-              {lane.spells.map((spell) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] sm:h-7 sm:w-7" />
-              ))}
+              <span className="truncate text-sm font-bold leading-tight sm:text-base">{lane.champion.name}</span>
+              {lane.playerName && (
+                <span title={lane.playerName} className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-[#9fb7d5]">
+                  {lane.playerName}
+                </span>
+              )}
+              <div className="mt-1 flex gap-1">
+                {lane.spells.map((spell) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={spell.id} src={spell.iconUrl} alt={spell.name} title={spell.name} className="h-6 w-6 rounded-sm border border-[#3c3421] sm:h-7 sm:w-7" />
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -3226,6 +3426,7 @@ export function DodgeQueueGame({
   const requestMoreRoundsIfExhausted = useRequestMoreRoundsOnExhaustion(rounds.length, onNeedMoreRounds);
   const round = rounds[roundIndex % rounds.length];
   const correct = submitted && answer === round.answer;
+  const masteryState = useMatchChampionMasteries(round.sourceMatch?.matchId);
 
   function lockCall(call: "dodge" | "queue") {
     if (submitted) {
@@ -3272,10 +3473,29 @@ export function DodgeQueueGame({
         <DraftScreen
           blueName="Your Team"
           redName="Enemy Team"
-          bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => championToOption(champion, round.allySpells[index], round.allyPlayerNames?.[index])), laneLabels)}
-          redPicks={applyLaneLabels(round.enemyTeam.map((champion, index) => championToOption(champion, round.enemySpells[index], round.enemyPlayerNames?.[index])), laneLabels)}
+          bluePicks={applyLaneLabels(round.allyTeam.map((champion, index) => {
+            const mastery = findPlayerMastery(masteryState.players, {
+              teamId: round.sourceMatch?.allyTeamId,
+              role: laneLabels[index],
+              playerName: round.allyPlayerNames?.[index],
+              champion
+            })?.topChampions;
+
+            return championToOption(champion, round.allySpells[index], round.allyPlayerNames?.[index], mastery);
+          }), laneLabels)}
+          redPicks={applyLaneLabels(round.enemyTeam.map((champion, index) => {
+            const mastery = findPlayerMastery(masteryState.players, {
+              teamId: round.sourceMatch?.enemyTeamId,
+              role: laneLabels[index],
+              playerName: round.enemyPlayerNames?.[index],
+              champion
+            })?.topChampions;
+
+            return championToOption(champion, round.enemySpells[index], round.enemyPlayerNames?.[index], mastery);
+          }), laneLabels)}
           blueBans={round.allyBans.map((champion) => championToOption(champion))}
           redBans={round.enemyBans.map((champion) => championToOption(champion))}
+          masteryStatus={masteryState.status}
         />
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -3410,21 +3630,6 @@ function VerifiedDataUnavailable({ reason }: { reason: string }) {
   );
 }
 
-function championSplashPosition(name: string) {
-  const positions: Record<string, string> = {
-    Garen: "62% 24%",
-    Lux: "50% 28%",
-    Yasuo: "48% 22%",
-    Ahri: "52% 24%",
-    Caitlyn: "50% 24%",
-    Ezreal: "48% 24%",
-    Jinx: "48% 28%",
-    Riven: "48% 22%"
-  };
-
-  return positions[name] ?? "50% 28%";
-}
-
 function DraftScreen({
   blueName,
   redName,
@@ -3432,7 +3637,8 @@ function DraftScreen({
   redPicks,
   blueBans,
   redBans,
-  hiddenLabel = "Locked"
+  hiddenLabel = "Locked",
+  masteryStatus = "idle"
 }: {
   blueName: string;
   redName: string;
@@ -3441,14 +3647,15 @@ function DraftScreen({
   blueBans: Array<OptionItem | undefined>;
   redBans: Array<OptionItem | undefined>;
   hiddenLabel?: string;
+  masteryStatus?: MatchMasteryLoadStatus;
 }) {
   return (
     <div className="play-panel-depth grid gap-2 rounded-sm border border-[#3c3421] p-2 sm:p-3 md:min-h-0 md:grid-cols-[1fr_4rem_1fr] xl:grid-cols-[1fr_5rem_1fr]">
-      <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} />
+      <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
       <div className="grid place-items-center text-center">
         <MatchupVsMark compact />
       </div>
-      <DraftTeam side="red" name={redName} picks={redPicks} bans={redBans} hiddenLabel={hiddenLabel} />
+      <DraftTeam side="red" name={redName} picks={redPicks} bans={redBans} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
     </div>
   );
 }
@@ -3458,13 +3665,15 @@ function DraftTeam({
   name,
   picks,
   bans,
-  hiddenLabel
+  hiddenLabel,
+  masteryStatus
 }: {
   side: "blue" | "red";
   name: string;
   picks: Array<OptionItem | undefined>;
   bans: Array<OptionItem | undefined>;
   hiddenLabel: string;
+  masteryStatus: MatchMasteryLoadStatus;
 }) {
   return (
     <div className="grid gap-1.5 md:min-h-0 md:grid-rows-[auto_minmax(0,1fr)] md:gap-3">
@@ -3475,7 +3684,7 @@ function DraftTeam({
       </div>
       <div className="grid gap-1.5 md:min-h-0 md:grid-rows-5 md:gap-2">
         {Array.from({ length: 5 }).map((_, index) => (
-          <DraftPickCard key={index} side={side} pick={picks[index]} hiddenLabel={hiddenLabel} />
+          <DraftPickCard key={index} side={side} pick={picks[index]} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
         ))}
       </div>
     </div>
@@ -3515,17 +3724,27 @@ function BanCluster({ bans }: { bans: Array<OptionItem | undefined> }) {
   );
 }
 
-function DraftPickCard({ side, pick, hiddenLabel }: { side: "blue" | "red"; pick?: OptionItem; hiddenLabel: string }) {
+function DraftPickCard({
+  side,
+  pick,
+  hiddenLabel,
+  masteryStatus
+}: {
+  side: "blue" | "red";
+  pick?: OptionItem;
+  hiddenLabel: string;
+  masteryStatus: MatchMasteryLoadStatus;
+}) {
   const mirrored = side === "blue";
 
   return (
-    <div className="play-card-depth relative min-h-20 overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-24">
+    <div className="play-card-depth relative min-h-[9.75rem] overflow-hidden rounded-sm border border-[#3c3421] bg-[#111722] sm:min-h-[10.75rem]">
       {pick?.splashUrl && (
         <div
           className="absolute inset-0 bg-cover bg-center opacity-38"
           style={{
             backgroundImage: `url(${pick.splashUrl})`,
-            backgroundPosition: championSplashPosition(pick.label)
+            backgroundPosition: championSplashPosition(pick)
           }}
         />
       )}
@@ -3539,9 +3758,12 @@ function DraftPickCard({ side, pick, hiddenLabel }: { side: "blue" | "red"; pick
       />
       <div className={cn("absolute inset-x-0 bottom-0 h-px", mirrored ? "bg-gradient-to-l from-[#c89b3c]/45 via-transparent to-transparent" : "bg-gradient-to-r from-[#c89b3c]/45 via-transparent to-transparent")} />
 
+      {pick && <ChampionMasteryPanel masteries={pick.mastery} status={masteryStatus} align={mirrored ? "left" : "right"} variant="side" />}
+
       <div
         className={cn(
           "relative grid h-full min-h-20 items-center gap-2 p-2 sm:min-h-24 sm:gap-3 sm:p-2.5",
+          mirrored ? "pl-10 sm:pl-11" : "pr-10 sm:pr-11",
           mirrored
             ? "grid-cols-[auto_minmax(0,1fr)_3.25rem] sm:grid-cols-[auto_minmax(0,1fr)_4rem]"
             : "grid-cols-[3.25rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_auto]"
@@ -3621,7 +3843,7 @@ function BanIcon({ pick }: { pick?: OptionItem }) {
   );
 }
 
-function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[], playerName?: string): OptionItem {
+function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[], playerName?: string, mastery?: ChampionMasterySnapshot[]): OptionItem {
   return {
     id: champion.id,
     label: champion.name,
@@ -3629,7 +3851,8 @@ function championToOption(champion: PublicChampion, spells?: SummonerSpellRef[],
     imageUrl: champion.squareUrl,
     splashUrl: champion.splashUrl,
     spells,
-    ...(playerName ? { playerName } : {})
+    ...(playerName ? { playerName } : {}),
+    ...(mastery ? { mastery } : {})
   };
 }
 
@@ -3724,6 +3947,173 @@ function permute<T>(items: T[]): T[][] {
 
 function getItemName(itemsList: GameItem[], id: string) {
   return itemsList.find((item) => item.id === id)?.name ?? "Unknown item";
+}
+
+function useMatchChampionMasteries(matchId?: string): MatchMasteryLoadState {
+  const normalizedMatchId = (matchId ?? "").trim().toUpperCase();
+  const [state, setState] = useState<MatchMasteryLoadState>(() => ({
+    status: normalizedMatchId && matchMasteryCache.has(normalizedMatchId) ? "ready" : normalizedMatchId ? "loading" : "idle",
+    players: normalizedMatchId ? (matchMasteryCache.get(normalizedMatchId) ?? []) : []
+  }));
+
+  useEffect(() => {
+    if (!normalizedMatchId) {
+      setState({ status: "idle", players: [] });
+      return;
+    }
+
+    const cached = matchMasteryCache.get(normalizedMatchId);
+
+    if (cached) {
+      setState({ status: "ready", players: cached });
+      return;
+    }
+
+    let cancelled = false;
+    setState({ status: "loading", players: [] });
+
+    async function loadMasteries() {
+      try {
+        const response = await fetch(`/api/matches/${encodeURIComponent(normalizedMatchId)}/masteries?count=3`, {
+          cache: "force-cache"
+        });
+        const body = (await response.json()) as { players?: PlayerMasterySnapshot[]; error?: string };
+
+        if (!response.ok || !body.players) {
+          throw new Error(body.error || "Champion mastery unavailable.");
+        }
+
+        matchMasteryCache.set(normalizedMatchId, body.players);
+
+        if (!cancelled) {
+          setState({ status: "ready", players: body.players });
+        }
+      } catch {
+        if (!cancelled) {
+          setState({ status: "error", players: [] });
+        }
+      }
+    }
+
+    void loadMasteries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedMatchId]);
+
+  return state;
+}
+
+function findPlayerMastery(
+  players: PlayerMasterySnapshot[],
+  target: {
+    teamId?: 100 | 200;
+    role?: string;
+    playerName?: string;
+    champion?: PublicChampion;
+  }
+) {
+  const targetRole = normalizeLaneRole(target.role);
+  const targetPlayerName = normalizePlayerName(target.playerName);
+  const targetChampionId = target.champion?.id;
+  const sameTeam = (player: PlayerMasterySnapshot) => !target.teamId || player.teamId === target.teamId;
+  const sameRole = (player: PlayerMasterySnapshot) => !targetRole || normalizeLaneRole(player.role) === targetRole;
+  const sameName = (player: PlayerMasterySnapshot) => targetPlayerName && normalizePlayerName(player.playerName) === targetPlayerName;
+  const sameChampion = (player: PlayerMasterySnapshot) => !targetChampionId || player.champion.id === targetChampionId;
+
+  return (
+    players.find((player) => sameTeam(player) && sameRole(player) && sameName(player)) ??
+    players.find((player) => sameName(player) && sameChampion(player)) ??
+    players.find((player) => sameTeam(player) && sameRole(player) && sameChampion(player)) ??
+    players.find((player) => sameRole(player) && sameChampion(player))
+  );
+}
+
+function normalizeLaneRole(role?: string) {
+  return displayLaneLabel(role).toLowerCase();
+}
+
+function normalizePlayerName(playerName?: string) {
+  return normalize(playerName ?? "");
+}
+
+function ChampionMasteryPanel({
+  masteries,
+  status,
+  align = "left",
+  variant = "inline"
+}: {
+  masteries?: ChampionMasterySnapshot[];
+  status: MatchMasteryLoadStatus;
+  align?: "left" | "right";
+  variant?: "inline" | "side";
+}) {
+  const topMasteries = masteries?.slice(0, 3) ?? [];
+  const emptyLabel =
+    status === "loading"
+      ? "Loading mastery..."
+      : status === "error"
+        ? "Mastery unavailable"
+        : "No mastery data";
+
+  if (variant === "side") {
+    return (
+      <div
+        className={cn(
+          "pointer-events-none absolute top-2 z-10 flex w-8 flex-col items-center gap-1 bg-transparent p-0 drop-shadow-[0_2px_5px_rgba(0,0,0,.95)] sm:w-9",
+          align === "left" ? "left-1.5 sm:left-2" : "right-1.5 sm:right-2"
+        )}
+      >
+        {topMasteries.length > 0 ? (
+          topMasteries.map((mastery) => (
+            <div
+              key={mastery.champion.id}
+              title={`${mastery.champion.name}: level ${mastery.championLevel}, ${mastery.championPoints.toLocaleString()} mastery points`}
+              className="grid min-w-0 justify-items-center gap-[2px] text-center"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={mastery.champion.squareUrl} alt={mastery.champion.name} className="h-6 w-6 rounded-[2px] border border-[#c89b3c]/55 object-cover shadow-[0_1px_4px_rgba(0,0,0,.8)] sm:h-7 sm:w-7" />
+              <div className="w-full truncate text-[9px] font-black leading-none text-white">L{mastery.championLevel}</div>
+              <div className="w-full truncate text-[8px] font-bold leading-none text-[#c8daf4]">{compactNumber(mastery.championPoints)}</div>
+            </div>
+          ))
+        ) : (
+          <div className="mt-1 text-center text-[9px] font-bold leading-tight text-[#c8daf4]">
+            {status === "loading" ? "..." : "--"}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("mt-0.5 bg-transparent p-0 drop-shadow-[0_2px_5px_rgba(0,0,0,.95)]", align === "right" && "text-right")}>
+      <div className={cn("font-display text-[9px] font-black uppercase leading-none tracking-[0.08em] text-[#f1d58a]", align === "right" && "text-right")}>Mastery</div>
+      {topMasteries.length > 0 ? (
+        <div className="mt-[3px] grid grid-cols-3 gap-px">
+          {topMasteries.map((mastery) => (
+            <div
+              key={mastery.champion.id}
+              title={`${mastery.champion.name}: level ${mastery.championLevel}, ${mastery.championPoints.toLocaleString()} mastery points`}
+              className="min-w-0"
+            >
+              <div className="grid min-w-0 justify-items-center gap-[2px] text-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={mastery.champion.squareUrl} alt={mastery.champion.name} className="h-5 w-5 rounded-[2px] border border-[#c89b3c]/55 object-cover shadow-[0_1px_4px_rgba(0,0,0,.8)]" />
+                <div className="w-full truncate text-[9px] font-bold leading-none text-white">{mastery.champion.name}</div>
+                <div className="w-full truncate text-[9px] font-semibold leading-none text-[#c8daf4]">
+                  L{mastery.championLevel} {compactNumber(mastery.championPoints)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-0.5 truncate text-[10px] font-semibold leading-tight text-[#c8daf4]">{emptyLabel}</div>
+      )}
+    </div>
+  );
 }
 
 function createEloRounds(base: GuessEloChallenge): EloRound[] {

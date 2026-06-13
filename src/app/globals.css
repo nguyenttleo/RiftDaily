@@ -90,6 +90,135 @@ select:focus-visible {
   background: rgba(245, 197, 66, 0.16);
 }
 
+.lol-item-tooltip {
+  border: 1px solid rgba(200, 155, 60, 0.72);
+  background:
+    linear-gradient(180deg, rgba(20, 28, 40, 0.99), rgba(3, 10, 19, 0.99) 62%, rgba(1, 6, 12, 0.99)),
+    #010a13;
+  box-shadow:
+    0 22px 54px rgba(0, 0, 0, 0.68),
+    inset 0 1px 0 rgba(240, 230, 210, 0.09),
+    inset 0 0 0 1px rgba(120, 90, 40, 0.36);
+  color: #a09b8c;
+}
+
+.lol-item-tooltip::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  border: 1px solid rgba(70, 55, 30, 0.75);
+}
+
+.lol-item-tooltip-icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgba(200, 155, 60, 0.72);
+  background: #010a13;
+  box-shadow:
+    inset 0 0 0 1px rgba(240, 230, 210, 0.08),
+    0 8px 18px rgba(0, 0, 0, 0.38);
+}
+
+.lol-item-gold-dot {
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 30%, #f0e6d2 0 10%, #c8aa6e 32%, #785a28 70%);
+  box-shadow: 0 0 8px rgba(200, 170, 110, 0.28);
+}
+
+.lol-item-description {
+  position: relative;
+  display: block;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(120, 90, 40, 0.48);
+  color: #a09b8c;
+  font-size: 0.78rem;
+  line-height: 1.38;
+}
+
+.lol-item-description maintext,
+.lol-item-description rules,
+.lol-item-description li {
+  display: block;
+}
+
+.lol-item-description stats {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: #c8d7e7;
+}
+
+.lol-item-description attention,
+.lol-item-description b {
+  color: #f0e6d2;
+  font-weight: 700;
+}
+
+.lol-item-description passive,
+.lol-item-description active,
+.lol-item-description unique,
+.lol-item-description spellpassive,
+.lol-item-description spellname,
+.lol-item-description keywordmajor {
+  color: #c8aa6e;
+  font-weight: 700;
+}
+
+.lol-item-description active {
+  text-transform: uppercase;
+}
+
+.lol-item-description physicaldamage,
+.lol-item-description scalead {
+  color: #e07a4f;
+}
+
+.lol-item-description magicdamage,
+.lol-item-description scaleap {
+  color: #9f7aea;
+}
+
+.lol-item-description truedamage {
+  color: #f0e6d2;
+}
+
+.lol-item-description healing,
+.lol-item-description lifesteal,
+.lol-item-description omnivamp {
+  color: #7fdb8b;
+}
+
+.lol-item-description shield,
+.lol-item-description health,
+.lol-item-description scalehealth {
+  color: #75d28f;
+}
+
+.lol-item-description speed,
+.lol-item-description ms,
+.lol-item-description attackspeed {
+  color: #f0c36a;
+}
+
+.lol-item-description onhit,
+.lol-item-description keyword,
+.lol-item-description keywordstealth,
+.lol-item-description status,
+.lol-item-description buffedstat,
+.lol-item-description gold,
+.lol-item-description ornnbonus {
+  color: #5bc0de;
+}
+
+.lol-item-description flavortext {
+  display: block;
+  margin-top: 0.55rem;
+  color: #5f6f7f;
+  font-style: italic;
+}
+
 .play-area-depth {
   position: relative;
   isolation: isolate;

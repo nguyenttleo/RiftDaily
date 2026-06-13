@@ -4,49 +4,77 @@ import { z } from "zod";
 
 import { recordRankedGameResult } from "@/db/repositories";
 import { authOptions } from "@/lib/auth/options";
+import { logSecurityEvent, requestIp, requestUserAgent } from "@/lib/security/audit-log";
 
 export const runtime = "nodejs";
 
 const resultSchema = z.object({
-  gameKey: z.string().min(2).max(64),
+  gameKey: z.string().min(2).max(64).regex(/^[a-z0-9:-]+$/i),
   roundId: z.string().min(2).max(256),
   won: z.boolean(),
   performanceQuality: z.number().min(0).max(1),
-  lpDelta: z.number().int().min(-20).max(30).optional(),
+  lpDelta: z.number().int().min(-30).max(30).optional(),
   metadata: z.record(z.unknown()).optional()
-}).superRefine((value, context) => {
-  if (typeof value.lpDelta !== "number") {
-    return;
-  }
-
-  const validWinDelta = value.won && value.lpDelta >= 20 && value.lpDelta <= 30;
-  const validLossDelta = !value.won && value.lpDelta <= -10 && value.lpDelta >= -20;
-
-  if (!validWinDelta && !validLossDelta) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["lpDelta"],
-      message: "LP delta must be +20 to +30 for wins or -10 to -20 for losses."
-    });
-  }
 });
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user?.id) {
+    logSecurityEvent({
+      type: "ranked_result_unauthenticated",
+      severity: "low",
+      route: "/api/ranked/results",
+      outcome: "denied",
+      ip: requestIp(request),
+      userAgent: requestUserAgent(request)
+    });
+
     return NextResponse.json({ error: "Sign in to save ranked progress." }, { status: 401 });
   }
 
   const parsed = resultSchema.safeParse(await request.json().catch(() => null));
 
   if (!parsed.success) {
+    logSecurityEvent({
+      type: "ranked_result_invalid_payload",
+      severity: "low",
+      route: "/api/ranked/results",
+      outcome: "denied",
+      userId: session.user.id,
+      ip: requestIp(request),
+      userAgent: requestUserAgent(request),
+      metadata: {
+        issueCount: parsed.error.issues.length,
+        fields: parsed.error.issues.map((issue) => issue.path.join(".")).filter(Boolean)
+      }
+    });
+
     return NextResponse.json({ error: "Invalid ranked result payload." }, { status: 400 });
+  }
+
+  const { lpDelta, ...rankedResult } = parsed.data;
+
+  if (typeof lpDelta === "number") {
+    logSecurityEvent({
+      type: "client_controlled_lp_delta_ignored",
+      severity: "medium",
+      route: "/api/ranked/results",
+      outcome: "ignored",
+      userId: session.user.id,
+      ip: requestIp(request),
+      userAgent: requestUserAgent(request),
+      metadata: {
+        gameKey: rankedResult.gameKey,
+        roundId: rankedResult.roundId,
+        clientLpDelta: lpDelta
+      }
+    });
   }
 
   const result = await recordRankedGameResult({
     userId: session.user.id,
-    ...parsed.data
+    ...rankedResult
   });
 
   if (!result) {

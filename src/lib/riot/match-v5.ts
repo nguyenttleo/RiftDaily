@@ -3,10 +3,12 @@ import { env, isDatabaseConfigured, isRiotApiConfigured } from "@/lib/env";
 import { formatRiotIdFromFields } from "@/lib/riot-id";
 import type {
   BuildWinrateStats,
+  ChampionMasterySnapshot,
   ChampionMatchupRound,
   DodgeQueueRound,
   GameItem,
   GuessEloRound,
+  PlayerMasterySnapshot,
   PublicChampion,
   SummonerSpellRef,
   VerifiedBuildRound,
@@ -70,6 +72,12 @@ interface RiotLeaguePositionDto {
   tier?: string;
   rank?: string;
   leaguePoints?: number;
+}
+
+interface RiotChampionMasteryDto {
+  championId: number;
+  championLevel: number;
+  championPoints: number;
 }
 
 interface RiotMatchDto {
@@ -240,12 +248,17 @@ interface VerifiedMatchCacheRow {
 
 interface VerifiedMatchCacheCandidateRow {
   cache_key: string;
+  created_at: string | Date;
   payload_bytes: string | number;
   build_rounds: string | number;
   guess_elo_rounds: string | number;
   dodge_queue_rounds: string | number;
   champion_matchup_rounds: string | number;
   exact_match: boolean;
+}
+
+interface StoredGuessEloRoundRow {
+  round_value: GuessEloRound;
 }
 
 interface CompactPersistedRoundLimits {
@@ -860,6 +873,59 @@ export async function getVerifiedMatchProofById({
   };
 }
 
+export async function getMatchChampionMasteriesById({
+  matchId,
+  publicChampions,
+  count = 3
+}: {
+  matchId: string;
+  publicChampions: PublicChampion[];
+  count?: number;
+}): Promise<{ matchId: string; players: PlayerMasterySnapshot[] } | null> {
+  if (!isRiotApiConfigured()) {
+    return null;
+  }
+
+  const platform = platformFromMatchId(matchId);
+  const regional = regionalRouteForPlatform(platform);
+  const championLookup = createChampionLookup(publicChampions);
+  const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+  const players: PlayerMasterySnapshot[] = [];
+  const boundedCount = Math.max(1, Math.min(5, Math.floor(count)));
+
+  for (const teamId of TEAM_IDS) {
+    for (const position of POSITION_ORDER) {
+      const participant = match.info.participants.find((candidate) => candidate.teamId === teamId && candidate.teamPosition === position);
+      const champion = participant ? championLookup.get(participant.championId) : undefined;
+
+      if (!participant || !champion) {
+        continue;
+      }
+
+      let topChampions: ChampionMasterySnapshot[] = [];
+
+      try {
+        topChampions = await getTopChampionMasteriesForPuuid(platform, participant.puuid, championLookup, boundedCount);
+      } catch {
+        topChampions = [];
+      }
+
+      players.push({
+        teamId,
+        role: toLaneLabel(position),
+        ...(formatRiotId(participant) ? { playerName: formatRiotId(participant) } : {}),
+        champion,
+        topChampions
+      });
+    }
+  }
+
+  return {
+    matchId: match.metadata.matchId,
+    players
+  };
+}
+
 export async function getRankedSoloLpByRiotId({
   riotId,
   platform = env.riotRegion
@@ -898,6 +964,33 @@ export async function getRankedSoloLpByRiotId({
     ...(solo.rank ? { rank: solo.rank } : {}),
     leaguePoints: solo.leaguePoints
   };
+}
+
+async function getTopChampionMasteriesForPuuid(
+  platform: string,
+  puuid: string,
+  championLookup: Map<number, PublicChampion>,
+  count: number
+): Promise<ChampionMasterySnapshot[]> {
+  const masteries = await riotFetch<RiotChampionMasteryDto[]>(
+    platform,
+    `/lol/champion-mastery/v4/champion-masteries/by-puuid/${encodeURIComponent(puuid)}/top?count=${count}`
+  );
+
+  return masteries
+    .map((mastery) => {
+      const champion = championLookup.get(mastery.championId);
+
+      return champion
+        ? {
+            champion,
+            championLevel: mastery.championLevel,
+            championPoints: mastery.championPoints
+          }
+        : null;
+    })
+    .filter((mastery): mastery is ChampionMasterySnapshot => Boolean(mastery))
+    .slice(0, count);
 }
 
 async function getChallengerRankedSourceByPuuid(platform: string, puuid: string): Promise<RankedSource | null> {
@@ -1589,6 +1682,7 @@ async function getCompactPersistedVerifiedMatchCache(
   const candidatesResult = await query<VerifiedMatchCacheCandidateRow>(
     `select
       cache_key,
+      created_at,
       pg_column_size(payload)::int as payload_bytes,
       jsonb_array_length(coalesce(payload->'buildRounds', '[]'::jsonb))::int as build_rounds,
       jsonb_array_length(coalesce(payload->'guessEloRounds', '[]'::jsonb))::int as guess_elo_rounds,
@@ -1596,14 +1690,14 @@ async function getCompactPersistedVerifiedMatchCache(
       jsonb_array_length(coalesce(payload->'championMatchupRounds', '[]'::jsonb))::int as champion_matchup_rounds,
       cache_key = $1 as exact_match
     from verified_match_cache
-    where (expires_at > now() or created_at > now() - interval '48 hours')
-      and (cache_key = $1 or cache_key like $2)
-    order by exact_match desc, payload_bytes asc
-    limit 20`,
+    where cache_key = $1 or cache_key like $2
+    order by exact_match desc, created_at desc, payload_bytes asc
+    limit 40`,
     [cacheKey, compactKeyPattern]
   );
   const candidates = candidatesResult.rows.map((row) => ({
     cacheKey: row.cache_key,
+    createdAt: new Date(row.created_at).getTime(),
     bytes: Number(row.payload_bytes),
     buildRounds: Number(row.build_rounds),
     guessEloRounds: Number(row.guess_elo_rounds),
@@ -1613,21 +1707,33 @@ async function getCompactPersistedVerifiedMatchCache(
   }));
 
   if (candidates.length === 0) {
-    return null;
+    const storedGuessEloRounds = await getStoredBalancedGuessEloRounds(guessEloLimit);
+
+    return storedGuessEloRounds.length > 0
+      ? {
+          buildRounds: [],
+          guessEloRounds: storedGuessEloRounds,
+          dodgeQueueRounds: [],
+          championMatchupRounds: [],
+          championWinrateSamples: {},
+          status: "ready" as const,
+          message: `Using ${storedGuessEloRounds.length} stored Guess the Elo rounds from verified Match-V5 cache.`
+        }
+      : null;
   }
 
   const buildCandidate = candidates
     .filter((candidate) => candidate.buildRounds > 0)
-    .sort((a, b) => b.buildRounds - a.buildRounds || a.bytes - b.bytes)[0];
+    .sort((a, b) => b.buildRounds - a.buildRounds || b.createdAt - a.createdAt || a.bytes - b.bytes)[0];
   const guessEloCandidate = candidates
     .filter((candidate) => candidate.guessEloRounds > 0)
-    .sort((a, b) => b.guessEloRounds - a.guessEloRounds || a.bytes - b.bytes)[0];
+    .sort((a, b) => b.guessEloRounds - a.guessEloRounds || b.createdAt - a.createdAt || a.bytes - b.bytes)[0];
   const dodgeQueueCandidate = candidates
     .filter((candidate) => candidate.dodgeQueueRounds > 0)
-    .sort((a, b) => b.dodgeQueueRounds - a.dodgeQueueRounds || a.bytes - b.bytes)[0];
+    .sort((a, b) => b.dodgeQueueRounds - a.dodgeQueueRounds || b.createdAt - a.createdAt || a.bytes - b.bytes)[0];
   const matchupCandidate = candidates
     .filter((candidate) => candidate.championMatchupRounds > 0)
-    .sort((a, b) => b.championMatchupRounds - a.championMatchupRounds || a.bytes - b.bytes)[0];
+    .sort((a, b) => b.championMatchupRounds - a.championMatchupRounds || b.createdAt - a.createdAt || a.bytes - b.bytes)[0];
   const selectedKeys = [...new Set([
     buildCandidate?.cacheKey,
     guessEloCandidate?.cacheKey,
@@ -1688,8 +1794,7 @@ async function getCompactPersistedVerifiedMatchCache(
         'championMatchupMessage', payload->'championMatchupMessage'
       ) as payload
     from verified_match_cache
-    where cache_key = any($1::text[])
-      and (expires_at > now() or created_at > now() - interval '48 hours')`,
+    where cache_key = any($1::text[])`,
     [selectedKeys, pinnedBuildRoundId, buildLimit, guessEloLimit, dodgeQueueLimit, championMatchupLimit]
   );
   const payloadByKey = new Map(payloadResult.rows.map((row) => [row.cache_key, normalizeVerifiedMatchSet(row.payload)]));
@@ -1705,10 +1810,73 @@ async function getCompactPersistedVerifiedMatchCache(
     return null;
   }
 
-  return selectedPayloads.slice(1).reduce(
+  const mergedPayload = selectedPayloads.slice(1).reduce(
     (merged, payload) => mergeVerifiedChallengeSets(merged, payload),
     selectedPayloads[0]
   );
+  const storedGuessEloRounds = mergedPayload.guessEloRounds.length > 0 ? [] : await getStoredBalancedGuessEloRounds(guessEloLimit);
+
+  if (storedGuessEloRounds.length === 0) {
+    return mergedPayload;
+  }
+
+  return {
+    ...mergedPayload,
+    guessEloRounds: storedGuessEloRounds,
+    status: "ready" as const,
+    message: `Using ${storedGuessEloRounds.length} stored Guess the Elo rounds from verified Match-V5 cache.`,
+    guessEloMessage: undefined
+  };
+}
+
+async function getStoredBalancedGuessEloRounds(limit: number) {
+  const maxCandidateRounds = Math.max(limit * 12, RANK_BUCKETS.length * 40);
+  const result = await query<StoredGuessEloRoundRow>(
+    `select round_value
+    from (
+      select distinct on (round_value->>'id')
+        round_value #- '{sourceMatch,matchData}' as round_value,
+        created_at,
+        ordinal
+      from verified_match_cache
+      cross join lateral jsonb_array_elements(coalesce(payload->'guessEloRounds', '[]'::jsonb)) with ordinality as guess_elo_round(round_value, ordinal)
+      where jsonb_typeof(round_value) = 'object'
+        and round_value->>'id' is not null
+        and round_value->>'answerTier' = any($1::text[])
+      order by round_value->>'id', created_at desc, ordinal
+    ) as deduped_rounds
+    order by created_at desc, ordinal
+    limit $2`,
+    [[...RANK_BUCKETS], maxCandidateRounds]
+  );
+
+  return selectBalancedStoredGuessEloRounds(result.rows.map((row) => row.round_value), limit);
+}
+
+function selectBalancedStoredGuessEloRounds(rounds: GuessEloRound[], limit: number) {
+  const selected: GuessEloRound[] = [];
+  const selectedIds = new Set<string>();
+  const baseRoundsPerBucket = Math.floor(limit / RANK_BUCKETS.length);
+  const extraBucketRounds = limit % RANK_BUCKETS.length;
+
+  for (const [bucketIndex, bucket] of RANK_BUCKETS.entries()) {
+    const bucketLimit = baseRoundsPerBucket + (bucketIndex < extraBucketRounds ? 1 : 0);
+
+    if (bucketLimit <= 0) {
+      continue;
+    }
+
+    for (const round of rounds.filter((candidate) => candidate.answerTier === bucket).slice(0, bucketLimit)) {
+      selected.push(round);
+      selectedIds.add(round.id);
+    }
+  }
+
+  if (selected.length < limit) {
+    selected.push(...rounds.filter((round) => !selectedIds.has(round.id)).slice(0, limit - selected.length));
+  }
+
+  return selected.slice(0, limit);
 }
 
 function normalizeCompactRoundLimit(value?: number) {
@@ -2384,7 +2552,9 @@ function toVerifiedRounds(
       : `Verified match outcome: the displayed ally side queued and lost ${match.metadata.matchId}.`,
     sourceMatch: {
       ...sourceMatch,
-      allyTeamWon
+      allyTeamWon,
+      allyTeamId,
+      enemyTeamId
     }
   };
 

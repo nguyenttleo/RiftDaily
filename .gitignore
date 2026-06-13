@@ -1,13 +1,50 @@
-.next/
+# Dependencies
 node_modules/
+
+# Build output and framework caches
+.next/
 out/
 dist/
-.env
-.env*.local
-*.log
-coverage/
 .vercel/
-tsconfig.tsbuildinfo
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Environment and local secrets
+.env*
 !.env.example
-.env.local
-.env.production
+*.pem
+
+# Logs and local process output
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/
+
+# Local databases and generated data dumps
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Codex/browser verification artifacts generated at the repository root.
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/proposed-*.json
+
+# Local security lab material is not part of the production app.
+security/

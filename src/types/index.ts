@@ -39,6 +39,8 @@ export interface GameItem {
   id: string;
   name: string;
   plaintext: string;
+  description?: string;
+  descriptionHtml?: string;
   tags: string[];
   goldTotal: number;
   purchasable: boolean;
@@ -118,8 +120,23 @@ export interface VerifiedMatchData {
       damageToChampions: number;
       visionScore: number;
       championLevel: number;
+      mastery?: ChampionMasterySnapshot[];
     }>;
   }>;
+}
+
+export interface ChampionMasterySnapshot {
+  champion: PublicChampion;
+  championLevel: number;
+  championPoints: number;
+}
+
+export interface PlayerMasterySnapshot {
+  teamId: 100 | 200;
+  role: string;
+  playerName?: string;
+  champion: PublicChampion;
+  topChampions: ChampionMasterySnapshot[];
 }
 
 export interface VerifiedBuildPick {
@@ -160,6 +177,7 @@ export interface OptionItem {
   splashUrl?: string;
   spells?: SummonerSpellRef[];
   playerName?: string;
+  mastery?: ChampionMasterySnapshot[];
 }
 
 export interface PublicAbilityChallenge {
@@ -240,12 +258,14 @@ export interface GuessEloRound {
     champion: PublicChampion;
     spells: SummonerSpellRef[];
     playerName?: string;
+    mastery?: ChampionMasterySnapshot[];
   }>;
   enemyLanes: Array<{
     role: string;
     champion: PublicChampion;
     spells: SummonerSpellRef[];
     playerName?: string;
+    mastery?: ChampionMasterySnapshot[];
   }>;
   options: string[];
   answerTier: string;
@@ -290,6 +310,8 @@ export interface DodgeQueueRound {
     queueId: number;
     platform: string;
     allyTeamWon: boolean;
+    allyTeamId?: 100 | 200;
+    enemyTeamId?: 100 | 200;
     sourcePlayer?: string;
     matchData?: VerifiedMatchData;
   };

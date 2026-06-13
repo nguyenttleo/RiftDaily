@@ -414,6 +414,8 @@ export async function getLiveGameItems(version?: string): Promise<GameItem[]> {
         id,
         name: item.name,
         plaintext: stripHtml(item.plaintext || item.description || ""),
+        description: stripHtml(item.description || item.plaintext || ""),
+        descriptionHtml: sanitizeRiotItemDescriptionHtml(item.description || item.plaintext || ""),
         tags: item.tags ?? [],
         goldTotal: item.gold?.total ?? 0,
         purchasable: item.gold?.purchasable ?? false,
@@ -449,4 +451,74 @@ function isSummonersRiftFallbackItem(item: GameItem) {
 
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const RIOT_ITEM_DESCRIPTION_TAGS = new Set([
+  "active",
+  "attackspeed",
+  "attention",
+  "b",
+  "br",
+  "buffedstat",
+  "flavortext",
+  "font",
+  "gold",
+  "healing",
+  "health",
+  "keyword",
+  "keywordmajor",
+  "keywordstealth",
+  "li",
+  "lifesteal",
+  "magicdamage",
+  "maintext",
+  "ms",
+  "omnivamp",
+  "onhit",
+  "ornnbonus",
+  "passive",
+  "physicaldamage",
+  "prismatic",
+  "raritygeneric",
+  "raritylegendary",
+  "raritymythic",
+  "rules",
+  "scalead",
+  "scaleap",
+  "scalearmor",
+  "scalehealth",
+  "scalelethality",
+  "scalelevel",
+  "scalemana",
+  "scalemr",
+  "shield",
+  "speed",
+  "spellname",
+  "spellpassive",
+  "stats",
+  "status",
+  "titleleft",
+  "titleright",
+  "truedamage",
+  "unique"
+]);
+
+function sanitizeRiotItemDescriptionHtml(value: string) {
+  return value
+    .replace(/<\s*(script|style|iframe|object|embed)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*br\s*\/?\s*>/gi, "<br>")
+    .replace(/<\/?\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\/?\s*>/g, (tag, tagName: string) => {
+      const normalized = tagName.toLowerCase();
+
+      if (!RIOT_ITEM_DESCRIPTION_TAGS.has(normalized)) {
+        return "";
+      }
+
+      if (normalized === "br") {
+        return "<br>";
+      }
+
+      return /^<\s*\//.test(tag) ? `</${normalized}>` : `<${normalized}>`;
+    })
+    .trim();
 }

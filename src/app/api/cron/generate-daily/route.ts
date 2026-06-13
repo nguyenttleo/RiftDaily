@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { ensureDailyChallenge, getDailyChallengeByDateType, getRecentAnswerIds } from "@/db/repositories";
@@ -12,12 +14,25 @@ import { pruneExpiredDailyPlayPayloads } from "@/lib/daily-play-payload-cache";
 import { env, isDatabaseConfigured } from "@/lib/env";
 import { getLatestDataDragonVersion, getLiveGameItems, getLivePublicChampions, getLiveSummonerSpells } from "@/lib/riot/data-dragon";
 import { getVerifiedRankedMatchChallenges, warmChampionMatchupSampleCache } from "@/lib/riot/match-v5";
+import { logSecurityEvent, requestIp, requestUserAgent } from "@/lib/security/audit-log";
 import type { ChallengeType } from "@/types";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  return generate(request);
+  logSecurityEvent({
+    type: "cron_method_denied",
+    severity: "low",
+    route: "/api/cron/generate-daily",
+    outcome: "denied",
+    ip: requestIp(request),
+    userAgent: requestUserAgent(request),
+    metadata: {
+      method: "GET"
+    }
+  });
+
+  return NextResponse.json({ error: "Method not allowed." }, { status: 405, headers: { Allow: "POST" } });
 }
 
 export async function POST(request: Request) {
@@ -25,9 +40,36 @@ export async function POST(request: Request) {
 }
 
 async function generate(request: Request) {
-  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? request.headers.get("x-cron-secret") ?? "";
+  const cronSecret = env.cronSecret.trim();
 
-  if (env.cronSecret && token !== env.cronSecret) {
+  if (!cronSecret) {
+    logSecurityEvent({
+      type: "cron_secret_missing",
+      severity: "high",
+      route: "/api/cron/generate-daily",
+      outcome: "failed",
+      ip: requestIp(request),
+      userAgent: requestUserAgent(request)
+    });
+
+    return NextResponse.json({ error: "Cron route is not configured." }, { status: 503 });
+  }
+
+  const token = readCronToken(request);
+
+  if (!token || !secureTokenEquals(token, cronSecret)) {
+    logSecurityEvent({
+      type: "cron_secret_denied",
+      severity: "medium",
+      route: "/api/cron/generate-daily",
+      outcome: "denied",
+      ip: requestIp(request),
+      userAgent: requestUserAgent(request),
+      metadata: {
+        hasToken: Boolean(token)
+      }
+    });
+
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
@@ -349,4 +391,18 @@ function selectAnswerAvoidingRecent(type: ChallengeType, seed: string, answerIds
   }
 
   return answerIds[start];
+}
+
+function readCronToken(request: Request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  const bearerToken = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+
+  return bearerToken || request.headers.get("x-cron-secret")?.trim() || "";
+}
+
+function secureTokenEquals(leftValue: string, rightValue: string) {
+  const left = createHash("sha256").update(leftValue).digest();
+  const right = createHash("sha256").update(rightValue).digest();
+
+  return timingSafeEqual(left, right);
 }

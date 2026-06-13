@@ -121,13 +121,14 @@ interface RankStateRow {
 
 let rankSchemaReady = false;
 let localProgressClaimSchemaReady = false;
+const userSelectColumns = "id::text, username, email, password_hash, created_at";
 
 export async function findUserByEmail(email: string): Promise<UserRow | null> {
   if (!isDatabaseConfigured()) {
     return null;
   }
 
-  const result = await query<UserRow>("select * from users where lower(email) = lower($1) limit 1", [email]);
+  const result = await query<UserRow>(`select ${userSelectColumns} from users where lower(email) = lower($1) limit 1`, [email]);
   return result.rows[0] ?? null;
 }
 
@@ -136,7 +137,7 @@ export async function findUserById(id: string): Promise<UserRow | null> {
     return null;
   }
 
-  const result = await query<UserRow>("select * from users where id = $1 limit 1", [id]);
+  const result = await query<UserRow>(`select ${userSelectColumns} from users where id = $1 limit 1`, [id]);
   return result.rows[0] ?? null;
 }
 
@@ -144,7 +145,7 @@ export async function createUser(input: { username: string; email: string; passw
   const result = await query<UserRow>(
     `insert into users (username, email, password_hash)
      values ($1, $2, $3)
-     returning *`,
+     returning ${userSelectColumns}`,
     [input.username, input.email, input.passwordHash]
   );
 

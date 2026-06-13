@@ -45,6 +45,7 @@ const lolViewModes = new Set<View>([
   "leaderboard"
 ]);
 const tftViewModes = new Set<View>(["tft-recipe", "tft-connections"]);
+const DAILY_CLIENT_PAYLOAD_VERSION = "item-tooltips-v3";
 const ROUND_SYNC_RETRY_DELAY_MS = 2500;
 const ROUND_SYNC_MAX_BLOCKING_ATTEMPTS = 4;
 type DailyRoundLimits = {
@@ -853,6 +854,7 @@ async function fetchDailyChallenge(roundLimits: DailyRoundLimits = INITIAL_DAILY
   query.set("guessEloRounds", String(roundLimits.guessElo));
   query.set("matchupRounds", String(roundLimits.championMatchup));
   query.set("dodgeQueueRounds", String(roundLimits.dodgeQueue));
+  query.set("payload", DAILY_CLIENT_PAYLOAD_VERSION);
 
   const response = await fetch(`/api/challenges/daily?${query.toString()}`);
 
