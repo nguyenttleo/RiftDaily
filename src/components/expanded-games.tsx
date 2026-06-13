@@ -3648,7 +3648,7 @@ function DraftScreen({
   masteryStatus?: MatchMasteryLoadStatus;
 }) {
   return (
-    <div className="play-panel-depth grid min-h-0 gap-2 rounded-sm border border-[#3c3421] p-2 md:grid-cols-[1fr_4rem_1fr] lg:h-[clamp(21rem,calc(100dvh-16.75rem),30rem)] xl:grid-cols-[1fr_5rem_1fr]">
+    <div className="play-panel-depth grid min-h-0 gap-2 rounded-sm border border-[#3c3421] p-2 md:grid-cols-[1fr_4rem_1fr] lg:h-[clamp(22rem,calc(100dvh-15rem),30rem)] xl:grid-cols-[1fr_5rem_1fr]">
       <DraftTeam side="blue" name={blueName} picks={bluePicks} bans={blueBans} hiddenLabel={hiddenLabel} masteryStatus={masteryStatus} />
       <div className="grid place-items-center text-center">
         <MatchupVsMark compact />

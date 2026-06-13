@@ -46,5 +46,5 @@ Thumbs.db
 /*.webp
 /proposed-*.json
 
-# Local security lab material is not part of the production app.
-security/
+# Local root security lab material is not part of the production app.
+/security/
