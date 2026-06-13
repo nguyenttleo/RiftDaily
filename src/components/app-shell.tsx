@@ -313,7 +313,6 @@ export function AppShell() {
             activeMode={view}
             activeProduct="lol"
             brandVariant="sleek"
-            compact={compactLobbyLayout}
             onModeSelect={selectView}
             onProductSelect={selectProduct}
             position="sticky"
