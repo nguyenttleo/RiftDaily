@@ -269,6 +269,13 @@ export interface GuessEloRound {
   }>;
   options: string[];
   answerTier: string;
+  rankSource?: "lobby-average" | "source-player";
+  lobbyAverageRank?: {
+    tier: string;
+    bucket: string;
+    rankedPlayers: number;
+    totalPlayers: number;
+  };
   signalNotes: string[];
   dataSource: string;
   sourceMatch?: {

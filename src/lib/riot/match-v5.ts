@@ -22,6 +22,15 @@ const SMITE_ID = 11;
 const TEAM_IDS = [100, 200] as const;
 const POSITION_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"] as const;
 const RANK_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"] as const;
+const SOLO_RANK_TIERS = ["IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"] as const;
+const RANK_DIVISIONS_BY_SCORE = ["IV", "III", "II", "I"] as const;
+const RANK_DIVISION_SCORE: Record<string, number> = {
+  IV: 0,
+  III: 1,
+  II: 2,
+  I: 3
+};
+const MIN_LOBBY_RANKED_PLAYERS = 5;
 const MIN_PLAYABLE_ROUNDS_PER_RANK = 1;
 const MIN_PLAYABLE_BUILD_ROUNDS = 50;
 const DEFAULT_BUILD_SAMPLE_MATCH_COUNT = 512;
@@ -39,12 +48,24 @@ const MAX_SOURCES_PER_RANK_BUCKET = 48;
 const RIOT_REQUEST_TIMEOUT_MS = 8000;
 const RIOT_MIN_REQUEST_INTERVAL_MS = 140;
 const RIOT_MAX_RETRY_AFTER_MS = 5000;
+const VERIFIED_ROUND_CACHE_VERSION = "lobby-average-v1";
 
 let nextRiotRequestAt = 0;
+
+class RiotApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+  }
+}
 
 type TeamId = (typeof TEAM_IDS)[number];
 type RiotPosition = (typeof POSITION_ORDER)[number];
 type RankBucket = (typeof RANK_BUCKETS)[number];
+type SoloRankTier = (typeof SOLO_RANK_TIERS)[number];
+type RankedSoloEntryCache = Map<string, Promise<RankedSoloSnapshot | null>>;
 
 interface RiotLeagueEntry {
   puuid?: string;
@@ -141,6 +162,19 @@ interface RankedSource {
   bucket: RankBucket;
   tier: string;
   leaguePoints?: number;
+}
+
+interface RankedSoloSnapshot {
+  tier: string;
+  rank?: string;
+  leaguePoints?: number;
+}
+
+interface LobbyAverageRank {
+  bucket: RankBucket;
+  tier: string;
+  rankedPlayers: number;
+  totalPlayers: number;
 }
 
 interface RankedEntryCandidate {
@@ -349,17 +383,24 @@ export async function getVerifiedRankedMatchChallenges({
   const currentPatchPrefix = patchPrefixFromVersion(dataDragonVersion);
   const championLookup = createChampionLookup(publicChampions);
   const itemLookup = new Map(gameItems.map((item) => [item.id, item]));
-  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds`;
+  const persistedCacheKey = `${date}:${platform}:${currentPatchPrefix}:verified-rounds:${VERIFIED_ROUND_CACHE_VERSION}`;
   const persistedMemoryCacheKey = compactPersistedCache ? `${persistedCacheKey}:compact:${pinnedBuildRoundId || "default"}:${compactRoundLimitsKey(compactRoundLimits)}` : persistedCacheKey;
-  const persistedVerifiedSet = pruneInvalidBuildRounds(
+  let persistedVerifiedSet = pruneInvalidBuildRounds(
     await getPersistedVerifiedMatchCache(persistedCacheKey, {
       compact: compactPersistedCache,
       compactRoundLimits,
       pinnedBuildRoundId,
-      compactKeyPattern: `%:${platform}:${currentPatchPrefix}%verified-rounds`
+      compactKeyPattern: `%:${platform}:${currentPatchPrefix}%verified-rounds%`
     }),
     itemLookup
   );
+
+  if (persistedVerifiedSet && !compactPersistedCache) {
+    persistedVerifiedSet = {
+      ...persistedVerifiedSet,
+      guessEloRounds: persistedVerifiedSet.guessEloRounds.filter(isLobbyAverageGuessEloRound)
+    };
+  }
   const persistedBuildRoundCount = persistedVerifiedSet ? verifiedBuildRoundCount(persistedVerifiedSet, itemLookup) : 0;
 
   if (!forceRefresh && persistedVerifiedSet && hasAnyVerifiedMatchRounds(persistedVerifiedSet, itemLookup)) {
@@ -440,6 +481,7 @@ export async function getVerifiedRankedMatchChallenges({
     const rejectedBuildSourcePuuids = new Set<string>();
     let buildSourceRankLookups = 0;
     const spellLookup = new Map(summonerSpells.map((spell) => [spell.id, spell]));
+    const rankedSoloEntryCache: RankedSoloEntryCache = new Map();
     const seenMatches = new Set<string>();
     const guessRoundsByBucket = createEmptyRankBucketMap();
     const buildRounds: VerifiedBuildRound[] = [];
@@ -448,6 +490,21 @@ export async function getVerifiedRankedMatchChallenges({
     const championMatchupSamples = new Map<string, ChampionMatchupAccumulator>();
     const currentPatchMatchupMatchIds = new Set<string>();
     const matchupSampleRecords: ChampionMatchupSampleRecord[] = [];
+    const hasGuessEloRoundCapacity = () => RANK_BUCKETS.some((bucket) => (guessRoundsByBucket.get(bucket)?.length ?? 0) < roundsPerRank);
+    const addGuessEloRound = (round: GuessEloRound | null | undefined, bucketRoundLimit = roundsPerRank) => {
+      if (!round || !isRankBucket(round.answerTier)) {
+        return false;
+      }
+
+      const bucketRounds = guessRoundsByBucket.get(round.answerTier);
+
+      if (!bucketRounds || bucketRounds.length >= bucketRoundLimit || bucketRounds.some((candidate) => candidate.id === round.id)) {
+        return false;
+      }
+
+      bucketRounds.push(round);
+      return true;
+    };
     const flushMatchupSampleRecords = async (force = false) => {
       if (matchupSampleRecords.length < 800 && !force) {
         return;
@@ -591,14 +648,10 @@ export async function getVerifiedRankedMatchChallenges({
             await collectMatchupSamples(match);
             await collectBuildRounds(match, source);
 
-            const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
-            const bucketRounds = guessRoundsByBucket.get(source.bucket) ?? [];
-            const bucketRoundLimit = nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank);
+            const verified = await toVerifiedRounds(match, source, platform, championLookup, spellLookup, date, rankedSoloEntryCache, hasGuessEloRoundCapacity());
 
             if (verified) {
-              if (bucketRounds.length < bucketRoundLimit) {
-                bucketRounds.push(verified.guessElo);
-              }
+              addGuessEloRound(verified.guessElo, nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank));
 
               if (dodgeQueueRounds.length < sampleSize) {
                 dodgeQueueRounds.push(verified.dodgeQueue);
@@ -656,21 +709,17 @@ export async function getVerifiedRankedMatchChallenges({
             await collectMatchupSamples(match);
             await collectBuildRounds(match, source);
 
-            const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
+            const verified = await toVerifiedRounds(match, source, platform, championLookup, spellLookup, date, rankedSoloEntryCache, hasGuessEloRoundCapacity());
 
             if (!verified) {
               continue;
             }
 
-            const usedForPuzzleRound = bucketRounds.length < initialRoundsPerRank;
-
             if (dodgeQueueRounds.length < sampleSize) {
               dodgeQueueRounds.push(verified.dodgeQueue);
             }
 
-            if (usedForPuzzleRound) {
-              bucketRounds.push(verified.guessElo);
-            }
+            addGuessEloRound(verified.guessElo, nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank));
           } catch {
             continue;
           }
@@ -681,7 +730,6 @@ export async function getVerifiedRankedMatchChallenges({
     await collectBuildFocusedRounds("after-initial");
 
     for (const source of interleaveRankedSources(sourcesByBucket, `${date}:analysis-sources`)) {
-      const bucketRounds = guessRoundsByBucket.get(source.bucket) ?? [];
       const bucketRoundLimit = nextBalancedRankBucketLimit(guessRoundsByBucket, initialRoundsPerRank, roundsPerRank);
 
       if (
@@ -747,12 +795,10 @@ export async function getVerifiedRankedMatchChallenges({
           await collectMatchupSamples(match);
           await collectBuildRounds(match, source);
 
-          const verified = toVerifiedRounds(match, source, platform, championLookup, spellLookup, date);
+          const verified = await toVerifiedRounds(match, source, platform, championLookup, spellLookup, date, rankedSoloEntryCache, hasGuessEloRoundCapacity());
 
           if (verified) {
-            if (bucketRounds.length < bucketRoundLimit) {
-              bucketRounds.push(verified.guessElo);
-            }
+            addGuessEloRound(verified.guessElo, bucketRoundLimit);
 
             if (dodgeQueueRounds.length < sampleSize) {
               dodgeQueueRounds.push(verified.dodgeQueue);
@@ -1814,22 +1860,31 @@ async function getCompactPersistedVerifiedMatchCache(
     (merged, payload) => mergeVerifiedChallengeSets(merged, payload),
     selectedPayloads[0]
   );
-  const storedGuessEloRounds = mergedPayload.guessEloRounds.length > 0 ? [] : await getStoredBalancedGuessEloRounds(guessEloLimit);
+  const rankedSoloEntryCache: RankedSoloEntryCache = new Map();
+  const hydratedGuessEloRounds = await getBalancedLobbyAverageGuessEloRounds(mergedPayload.guessEloRounds, guessEloLimit, rankedSoloEntryCache);
+  const storedGuessEloRounds = hydratedGuessEloRounds.length >= guessEloLimit ? [] : await getStoredBalancedGuessEloRounds(guessEloLimit, rankedSoloEntryCache);
+  const guessEloRounds = selectBalancedStoredGuessEloRounds(
+    mergeRoundsByMatch(hydratedGuessEloRounds, storedGuessEloRounds),
+    guessEloLimit
+  );
 
-  if (storedGuessEloRounds.length === 0) {
-    return mergedPayload;
+  if (guessEloRounds.length === 0) {
+    return {
+      ...mergedPayload,
+      guessEloRounds: []
+    };
   }
 
   return {
     ...mergedPayload,
-    guessEloRounds: storedGuessEloRounds,
+    guessEloRounds,
     status: "ready" as const,
-    message: `Using ${storedGuessEloRounds.length} stored Guess the Elo rounds from verified Match-V5 cache.`,
+    message: `Using ${guessEloRounds.length} stored Guess the Elo rounds from verified Match-V5 cache.`,
     guessEloMessage: undefined
   };
 }
 
-async function getStoredBalancedGuessEloRounds(limit: number) {
+async function getStoredBalancedGuessEloRounds(limit: number, rankedSoloEntryCache: RankedSoloEntryCache = new Map()) {
   const maxCandidateRounds = Math.max(limit * 12, RANK_BUCKETS.length * 40);
   const result = await query<StoredGuessEloRoundRow>(
     `select round_value
@@ -1850,7 +1905,90 @@ async function getStoredBalancedGuessEloRounds(limit: number) {
     [[...RANK_BUCKETS], maxCandidateRounds]
   );
 
-  return selectBalancedStoredGuessEloRounds(result.rows.map((row) => row.round_value), limit);
+  return getBalancedLobbyAverageGuessEloRounds(result.rows.map((row) => row.round_value), limit, rankedSoloEntryCache);
+}
+
+async function getBalancedLobbyAverageGuessEloRounds(rounds: GuessEloRound[], limit: number, rankedSoloEntryCache: RankedSoloEntryCache) {
+  const hydratedRounds: GuessEloRound[] = [];
+  const seenRoundKeys = new Set<string>();
+
+  for (const round of rounds) {
+    let hydrated: GuessEloRound | null = null;
+
+    try {
+      hydrated = await hydrateGuessEloRoundWithLobbyAverage(round, rankedSoloEntryCache);
+    } catch (error) {
+      if (isRiotAuthError(error)) {
+        break;
+      }
+
+      continue;
+    }
+
+    if (!hydrated || !isLobbyAverageGuessEloRound(hydrated)) {
+      continue;
+    }
+
+    const key = hydrated.sourceMatch?.matchId ?? hydrated.id;
+
+    if (seenRoundKeys.has(key)) {
+      continue;
+    }
+
+    seenRoundKeys.add(key);
+    hydratedRounds.push(hydrated);
+
+    if (selectBalancedStoredGuessEloRounds(hydratedRounds, limit).length >= limit) {
+      break;
+    }
+  }
+
+  return selectBalancedStoredGuessEloRounds(hydratedRounds, limit);
+}
+
+async function hydrateGuessEloRoundWithLobbyAverage(round: GuessEloRound, rankedSoloEntryCache: RankedSoloEntryCache): Promise<GuessEloRound | null> {
+  if (isLobbyAverageGuessEloRound(round)) {
+    return round;
+  }
+
+  const matchId = round.sourceMatch?.matchId;
+
+  if (!matchId) {
+    return null;
+  }
+
+  const platform = normalizePlatform(round.sourceMatch?.platform ?? platformFromMatchId(matchId));
+  const regional = regionalRouteForPlatform(platform);
+
+  try {
+    const match = await riotFetch<RiotMatchDto>(regional, `/lol/match/v5/matches/${encodeURIComponent(matchId)}`);
+    const lobbyAverageRank = await getLobbyAverageRank(platform, match.info.participants, rankedSoloEntryCache);
+
+    if (!lobbyAverageRank) {
+      return null;
+    }
+
+    return {
+      ...round,
+      answerTier: lobbyAverageRank.bucket,
+      rankSource: "lobby-average",
+      lobbyAverageRank,
+      signalNotes: [
+        `Lobby average Solo Queue rank: ${lobbyAverageRank.tier} (${lobbyAverageRank.rankedPlayers}/${lobbyAverageRank.totalPlayers} ranked players).`,
+        ...round.signalNotes.filter((note) => {
+          const normalized = note.toLowerCase();
+
+          return !normalized.includes("source player official ranked tier") && !normalized.includes("lobby average solo queue rank");
+        })
+      ]
+    };
+  } catch (error) {
+    if (isRiotAuthError(error)) {
+      throw error;
+    }
+
+    return null;
+  }
 }
 
 function selectBalancedStoredGuessEloRounds(rounds: GuessEloRound[], limit: number) {
@@ -2271,6 +2409,10 @@ function rankDistribution(rounds: GuessEloRound[]) {
   return distribution;
 }
 
+function isLobbyAverageGuessEloRound(round: GuessEloRound) {
+  return round.rankSource === "lobby-average" && isRankBucket(round.answerTier);
+}
+
 function formatRankDistribution(distribution: Record<RankBucket, number>) {
   return RANK_BUCKETS.map((bucket) => `${bucket}: ${distribution[bucket]}`).join(", ");
 }
@@ -2307,6 +2449,115 @@ function isRankedClassicSummonersRiftMatch(match: RiotMatchDto) {
     match.info.gameMode === CLASSIC_GAME_MODE &&
     match.info.participants.length === 10
   );
+}
+
+async function getLobbyAverageRank(platform: string, participants: RiotParticipantDto[], rankedSoloEntryCache: RankedSoloEntryCache): Promise<LobbyAverageRank | null> {
+  const scores: number[] = [];
+
+  for (const participant of participants) {
+    const entry = await getRankedSoloEntryByPuuid(platform, participant.puuid, rankedSoloEntryCache);
+    const score = entry ? soloRankScore(entry) : null;
+
+    if (score !== null) {
+      scores.push(score);
+    }
+  }
+
+  if (scores.length < Math.min(MIN_LOBBY_RANKED_PLAYERS, participants.length)) {
+    return null;
+  }
+
+  const averageScore = scores.reduce((total, score) => total + score, 0) / scores.length;
+  const tier = rankLabelFromScore(averageScore);
+  const bucket = rankBucketFromTier(tier);
+
+  return bucket
+    ? {
+        bucket,
+        tier,
+        rankedPlayers: scores.length,
+        totalPlayers: participants.length
+      }
+    : null;
+}
+
+async function getRankedSoloEntryByPuuid(platform: string, puuid: string, rankedSoloEntryCache: RankedSoloEntryCache): Promise<RankedSoloSnapshot | null> {
+  const normalizedPlatform = normalizePlatform(platform);
+  const cacheKey = `${normalizedPlatform}:${puuid}`;
+  const cached = rankedSoloEntryCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const lookup = (async () => {
+    try {
+      const entries = await riotFetch<RiotLeaguePositionDto[]>(
+        normalizedPlatform,
+        `/lol/league/v4/entries/by-puuid/${encodeURIComponent(puuid)}`
+      );
+      const solo = entries.find((entry) => entry.queueType === "RANKED_SOLO_5x5");
+
+      if (!solo?.tier) {
+        return null;
+      }
+
+      return {
+        tier: solo.tier,
+        ...(solo.rank ? { rank: solo.rank } : {}),
+        ...(typeof solo.leaguePoints === "number" ? { leaguePoints: solo.leaguePoints } : {})
+      };
+    } catch (error) {
+      if (isRiotAuthError(error)) {
+        throw error;
+      }
+
+      return null;
+    }
+  })();
+
+  rankedSoloEntryCache.set(cacheKey, lookup);
+  return lookup;
+}
+
+function soloRankScore(entry: RankedSoloSnapshot) {
+  const tier = entry.tier.trim().toUpperCase();
+  const tierIndex = SOLO_RANK_TIERS.indexOf(tier as SoloRankTier);
+
+  if (tierIndex < 0) {
+    return null;
+  }
+
+  const masterIndex = SOLO_RANK_TIERS.indexOf("MASTER");
+  const divisionScore = tierIndex >= masterIndex ? 0 : RANK_DIVISION_SCORE[entry.rank?.trim().toUpperCase() ?? ""] ?? 0;
+  const lpScore = typeof entry.leaguePoints === "number" ? Math.max(0, Math.min(99, entry.leaguePoints)) / 100 : 0;
+
+  return tierIndex * RANK_DIVISIONS_BY_SCORE.length + divisionScore + lpScore;
+}
+
+function rankLabelFromScore(score: number) {
+  const divisionsPerTier = RANK_DIVISIONS_BY_SCORE.length;
+  const tierIndex = Math.max(0, Math.min(SOLO_RANK_TIERS.length - 1, Math.floor(score / divisionsPerTier)));
+  const tier = SOLO_RANK_TIERS[tierIndex];
+  const masterIndex = SOLO_RANK_TIERS.indexOf("MASTER");
+
+  if (tierIndex >= masterIndex) {
+    return titleCaseRank(tier);
+  }
+
+  const divisionIndex = Math.max(0, Math.min(divisionsPerTier - 1, Math.floor(score - tierIndex * divisionsPerTier)));
+  return `${titleCaseRank(tier)} ${RANK_DIVISIONS_BY_SCORE[divisionIndex]}`;
+}
+
+function rankBucketFromTier(tierLabel: string): RankBucket | null {
+  const tier = tierLabel.trim().split(/\s+/)[0]?.toUpperCase();
+
+  if (tier === "IRON" || tier === "BRONZE") return "Iron/Bronze";
+  if (tier === "SILVER" || tier === "GOLD") return "Silver/Gold";
+  if (tier === "PLATINUM" || tier === "EMERALD") return "Platinum/Emerald";
+  if (tier === "DIAMOND" || tier === "MASTER") return "Diamond/Master";
+  if (tier === "GRANDMASTER" || tier === "CHALLENGER") return "Grandmaster/Challenger";
+  return null;
 }
 
 async function getRankedSources(platform: string, seed: string, sourceCountPerBucket: number, buckets?: Set<RankBucket>): Promise<RankedSource[]> {
@@ -2468,13 +2719,15 @@ async function resolveEntryPuuid(platform: string, entry: RiotLeagueEntry) {
   return summoner.puuid;
 }
 
-function toVerifiedRounds(
+async function toVerifiedRounds(
   match: RiotMatchDto,
   source: RankedSource,
   platform: string,
   championLookup: Map<number, PublicChampion>,
   spellLookup: Map<number, SummonerSpellRef>,
-  date: string
+  date: string,
+  rankedSoloEntryCache: RankedSoloEntryCache,
+  includeGuessElo = true
 ) {
   if (
     match.info.queueId !== RANKED_SOLO_QUEUE_ID ||
@@ -2518,22 +2771,28 @@ function toVerifiedRounds(
     ...(matchData ? { matchData } : {})
   };
   const dataSource = "Riot Match-V5 teamPosition + summoner IDs, mapped through Riot Data Dragon summoner.json";
+  const lobbyAverageRank = includeGuessElo ? await getLobbyAverageRank(platform, match.info.participants, rankedSoloEntryCache) : null;
 
-  const guessElo: GuessEloRound = {
-    id: `${date}:guess-elo:${match.metadata.matchId}`,
-    date,
-    lanes: blue,
-    enemyLanes: red,
-    options: [...RANK_BUCKETS],
-    answerTier: source.bucket,
-    signalNotes: [
-      `Source player official ranked tier: ${source.tier}.`,
-      `Lane labels come from Match-V5 teamPosition in match ${match.metadata.matchId}.`,
-      "Summoner spell IDs come from Match-V5 summoner1Id/summoner2Id and are mapped to Data Dragon spell assets."
-    ],
-    dataSource,
-    sourceMatch
-  };
+  const guessElo: GuessEloRound | null = lobbyAverageRank
+    ? {
+        id: `${date}:guess-elo:${match.metadata.matchId}`,
+        date,
+        lanes: blue,
+        enemyLanes: red,
+        options: [...RANK_BUCKETS],
+        answerTier: lobbyAverageRank.bucket,
+        rankSource: "lobby-average",
+        lobbyAverageRank,
+        signalNotes: [
+          `Lobby average Solo Queue rank: ${lobbyAverageRank.tier} (${lobbyAverageRank.rankedPlayers}/${lobbyAverageRank.totalPlayers} ranked players).`,
+          `Source player official ranked tier used only to locate this match: ${source.tier}.`,
+          `Lane labels come from Match-V5 teamPosition in match ${match.metadata.matchId}.`,
+          "Summoner spell IDs come from Match-V5 summoner1Id/summoner2Id and are mapped to Data Dragon spell assets."
+        ],
+        dataSource,
+        sourceMatch
+      }
+    : null;
 
   const dodgeQueue: DodgeQueueRound = {
     id: `${date}:dodge-queue:${match.metadata.matchId}:${allyTeamId}`,
@@ -2907,7 +3166,7 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
       }
 
       if (!response.ok) {
-        throw new Error(`Riot API ${path} failed with ${response.status}`);
+        throw new RiotApiError(`Riot API ${path} failed with ${response.status}`, response.status);
       }
 
       return (await response.json()) as T;
@@ -2928,6 +3187,10 @@ async function riotFetch<T>(route: string, path: string): Promise<T> {
 
 function isRetryableRiotFetchError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function isRiotAuthError(error: unknown) {
+  return error instanceof RiotApiError && (error.status === 401 || error.status === 403);
 }
 
 async function waitForRiotRequestSlot() {

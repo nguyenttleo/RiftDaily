@@ -50,7 +50,7 @@ const MAX_PUBLIC_ROUND_LIMITS = {
 const GUESS_ELO_BUCKETS = ["Iron/Bronze", "Silver/Gold", "Platinum/Emerald", "Diamond/Master", "Grandmaster/Challenger"];
 const DAILY_CHALLENGE_CACHE_MS = 1000 * 60 * 10;
 const DAILY_STATIC_PAYLOAD_CACHE_MS = 1000 * 60 * 5;
-const DAILY_PLAY_PAYLOAD_CACHE_VERSION = "v6";
+const DAILY_PLAY_PAYLOAD_CACHE_VERSION = "v10";
 
 type PublicRoundLimits = {
   itemBuild: number;

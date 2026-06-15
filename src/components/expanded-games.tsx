@@ -2823,7 +2823,11 @@ function guessEloAnswerKey(round: GuessEloRound) {
 }
 
 function getGuessEloSourceRankNote(notes: string[]) {
-  return notes.find((note) => note.toLowerCase().includes("source player official ranked tier")) ?? notes[0];
+  return (
+    notes.find((note) => note.toLowerCase().includes("lobby average solo queue rank")) ??
+    notes.find((note) => note.toLowerCase().includes("source player official ranked tier")) ??
+    notes[0]
+  );
 }
 
 function VerifiedAnswerModal({
